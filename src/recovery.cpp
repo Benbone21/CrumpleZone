@@ -1,5 +1,6 @@
 // Recovery and trail upkeep: winch lines and tow straps, airing tires down and up, the
 // sway-bar disconnect, putting a wreck back on its wheels, and repair stations.
+#include "battery.h"
 #include <algorithm>
 #include <cstdio>
 #include <string>
@@ -62,10 +63,27 @@ void Car::pullHook(int e, const V3& F, const V3& at) {
 
 // ---- Putting a truck back on its wheels -------------------------------------
 
+namespace {
+// Nodes of the panels torn off the truck (a door or a hood lying where it came off): they stay
+// where they are when the truck is turned or moved. Swung round with it from 15 m away, a hood
+// ended up 9 m underground, and the ground then fired it out at 200 m/s.
+std::vector<char> tornOff(const Car& c) {
+    std::vector<char> m(c.nodes.size(), 0);
+    for (const Panel& p : c.panels)
+        if (p.state == 2)
+            for (int i : p.panelNodes)
+                if (i >= 0 && i < (int)m.size()) m[i] = 1;
+    return m;
+}
+}  // namespace
+
 void Car::rotateRigid(const V3& axis, double ang) {
     const V3 o = frame().com;
     const Quat q = Quat::axisAngle(norm(axis), ang);
-    for (Node& n : nodes) {
+    const std::vector<char> torn = tornOff(*this);
+    for (size_t i = 0; i < nodes.size(); i++) {
+        if (torn[i]) continue;
+        Node& n = nodes[i];
         n.p = o + q.rotate(n.p - o);
         n.v = V3();
     }
@@ -91,14 +109,18 @@ void Car::placeUpright(const World& w, double x, double z, double yaw) {
     Quat q = want * inv;
     q.normalize();
     double lowest = 1e9;
-    for (Node& n : nodes) {
-        n.p = q.rotate(n.p - fr.com);
+    const std::vector<char> torn = tornOff(*this);
+    for (size_t i = 0; i < nodes.size(); i++) {
+        Node& n = nodes[i];
         n.v = V3();
         n.f = V3();
+        if (torn[i]) continue;
+        n.p = q.rotate(n.p - fr.com);
         lowest = std::min(lowest, n.p.y);
     }
     const V3 shift(x, w.height(x, z) + 0.5 - lowest, z);
-    for (Node& n : nodes) n.p += shift;
+    for (size_t i = 0; i < nodes.size(); i++)
+        if (!torn[i]) nodes[i].p += shift;
     if (!chassis.nodes.empty()) {
         chassis.rot = q * chassis.rot;
         chassis.rot.normalize();
@@ -119,7 +141,7 @@ void Car::setDown(const World& w) {
     // slope, the uphill tires would start inside the hill and get rammed up through the
     // suspension into the body.
     if (wheels.size() < 4) return;
-    auto ground = [&](double x, double z) { return std::max(w.height(x, z), w.clearY(x, z)); };
+    auto ground = [&](double x, double z) { return std::max(w.height(x, z), w.clearY(x, z, false)); };  // (a trunk beside a tire isn't ground)
     auto hub = [&](const Wheel& wh) { return (nodes[wh.inner].p + nodes[wh.outer].p) * 0.5; };
     V3 fl, fr, rl, rr;
     for (const Wheel& wh : wheels) {
@@ -140,7 +162,9 @@ void Car::setDown(const World& w) {
         dy = std::max(dy, ground(bottom.x, bottom.z) + 0.02 - bottom.y);
     }
     for (int i = 0; i < bodyNodes; i++) dy = std::max(dy, w.height(nodes[i].p.x, nodes[i].p.z) + 0.02 - nodes[i].p.y);
-    for (Node& nd : nodes) nd.p.y += dy;
+    const std::vector<char> torn = tornOff(*this);
+    for (size_t i = 0; i < nodes.size(); i++)
+        if (!torn[i]) nodes[i].p.y += dy;
     updateBounds();
 }
 
@@ -267,6 +291,8 @@ void Sim::repairCar(int i) {
     double yaw = std::atan2(-fr.fwd.z, fr.fwd.x);
     if (!std::isfinite(yaw)) yaw = 0;
     dropRopes(i);
+    cables.erase(std::remove_if(cables.begin(), cables.end(), [&](const JumperCable& j) { return j.a == i || j.b == i; }), cables.end());
+    if (handCable.car == i) handCable = HandCable();
     c.respawn(V3(fr.com.x, world.clearY(fr.com.x, fr.com.z) + 0.05, fr.com.z), yaw);
     c.setDown(world);
     c.spawnPos = sp;
@@ -339,6 +365,13 @@ void Sim::dropRopes(int car) {
 
 void Sim::carRemoved(int car) {
     dropRopes(car);
+    cables.erase(std::remove_if(cables.begin(), cables.end(), [&](const JumperCable& j) { return j.a == car || j.b == car; }), cables.end());
+    for (JumperCable& j : cables) {
+        if (j.a > car) j.a--;
+        if (j.b > car) j.b--;
+    }
+    if (handCable.car == car) handCable = HandCable();
+    else if (handCable.car > car) handCable.car--;
     if (handLine.car == car) dropHandLine();
     else if (handLine.car > car) handLine.car--;
     for (Rope& r : ropes) {
@@ -792,6 +825,7 @@ void Sim::ropeForces() {
 // ---- Per frame ----------------------------------------------------------------
 
 void Sim::updateTrail(double dt) {
+    battery::step(*this, dt);
     for (int i = 0; i < (int)cars.size(); i++) {
         Car& c = cars[i];
         if (c.isProp() || c.remote) continue;

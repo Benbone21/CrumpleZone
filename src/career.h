@@ -13,8 +13,11 @@
 #include <vector>
 
 #include "anchors.h"
+#include "careerworld.h"
 #include "fixes.h"
 #include "mathx.h"
+#include "mods.h"
+#include "paint.h"
 
 class World;
 
@@ -26,6 +29,8 @@ struct CacheSpot {
     std::string part;  // part key (mods.h), or "" for cash
     int cash = 0;
     std::vector<std::string> gear;  // and some trail-repair gear: "TOOL:HAMMER", "REPAIR:CV AXLE" (fixes.h)
+    std::string label;  // what's shown, when the id isn't (the procedural world's: its id is the seed and place id)
+    const std::string& shown() const { return label.empty() ? id : label; }
 };
 
 // What a repair station's rack sells (on foot, hold E): every tool and every repair part.
@@ -38,8 +43,22 @@ const std::vector<ShopItem>& stationRack();
 // Where rack item i lies at a station: in a row on the ground along the shed's right side.
 V3 rackSpot(const World& world, int station, int i);
 
+// Where a part (key, mods.h) can be had besides a station: "SUPPLY CACHE: THE WALL TOP (FRONTIER)", "A LEVEL'S FIRST GOLD"
+// (the cache and reward tables below; empty if nowhere).
+std::vector<std::string> partSources(const std::string& key);
+
 // The caches on a map, on the ground (three by the proving ground's model yard; none on the freeway).
 std::vector<CacheSpot> cacheSpots(const World& world);
+
+// A vehicle in your profile: which one, how it is fitted, the world it was left in and what shape it is in.
+struct OwnedVehicle {
+    int vehicle = 0;         // index into vehicleCatalog()
+    ModSet mods;
+    CarPaint paint;          // its own (a career truck keeps its colour; the garage's per-vehicle paint is sandbox's)
+    std::string world;       // the slug of the world it was left in
+    std::string condition;   // the carsave text (damage and wear); "" = factory fresh
+    double drove = -1;       // its world's playedSeconds when you were last in it (-1: never): you get back into the latest
+};
 
 struct Career {
     bool on = false;  // career mode (else sandbox: everything owned)
@@ -73,17 +92,32 @@ struct Career {
     // Buys something off a station's rack: false (and why) if it can't.
     bool buyGear(const ShopItem& it, std::string& why);
 
-    bool isOpened(const CacheSpot& c) const { return opened.count(std::to_string(c.map) + ":" + c.id) > 0; }
-    // Opens it (once): its part or cash is yours. Returns what to announce ("" if opened already).
+    static std::string cacheKey(const CacheSpot& c) { return std::to_string(c.map) + ":" + c.id; }  // "MAP:ID"
+    bool isOpened(const CacheSpot& c) const { return opened.count(cacheKey(c)) > 0; }
+    // Opens it (once): its part or cash is yours. Returns what to announce ("" if opened already). (A career world keeps its
+    // own opened caches: careersession::openCache.)
     std::string openCache(const CacheSpot& c);
+    // What's in it, yours (whether or not it was opened before: the caller keeps that). Returns what to announce.
+    std::string takeCache(const CacheSpot& c);
     // A job done: pays. Returns what to announce.
     std::string jobDone();
     // A level finished with a medal (0 none, 1 bronze, 2 silver, 3 gold): pays for each medal
     // the first time; a level's first gold also gives one of the best parts. Returns what to announce.
     std::string medal(const std::string& level, int medal);
 
-    void startFresh();
-    bool load(const std::string& path);
+    std::vector<OwnedVehicle> vehicles;  // the profile's vehicles
+
+    bool fresh = false;  // made by startFresh and not loaded since (only such a profile takes a new world's difficulty)
+    void startFresh(Difficulty d = DIFF_MEDIUM);  // cash is startCash(d)
+    bool load(const std::string& path);  // false if it can't be read or isn't a career (then nothing changes)
     bool save(const std::string& path) const;
-    static std::string defaultPath();  // ~/.config/crumplezone/career.txt
+    // The profile: progress and vehicles in one file, atomically written with a .bak.
+    static std::string profilePath();  // careerConfigDir()/profile.txt
+    // profile.txt, else its .bak, else (only when neither is there) the old career.txt (migrated: true, and the next
+    // saveProfile writes profile.txt); false if none can be read (then nothing changes).
+    bool loadProfile();
+    // Whether profile.txt or its .bak is there (loadProfile false with one there: damaged, not missing).
+    static bool profileExists();
+    bool saveProfile() const;
+    static std::string defaultPath();  // careerConfigDir()/career.txt (the old single-file career)
 };

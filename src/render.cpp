@@ -1,12 +1,18 @@
 #include <future>
+#include <array>
+#include <atomic>
 #include <chrono>
 #include "render.h"
+#include "procrules.h"
+#include "procworld.h"
 #include "loadprof.h"
 #include "watermesh.h"
 #include "texcomp.h"
 #include "perf.h"
 #include "grasstiles.h"
 #include "parallel.h"
+#include "streamwin.h"
+#include "onemap.h"
 
 // Render targets and data textures in the VRAM report (texcomp.h); no mips on purpose.
 static void noteRT(const char* name, const char* fmt, int w, int h, int bytesPerTexel, int mips = 0, bool runtime = true) {
@@ -38,6 +44,17 @@ namespace {
 
 // (The sun and sky come from the clock: see daylight.h and drawScene.)
 const float kFog[3] = {0.66f, 0.74f, 0.84f};
+// Trees past this (m, at detail 1) are pictures (treedraw.h): where their plainest meshes began (forest::lodReach(2)). The meshes
+// dissolve into them over the band before it.
+constexpr double kImpostorFrom = 200, kImpostorBand = 30;
+// ...and in the far shadow cascade from here: their shadows there are a few texels (the near cascade keeps every mesh).
+constexpr double kShadowImpostorFrom = 100;
+// The land's long shadows (Renderer::updateHorizon): the map's texels a side, metres a texel, the step its middle follows the
+// camera in, and the texture unit every lit shader reads it from.
+constexpr int kHorizonTexels = 1024, kHorizonUnit = 8;
+constexpr float kHorizonTexel = 4.0f, kHorizonSnap = 256.0f;
+constexpr double kCanopyFrom = 700, kCanopyFull = 2200;  // (m) far off, the ground under a wood takes the canopy's colour over this
+constexpr double kFarForestFrom = 1000;  // (m) the window's trees hand over to the far forest (farforest.h): inside every window's edge
 
 // Shared fragment-shader helpers: noise, shadows, sky, fog. Everything renders into a
 // linear HDR target; the composite pass tone maps it (see kCompositeFS).
@@ -46,7 +63,15 @@ uniform vec3 uSun; uniform vec3 uCam; uniform vec3 uFog;
 uniform sampler2DShadow uShadow0, uShadow1;  // near and far cascade
 uniform mat4 uLightVP0, uLightVP1;
 uniform vec4 uShadowCfg;                     // on, PCF taps, -, -
+// The land's long shadows (Renderer::updateHorizon): per texel, the height under which the key light is behind the land.
+uniform sampler2D uHorizon;                  // (always unit 8: set when the program is linked)
+uniform vec4 uHorizonBox;                    // its corner (x, z), 1 / its span in metres, on
 uniform float uTime, uClouds;
+// The procedural world (procworld.h): where its window's origin is from where the noise is anchored, so the ground's, the
+// clouds' and the scenery's patterns stay put in the world as the window slides (0 on the other maps). NP: a fragment's
+// position in that frame, for patterns only (lighting and the terrain texels go by vPos).
+uniform vec2 uNoiseOff;
+#define NP (vPos + vec3(uNoiseOff.x, 0.0, uNoiseOff.y))
 uniform float uFogFar;  // (a short draw distance: the fog closes in to hide where the world stops; 0 off)
 // Time of day (daylight.h). uSun is the key light that shades and casts the shadows: the
 // sun by day, the moon by night; uSunDir is where the sun really is.
@@ -59,9 +84,9 @@ uniform mat3 uSkyRot;                        // world direction -> star sphere
 // Vehicle headlamps (lights.h): spot lights, two per car for the nearest few cars.
 uniform int uLampN;
 uniform vec4 uFire;                          // a camp fire's point light: position, strength (0: none; the main menu's scene)
-uniform vec4 uLampPos[16];                   // lens center, beam (1 low, 2 high)
-uniform vec4 uLampDir[16];                   // beam axis (the car's forward), range (m)
-uniform vec4 uLampUp[16];                    // the car's up, peak intensity
+uniform vec4 uLampPos[20];                   // lens center, kind (1 low beam, 2 high beam, 3 tail and brake lamps, 5 reversing lamps)
+uniform vec4 uLampDir[20];                   // beam axis (the car's forward), range (m)
+uniform vec4 uLampUp[20];                    // the car's up, peak intensity
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 // Ordered dither (4x4 Bayer) at a pixel, 0..1: a fade of f drops the pixels whose threshold is under f (screen door).
 const int kBayer[16] = int[](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
@@ -105,7 +130,7 @@ float pcf(sampler2DShadow tex, vec3 c, float radius, float rot){
 // Shade from the clouds overhead: the same cloud layer the sky draws, traced toward the sun.
 float cloudShadow(vec3 p){
   if (uClouds <= 0.0) return 1.0;
-  vec2 w = p.xz + uSun.xz / max(uSun.y, 0.2) * (1800.0 - p.y);
+  vec2 w = p.xz + uNoiseOff + uSun.xz / max(uSun.y, 0.2) * (1800.0 - p.y);
   float cov = smoothstep(0.50, 0.78, fbm(w * 0.00045 + vec2(uTime * 0.004, uTime * 0.0015), 3)) * uClouds;
   return 1.0 - 0.65 * cov;
 }
@@ -128,7 +153,21 @@ float shadowMap(vec3 p, vec3 n){
   float nearS = pcf(uShadow0, vec3(c0.xy, c0.z - 0.00012), 2.2 / vec2(textureSize(uShadow0, 0)).x, rot);
   return mix(nearS, far, smoothstep(0.42, 0.5, e0));
 }
-float shadowAt(vec3 p, vec3 n){ return shadowMap(p, n) * cloudShadow(p); }
+// In the shade of the land toward the sun (a ridge, a mountain): from fully lit a metre under the map's height to dark 3.5 m under
+// (a soft edge, and room for the coarse heights it's made from); faded out toward the map's edge.
+float horizonShadow(vec3 p){
+  if (uHorizonBox.w < 0.5) return 1.0;
+  vec2 uv = (p.xz - uHorizonBox.xy) * uHorizonBox.z;
+  float e = max(abs(uv.x - 0.5), abs(uv.y - 0.5));
+  if (e >= 0.5) return 1.0;
+  float under = texture(uHorizon, uv).r - p.y;
+  return mix(1.0 - smoothstep(1.0, 3.5, under), 1.0, smoothstep(0.42, 0.5, e));
+}
+float shadowAt(vec3 p, vec3 n){
+  float hz = horizonShadow(p);
+  if (hz <= 0.0) return 0.0;  // (deep in a mountain's shade: the shadow maps can't make it darker)
+  return min(shadowMap(p, n), hz) * cloudShadow(p);
+}
 float hash3(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
 // Stars: a grid over the star sphere (which turns with the clock) with one star in a
 // few of its cells, most faint, some bright, gently twinkling; a faint milky band.
@@ -195,7 +234,7 @@ vec3 skyColor(vec3 d, int oct){
   }
   float cl = 0.0;
   if (oct > 0 && uClouds > 0.0 && d.y > 0.0) {
-    vec2 p = (uCam.xz + d.xz * (1800.0 / max(d.y, 0.04))) * 0.00045 + vec2(uTime * 0.004, uTime * 0.0015);
+    vec2 p = (uCam.xz + uNoiseOff + d.xz * (1800.0 / max(d.y, 0.04))) * 0.00045 + vec2(uTime * 0.004, uTime * 0.0015);
     float n = fbm(p, oct), n2 = fbm(p + uSun.xz * 0.05, max(oct - 2, 1));
     float cov = smoothstep(0.50, 0.78, n) * smoothstep(0.02, 0.22, d.y) * uClouds;
     float lit = clamp(0.62 + (n - n2) * 2.4, 0.25, 1.0);  // edges facing the key light (moonlit at night)
@@ -217,18 +256,31 @@ vec3 ambientAt(vec3 n){ return mix(uAmbGround, uAmbSky, n.y * 0.5 + 0.5); }
 vec3 lampLight(vec3 p, vec3 n, vec3 V, float specP, float wrap, out vec3 spec){
   vec3 E = vec3(0.0);
   spec = vec3(0.0);
+  const vec3 tint = vec3(1.0, 0.95, 0.86);  // warm white
   for (int i = 0; i < uLampN; i++) {
     vec3 L = uLampPos[i].xyz - p;
     float d2 = dot(L, L), range = uLampDir[i].w;
     if (d2 > range * range) continue;
     vec3 f = uLampDir[i].xyz, up = uLampUp[i].xyz;
+    if (uLampPos[i].w > 2.5) {  // tail, brake and reversing lamps: a soft glow over the half-space behind the car
+      vec3 Lr = L * inversesqrt(d2);
+      float hemi = smoothstep(-0.15, 0.6, dot(Lr, f));
+      float wr = clamp(1.0 - d2 / (range * range), 0.0, 1.0);
+      float er = uLampUp[i].w * hemi * wr * wr / (d2 + 0.5);
+      float Er = max(dot(n, Lr) + 0.3, 0.0) * (1.0 - wrap) / 1.3 + wrap * 0.6;
+      Er = er * Er * 5.0 / (er * Er + 5.0);
+      vec3 lc = (uLampPos[i].w > 4.5 ? vec3(1.0, 0.92, 0.74) : vec3(1.0, 0.025, 0.008)) / tint;
+      E += lc * Er;
+      spec += lc * (pow(max(dot(n, normalize(Lr + V)), 0.0), specP) * Er);
+      continue;
+    }
     float fz = -dot(L, f);
     if (fz < 0.3) continue;  // behind the lens, or the car's own bumper just ahead of it
     float x = dot(L, cross(up, f)) / fz, y = -dot(L, up) / fz;  // tangents right of and above the beam axis
     // Low beam: a flat cutoff just below level (so it doesn't dazzle), spread wide. High
     // beam: a long round hot spot. Both are dimmer on the ground close in (steep below
     // the axis): that's what keeps the pool even down the road.
-    float across = 0.45 * smoothstep(1.1, 0.25, abs(x)) + 0.55 * exp(-x * x * 18.0);
+    float across = 0.40 * exp(-x * x * 2.6) + 0.60 * exp(-x * x * 20.0);  // a wide soft skirt round a hotter core
     float near = min(1.0, pow(0.035 / max(abs(y), 1e-3), 3.0));
     float prof = uLampPos[i].w > 1.5 ? (y < 0.0 ? near : exp(-y * y * 300.0) + 0.15 * smoothstep(0.25, 0.0, y))
                                      : smoothstep(0.004, -0.012, y) * near;
@@ -241,7 +293,6 @@ vec3 lampLight(vec3 p, vec3 n, vec3 V, float specP, float wrap, out vec3 spec){
     E += vec3(Ei);
     spec += vec3(pow(max(dot(n, normalize(Ln + V)), 0.0), specP) * Ei);
   }
-  const vec3 tint = vec3(1.0, 0.95, 0.86);  // warm white
   if (uFire.w > 0.0) {  // the camp fire: an orange point light that flickers (its strength does)
     vec3 L = uFire.xyz - p;
     float d2 = dot(L, L);
@@ -298,20 +349,37 @@ uniform int uMap;                 // 0 proving ground, 1 mountain, 2 freeway
 uniform sampler2D uTerrainTex;    // per meter: height, grass, paint
 uniform float uTerrainN;          // cells per side (the map's grid)
 uniform vec2 uRockSnow;           // heights where bare rock, then snow, take over
-uniform int uTreeFadeN;           // see-through trees: this many, each (x, z, reach, fade 0..1)
+// The big map's regions' own look (onemap.h groundLookAt): a texel per uLookBox.z metres from (uLookBox.x, .y), uLookBox.w a side:
+// r meadow, g bare rock from (/400 m), b snow from (/500 m). Off (uLookOn 0): the map's own, from uMap and uRockSnow.
+uniform sampler2D uLookTex;
+uniform vec4 uLookBox;
+uniform float uLookOn;
+vec3 regionLook(vec2 xz){
+  if (uLookOn < 0.5) return vec3((uMap == 0 || uMap == 2) ? 1.0 : 0.0, uRockSnow);
+  vec3 t = texture(uLookTex, ((xz - uLookBox.xy) / uLookBox.z + 0.5) / uLookBox.w).rgb;
+  return vec3(t.r, t.g * 400.0, t.b * 500.0);
+}
+uniform int uTreeFadeN;          // see-through trees: this many, each (x, z, reach, fade 0..1)
 uniform vec4 uTreeFade[24];
 // The terrain texels (one a cell): a window of the map round the camera, toroidal (a big map; a small one is in it whole), and
 // the whole map coarse (a texel per 4 cells) for whatever lies outside the window.
 uniform vec4 uTerrainWin;          // the window: its first cell (i, j), its texels a side, 1 when it holds the whole map
 uniform sampler2D uTerrainCoarse;
 uniform float uTerrainCoarseN;
-vec4 terrainCell(ivec2 g){
+vec4 terrainCellIn(ivec2 g){
   g = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
   if (uTerrainWin.w > 0.5) return texelFetch(uTerrainTex, g, 0);  // (the whole map is in the window, as stored)
   ivec2 r = g - ivec2(uTerrainWin.xy);
   int w = int(uTerrainWin.z);
   if (r.x < 0 || r.y < 0 || r.x >= w || r.y >= w) return texelFetch(uTerrainCoarse, clamp(g / 4, ivec2(0), ivec2(int(uTerrainCoarseN) - 1)), 0);
   return texelFetch(uTerrainTex, g % w, 0);
+}
+// Past the map's grid (the far backdrop): its height on the edge, but no paint, grass or water. (Clamped whole, a road or a river
+// crossing the edge ran on as a long straight stripe across the far hills.)
+vec4 terrainCell(ivec2 g){
+  ivec2 c = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
+  vec4 t = terrainCellIn(c);
+  return c == g ? t : vec4(t.r, 0.0, 0.0, -1000.0);
 }
 )";
 
@@ -328,7 +396,7 @@ float gridLine(vec2 p, float w){
 // The loose and slippery surfaces (paint 4 and 7..11): gravel, sand, mud, snow, ice and
 // wet asphalt. Returns false for anything else.
 bool surfacePaint(int paint, inout vec3 base, inout float specK, inout float specP){
-  vec2 p = vPos.xz;
+  vec2 p = NP.xz;
 #ifdef PROC_LITE
   if (false) {
 #else
@@ -404,10 +472,10 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
     // darker still every 50 m. All in the shader; the joints fade out where they'd be finer than a pixel or two.
     float fwx = max(fwidth(vPos.x), 1e-4);
     float fineFade = 1.0 - smoothstep(0.12, 0.3, fwx), gridFade = 1.0 - smoothstep(1.5, 4.0, fwx);
-    vec3 padc = vec3(0.50, 0.505, 0.52) * (0.95 + 0.06 * vnoise(vPos.xz * 0.5)) * (0.96 + 0.06 * vnoise(vPos.xz * 0.05));
-    padc *= 1.0 - 0.10 * fineFade * gridLine(vPos.xz, 0.0);
-    padc = mix(padc, vec3(0.33, 0.34, 0.36), 0.8 * gridFade * gridLine(vPos.xz / 10.0, 0.6));
-    padc = mix(padc, vec3(0.26, 0.27, 0.29), 0.85 * gridLine(vPos.xz / 50.0, 1.2));
+    vec3 padc = vec3(0.50, 0.505, 0.52) * (0.95 + 0.06 * vnoise(NP.xz * 0.5)) * (0.96 + 0.06 * vnoise(NP.xz * 0.05));
+    padc *= 1.0 - 0.10 * fineFade * gridLine(NP.xz, 0.0);
+    padc = mix(padc, vec3(0.33, 0.34, 0.36), 0.8 * gridFade * gridLine(NP.xz / 10.0, 0.6));
+    padc = mix(padc, vec3(0.26, 0.27, 0.29), 0.85 * gridLine(NP.xz / 50.0, 1.2));
 #ifdef PROC_LITE
     // (LOW and POTATO ground: the land under a road is a flat tone, the photo layers draw the countryside.)
     float n2 = 0.5, steep = 0.0, snow = 0.0;
@@ -416,19 +484,20 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
 #else
     // Countryside: two-tone meadow with dry patches, rock on steep ground and up the rim
     // mountains (banded strata), snow on the high tops.
-    float n1 = fbm(vPos.xz * 0.02, 4), n2 = vnoise(vPos.xz * 0.9);
+    float n1 = fbm(NP.xz * 0.02, 4), n2 = vnoise(NP.xz * 0.9);
     vec3 grass = mix(vec3(0.14, 0.22, 0.07), vec3(0.29, 0.33, 0.12), n1);
-    grass = mix(grass, vec3(0.42, 0.38, 0.21), smoothstep(0.6, 0.8, fbm(vPos.xz * 0.006 + 3.1, 3)) * 0.6);
-    grass *= (0.82 + 0.26 * n2) * (0.9 + 0.2 * vnoise(vPos.xz * 4.0));
-    float strata = vnoise(vec2(vPos.y * 0.22 + 6.0 * fbm(vPos.xz * 0.008, 3), (vPos.x - vPos.z) * 0.004));
-    vec3 rock = mix(vec3(0.29, 0.27, 0.25), vec3(0.37, 0.34, 0.31), strata) * (0.7 + 0.45 * fbm(vPos.xz * 0.05 + vPos.y * 0.03, 4));
+    grass = mix(grass, vec3(0.42, 0.38, 0.21), smoothstep(0.6, 0.8, fbm(NP.xz * 0.006 + 3.1, 3)) * 0.6);
+    grass *= (0.82 + 0.26 * n2) * (0.9 + 0.2 * vnoise(NP.xz * 4.0));
+    float strata = vnoise(vec2(NP.y * 0.22 + 6.0 * fbm(NP.xz * 0.008, 3), (NP.x - NP.z) * 0.004));
+    vec3 rock = mix(vec3(0.29, 0.27, 0.25), vec3(0.37, 0.34, 0.31), strata) * (0.7 + 0.45 * fbm(NP.xz * 0.05 + NP.y * 0.03, 4));
     // Warmer and cooler stone across the range, and streaks running down the faces.
-    rock *= mix(vec3(1.06, 0.97, 0.86), vec3(0.88, 0.93, 1.02), fbm(vPos.xz * 0.003 + 9.0, 2));
-    rock *= 0.8 + 0.3 * vnoise(vec2((vPos.x + vPos.z) * 0.12, vPos.y * 0.012));
-    float steep = (uMap == 0 || uMap == 2) ? smoothstep(0.84, 0.62, n.y + 0.14 * (n1 - 0.5)) : smoothstep(0.72, 0.55, n.y + 0.14 * (n1 - 0.5));
-    float high = smoothstep(uRockSnow.x, uRockSnow.x + 90.0, vPos.y + 30.0 * n1);
+    rock *= mix(vec3(1.06, 0.97, 0.86), vec3(0.88, 0.93, 1.02), fbm(NP.xz * 0.003 + 9.0, 2));
+    rock *= 0.8 + 0.3 * vnoise(vec2((NP.x + NP.z) * 0.12, NP.y * 0.012));
+    vec3 lk = regionLook(vPos.xz);
+    float steep = mix(smoothstep(0.72, 0.55, n.y + 0.14 * (n1 - 0.5)), smoothstep(0.84, 0.62, n.y + 0.14 * (n1 - 0.5)), lk.x);
+    float high = smoothstep(lk.y, lk.y + 90.0, vPos.y + 30.0 * n1);
     vec3 land = mix(grass, rock, max(steep, high * 0.8));
-    float snow = smoothstep(uRockSnow.y, uRockSnow.y + 50.0, vPos.y + 70.0 * n1) * smoothstep(0.5, 0.75, n.y);
+    float snow = smoothstep(lk.z, lk.z + 50.0, vPos.y + 70.0 * n1) * smoothstep(0.5, 0.75, n.y);
     land = mix(land, vec3(0.90, 0.92, 0.96), snow);
     base = land;
 #endif
@@ -438,8 +507,8 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
     float e = max(fwidth(lat), 0.02) * 1.5;
     float onRoad = 1.0 - smoothstep(5.0 - e, 5.0 + e, lat);
     float onShoulder = 1.0 - smoothstep(6.6 - e, 6.6 + e, lat);
-    vec3 asphalt = vec3(0.21, 0.215, 0.22) * (0.88 + 0.16 * vnoise(vPos.xz * 1.3));
-    vec3 gravel = vec3(0.45, 0.42, 0.36) * (0.85 + 0.3 * vnoise(vPos.xz * 2.0));
+    vec3 asphalt = vec3(0.21, 0.215, 0.22) * (0.88 + 0.16 * vnoise(NP.xz * 1.3));
+    vec3 gravel = vec3(0.45, 0.42, 0.36) * (0.85 + 0.3 * vnoise(NP.xz * 2.0));
     float edgeLine = 1.0 - smoothstep(0.09, 0.09 + e, abs(lat - 4.6));
     asphalt = mix(asphalt, vec3(0.92), edgeLine);
     float dash = step(fract(along / 9.0), 0.5);
@@ -450,20 +519,20 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
       if (uMap == 0) base = mix(base, roadCol, step(0.5, vCol.r));
       // The surface course (and its concrete apron).
       int paint = int(paintAt(vPos.xz) + 0.5);
-      if (paint == 5) base = uMap == 0 ? padc : vec3(0.50, 0.49, 0.47) * (0.9 + 0.12 * vnoise(vPos.xz * 1.7)) * (1.0 - 0.3 * gridLine(vPos.xz / 3.0, 0.2));
+      if (paint == 5) base = uMap == 0 ? padc : vec3(0.50, 0.49, 0.47) * (0.9 + 0.12 * vnoise(NP.xz * 1.7)) * (1.0 - 0.3 * gridLine(NP.xz / 3.0, 0.2));
       else surfacePaint(paint, base, specK, specP);
     } else {
 #ifdef PROC_LITE
       int paint = int(paintAt(vPos.xz) + 0.5);
-      if (paint == 5) base = vec3(0.50, 0.49, 0.47) * (0.9 + 0.12 * vnoise(vPos.xz * 1.7)) * (1.0 - 0.35 * gridLine(vPos.xz / 3.0, 0.2));
+      if (paint == 5) base = vec3(0.50, 0.49, 0.47) * (0.9 + 0.12 * vnoise(NP.xz * 1.7)) * (1.0 - 0.35 * gridLine(NP.xz / 3.0, 0.2));
       else surfacePaint(paint, base, specK, specP);
 #else
       // Mountain: paint looked up per pixel (from a slightly wobbled spot, so the edges
       // are ragged rather than 1 m stairs): gravel road, dirt trail, slickrock, gravel.
-      vec2 wob = (vec2(vnoise(vPos.xz * 0.8), vnoise(vPos.zx * 0.8 + 7.0)) - 0.5) * 1.3;
+      vec2 wob = (vec2(vnoise(NP.xz * 0.8), vnoise(NP.zx * 0.8 + 7.0)) - 0.5) * 1.3;
       int paint = int(paintAt(vPos.xz + wob) + 0.5);
-      vec3 dirt = mix(vec3(0.29, 0.25, 0.20), vec3(0.37, 0.32, 0.26), fbm(vPos.xz * 0.35, 3)) * (0.88 + 0.18 * vnoise(vPos.xz * 4.0));
-      vec3 grav = vec3(0.37, 0.35, 0.32) * (0.85 + 0.2 * vnoise(vPos.xz * 9.0) + 0.1 * vnoise(vPos.xz * 23.0)) * (0.9 + 0.2 * fbm(vPos.xz * 0.2, 2));
+      vec3 dirt = mix(vec3(0.29, 0.25, 0.20), vec3(0.37, 0.32, 0.26), fbm(NP.xz * 0.35, 3)) * (0.88 + 0.18 * vnoise(NP.xz * 4.0));
+      vec3 grav = vec3(0.37, 0.35, 0.32) * (0.85 + 0.2 * vnoise(NP.xz * 9.0) + 0.1 * vnoise(NP.xz * 23.0)) * (0.9 + 0.2 * fbm(NP.xz * 0.2, 2));
       // Worn wheel tracks: a darker, smoother pair along trails and each lane of the road.
       float sl = vCol.g;
       float trk = paint == 1 ? abs(abs(sl) - 2.6) : abs(sl);
@@ -471,22 +540,22 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
       if (paint == 1) base = mix(grav, dirt * 0.85, ruts * 0.5);
       else if (paint == 2) base = mix(dirt, dirt * 0.72, ruts * 0.55);
       else if (paint == 3) {
-        vec3 slick = mix(vec3(0.46, 0.43, 0.39), vec3(0.36, 0.34, 0.32), fbm(vPos.xz * 0.12, 3)) * (0.88 + 0.18 * vnoise(vPos.xz * 2.5));
-        slick = mix(slick, vec3(0.22, 0.21, 0.20), smoothstep(0.62, 0.7, fbm(vec2(vPos.x * 0.6, vPos.z * 0.08), 2)) * 0.6);  // water streaks
-        float crack = 1.0 - smoothstep(0.0, 0.03, abs(vnoise(vPos.xz * 0.45) - 0.5));
+        vec3 slick = mix(vec3(0.46, 0.43, 0.39), vec3(0.36, 0.34, 0.32), fbm(NP.xz * 0.12, 3)) * (0.88 + 0.18 * vnoise(NP.xz * 2.5));
+        slick = mix(slick, vec3(0.22, 0.21, 0.20), smoothstep(0.62, 0.7, fbm(vec2(NP.x * 0.6, NP.z * 0.08), 2)) * 0.6);  // water streaks
+        float crack = 1.0 - smoothstep(0.0, 0.03, abs(vnoise(NP.xz * 0.45) - 0.5));
         base = mix(slick, slick * 0.45, crack * 0.8);
       } else if (paint == 4) base = grav;
       else if (surfacePaint(paint, base, specK, specP)) {
       } else if (paint == 5) {  // concrete pad with saw-cut joints every 3 m
-        base = vec3(0.50, 0.49, 0.47) * (0.9 + 0.12 * vnoise(vPos.xz * 1.7)) * (0.95 + 0.1 * fbm(vPos.xz * 0.3, 2));
-        base *= 1.0 - 0.35 * gridLine(vPos.xz / 3.0, 0.2);
+        base = vec3(0.50, 0.49, 0.47) * (0.9 + 0.12 * vnoise(NP.xz * 1.7)) * (0.95 + 0.1 * fbm(NP.xz * 0.3, 2));
+        base *= 1.0 - 0.35 * gridLine(NP.xz / 3.0, 0.2);
       } else if (paint == 6) {  // scree: loose broken stone, pale with dark chips
-        vec3 sc = mix(vec3(0.47, 0.45, 0.41), vec3(0.33, 0.31, 0.29), vnoise(vPos.xz * 2.7));
-        sc *= 0.72 + 0.45 * vnoise(vPos.xz * 13.0);
-        base = mix(sc, sc * 0.55, smoothstep(0.62, 0.75, vnoise(vPos.xz * 6.0)));
+        vec3 sc = mix(vec3(0.47, 0.45, 0.41), vec3(0.33, 0.31, 0.29), vnoise(NP.xz * 2.7));
+        sc *= 0.72 + 0.45 * vnoise(NP.xz * 13.0);
+        base = mix(sc, sc * 0.55, smoothstep(0.62, 0.75, vnoise(NP.xz * 6.0)));
       }
       // Forest floor: brown needle litter under the pines.
-      if (paint == 0) base = mix(base, vec3(0.24, 0.20, 0.13) * (0.8 + 0.3 * n2), smoothstep(0.55, 0.75, fbm(vPos.xz * 0.012 + vec2(7.0, -3.0), 3)) * smoothstep(18.0, 30.0, vPos.y) * 0.55 * (1.0 - snow) * (1.0 - steep));
+      if (paint == 0) base = mix(base, vec3(0.24, 0.20, 0.13) * (0.8 + 0.3 * n2), smoothstep(0.55, 0.75, fbm(NP.xz * 0.012 + vec2(7.0, -3.0), 3)) * smoothstep(18.0, 30.0, NP.y) * 0.55 * (1.0 - snow) * (1.0 - steep));
 #endif
     }
     // Wet ground at the water's edge, and a dark silty bed under it.
@@ -498,6 +567,7 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
 )";
 
 const char* kLitFSBody = R"(
+uniform vec4 uRimTint;  // w 1: a car's wheels in its accent colour (paint.h): the rim, not the tire, glass or the dark hub
 void main(){
   vec3 n = normalize(vNrm);
   vec3 base = vCol.rgb;
@@ -506,6 +576,10 @@ void main(){
   mat -= wear * 200;
   bool sunlit = mat >= 100;  // (a cargo model inside a body's shadow: Placed::sunlit)
   if (sunlit) mat -= 100;
+  if (uRimTint.w > 0.5 && mat != 9 && mat != 5 && mat != 6) {
+    float lum = dot(base, vec3(0.3, 0.59, 0.11));
+    if (lum > 0.1) base = uRimTint.rgb * clamp(0.45 + lum * 1.1, 0.0, 1.15);
+  }
   if (wear == 1) base = mix(base, base * vec3(1.0, 0.72, 0.5), 0.7);  // bent: warmed
   else if (wear == 2) base = mix(base, vec3(0.62, 0.17, 0.08), 0.45) * 0.9;  // broken: rust red
   else if (wear == 3) base *= 0.3;  // dead: soot
@@ -530,25 +604,25 @@ void main(){
     terrainProcedural(n, base, specK, specP);
   } else if (mat == 12 || mat == 16) {
     // Rock: grainy, with darker veins, crusty lichen on the tops (not on a slab: sandstone and granite stay their own colour).
-    float g1 = vnoise(vPos.xz * 2.3 + vPos.y * 1.1), g2 = vnoise(vPos.zy * 2.7 - vPos.x * 0.9);
+    float g1 = vnoise(NP.xz * 2.3 + NP.y * 1.1), g2 = vnoise(NP.zy * 2.7 - NP.x * 0.9);
     base *= 0.72 + 0.5 * (0.5 * g1 + 0.5 * g2);
-    float vein = 1.0 - smoothstep(0.0, 0.04, abs(vnoise(vPos.xy * 0.9 + vPos.z * 0.6) - 0.5));
+    float vein = 1.0 - smoothstep(0.0, 0.04, abs(vnoise(NP.xy * 0.9 + NP.z * 0.6) - 0.5));
     base *= 1.0 - 0.35 * vein;
-    float lichen = smoothstep(0.6, 0.72, vnoise(vPos.xz * 3.1 + vPos.y * 2.0)) * smoothstep(0.35, 0.85, n.y);
+    float lichen = smoothstep(0.6, 0.72, vnoise(NP.xz * 3.1 + NP.y * 2.0)) * smoothstep(0.35, 0.85, n.y);
     if (mat == 12) base = mix(base, vec3(0.42, 0.45, 0.26), lichen * 0.5);
     specK = 0.06; specP = 20.0;
   } else if (mat == 14) {
     // Wood: weathered grain.
-    float g = vnoise(vec2((vPos.x + vPos.z) * 2.0, vPos.y * 14.0)) * 0.6 + vnoise(vec2(vPos.y * 2.0, (vPos.x - vPos.z) * 16.0)) * 0.4;
+    float g = vnoise(vec2((NP.x + NP.z) * 2.0, NP.y * 14.0)) * 0.6 + vnoise(vec2(NP.y * 2.0, (NP.x - NP.z) * 16.0)) * 0.4;
     base *= 0.78 + 0.35 * g;
     specK = 0.03;
   } else if (mat == 13) {
     // Foliage: clumps of lighter and darker leaves.
-    base *= 0.8 + 0.4 * vnoise(vPos.xz * 2.2 + vPos.y * 1.7);
+    base *= 0.8 + 0.4 * vnoise(NP.xz * 2.2 + NP.y * 1.7);
     specK = 0.0;
   } else if (mat == 3) {
     vec3 a = abs(n);
-    vec2 uv = a.y > 0.6 ? vPos.xz : (a.x > a.z ? vPos.zy : vPos.xy);
+    vec2 uv = a.y > 0.6 ? NP.xz : (a.x > a.z ? NP.zy : NP.xy);
     base *= 1.0 - 0.22 * gridLine(uv, 0.0);
     base *= 0.9 + 0.15 * vnoise(uv * 1.7);
   } else if (mat == 9) {
@@ -632,13 +706,22 @@ uniform vec4 uLampOn;  // lit: headlamp left, right (1 low, 1.5 high), tail lamp
 uniform vec4 uLampOk;  // still whole: the same four (0 = smashed)
 uniform float uReverse;  // 1 in reverse: the reversing lamps
 uniform vec4 uTrim;    // two-tone lower body: color, top (lattice k; 0 = none)
+uniform vec4 uAccent;  // the owner's accent colour (paint.h), w 1: a stripe down the middle of the bonnet and roof
+uniform int uFinish;   // 0 gloss, 1 matte, 2 metallic
 uniform int uPass;     // 0 = body, 1 = glass
 uniform int uVehicle;  // catalog body style: EF, Jesko, Bronco, 4Runner
 // Sculpted shell (bodyshell.cpp): vLat is then the rest position in meters (x along,
 // y up, z across) and these are its lines: floor, belt, roof, hood front | front x,
 // half width, windshield base x, roof front x | B-pillar x, C-pillar x, liftgate
 // bottom y, liftgate half width | trim top y, roof tuck, rear x, liftgate top x.
-uniform int uShell;      // 1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma (uShD.w: its cab's back x), 5 K5 Blazer, 6 Baja Bug (uShD.w: where the roof meets the deck)
+// (CAR_SHELL: each shell has a program of its own, Renderer::progCarShell, so the compiler drops the other shells' code:
+// one program with all of them took Apple's software renderer over ten minutes to build at its first draw.)
+#ifdef CAR_SHELL
+#define uShell CAR_SHELL
+#else
+uniform int uShell;
+#endif
+//                       1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma (uShD.w: its cab's back x), 5 K5 Blazer, 6 Baja Bug (uShD.w: where the roof meets the deck)
 uniform vec4 uShA, uShB, uShC, uShD;
 uniform vec4 uShE;       // front door's front edge x, gate top y, bumper top y, wheel opening top y
 out vec4 oCol;
@@ -1469,6 +1552,14 @@ void main(){
     }
   }
 
+  if (kind == 0 && uAccent.w > 0.5 && n.y > 0.6) {  // the accent stripe, with a dark pinstripe either side
+    float lat = abs(uShell > 0 ? P.z / 0.9 : (j - 0.5 * W) / max(0.5 * W, 1.0));
+    float fwl = max(fwidth(lat), 1e-4);
+    float edge = 1.0 - smoothstep(0.085, 0.085 + fwl * 1.5, lat);
+    float pin = (1.0 - smoothstep(0.012, 0.012 + fwl * 1.5, abs(lat - 0.112))) * 0.8;
+    base = mix(base, vec3(0.03), pin);
+    base = mix(base, uAccent.rgb, edge);
+  }
   vec3 lin = pow(base, vec3(2.2));
   float sh = shadowAt(vPos, n);
   float ndl = max(dot(n, uSun), 0.0);
@@ -1483,7 +1574,14 @@ void main(){
   int side = (uShell > 0 ? P.z > 0.0 : j > 0.5 * W) ? 1 : 0;
   bool rearLens = uShell > 0 ? P.x < 0.0 : region == 6;
   vec3 col;
-  if (kind == 0) {  // clear-coated paint
+  if (kind == 0 && uFinish == 1) {  // matte: no clear coat, a soft sheen
+    col = lin * lit + lin * env * 0.05 + env * fres * 0.1 + pow(max(dot(n, H), 0.0), 10.0) * 0.12 * spec + lspec * 0.1;
+  } else if (kind == 0 && uFinish == 2) {  // metallic: the colour in the reflections, and flakes that catch the sun
+    vec3 cell = floor(vLat * (uShell > 0 ? 220.0 : 55.0));
+    vec3 fn = normalize(n + (vec3(hash3(cell), hash3(cell + 7.1), hash3(cell + 13.3)) - 0.5) * 0.9);
+    float flake = pow(max(dot(fn, H), 0.0), 50.0);
+    col = lin * lit * 0.85 + lin * env * 0.55 + env * fres * 0.9 + (lin * 0.8 + 0.15) * flake * 2.2 * spec + pow(max(dot(n, H), 0.0), 140.0) * 1.8 * spec + lspec * 0.5;
+  } else if (kind == 0) {  // clear-coated paint
     col = lin * lit + lin * env * 0.12 + env * fres * 0.9 + pow(max(dot(n, H), 0.0), 140.0) * 1.8 * spec + lspec * 0.5;
   } else if (kind == 1 || kind == 5) {
     col = lin * lit + env * fres * (kind == 1 ? 0.18 : 0.05) + lspec * (kind == 1 ? 0.05 : 0.01);
@@ -1500,7 +1598,7 @@ void main(){
   } else if (kind == 4) {  // tail lamp: lit with the headlamps, much brighter when braking
     vec3 red = pow(vec3(0.7, 0.04, 0.03), vec3(2.2));
     float ok = uLampOk[2 + side];
-    col = red * lit * 0.5 + env * fres * 0.6 + vec3(1.0, 0.05, 0.03) * (0.12 + 2.5 * uLampOn[2 + side] + 9.0 * uBrake * ok);
+    col = red * lit * 0.5 + env * fres * 0.6 + vec3(1.0, 0.022, 0.01) * (0.12 + 2.0 * uLampOn[2 + side] + 4.0 * uBrake * ok);
     col = mix(red * lit * 0.2 + env * fres * 0.3, col, ok);
   } else if (kind == 8) {  // amber corner / indicator lens: the parking lights glow with the headlamps
     col = vec3(0.85, 0.25, 0.015) * (0.05 + lit * 0.4 + 1.2 * uLampOn[side]) + env * fres * 0.4;
@@ -1702,6 +1800,25 @@ void main(){
   oCol = vec4(applyFog(col, vPos), a);
 })";
 
+// The lamp lenses' glow: round sprites added on in the HDR target (so the bloom picks them up).
+const char* kGlowFS = R"(#version 330 core
+in vec2 vUv; in float vMode; in vec4 vCol; in vec3 vPos;
+uniform vec3 uCam;
+out vec4 oCol;
+void main(){
+  if (vMode > 0.5) {  // a beam's haze: a thin cone, brightest where you look through the most of it, fading with distance
+    vec3 N = normalize(cross(dFdx(vPos), dFdy(vPos)));
+    float facing = abs(dot(N, normalize(uCam - vPos)));
+    float a = facing * facing * pow(1.0 - vUv.x, 2.2) * smoothstep(0.0, 0.1, vUv.x);
+    oCol = vec4(vCol.rgb * a, 1.0);
+    return;
+  }
+  float r2 = dot(vUv, vUv);
+  if (r2 > 1.0) discard;
+  float f = 1.0 - r2;
+  oCol = vec4(vCol.rgb * (3.0 * exp(-r2 * 14.0) + 0.45 * f * f * f), 1.0);
+})";
+
 const char* kHudVS = R"(#version 330 core
 layout(location=0) in vec2 aPos;
 layout(location=1) in vec2 aUv;
@@ -1803,13 +1920,20 @@ uniform sampler2D uTerrainTex; uniform float uTerrainN;
 uniform vec4 uTerrainWin;          // the window: its first cell (i, j), its texels a side, 1 when it holds the whole map
 uniform sampler2D uTerrainCoarse;
 uniform float uTerrainCoarseN;
-vec4 terrainCell(ivec2 g){
+vec4 terrainCellIn(ivec2 g){
   g = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
   if (uTerrainWin.w > 0.5) return texelFetch(uTerrainTex, g, 0);  // (the whole map is in the window, as stored)
   ivec2 r = g - ivec2(uTerrainWin.xy);
   int w = int(uTerrainWin.z);
   if (r.x < 0 || r.y < 0 || r.x >= w || r.y >= w) return texelFetch(uTerrainCoarse, clamp(g / 4, ivec2(0), ivec2(int(uTerrainCoarseN) - 1)), 0);
   return texelFetch(uTerrainTex, g % w, 0);
+}
+// Past the map's grid (the far backdrop): its height on the edge, but no paint, grass or water. (Clamped whole, a road or a river
+// crossing the edge ran on as a long straight stripe across the far hills.)
+vec4 terrainCell(ivec2 g){
+  ivec2 c = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
+  vec4 t = terrainCellIn(c);
+  return c == g ? t : vec4(t.r, 0.0, 0.0, -1000.0);
 }
 uniform mat4 uVP; uniform vec3 uCam; uniform float uTime;
 uniform int uSide; uniform int uBlades; uniform int uMap;
@@ -1818,10 +1942,13 @@ uniform float uCell; uniform float uNoCull;
 uniform vec4 uRing;     // this ring comes in over x..y metres from the camera, and goes out over z..w
 uniform vec4 uLook;     // x height scale, y width scale, z 1: plain blades (the far rings), w 1: seed heads and flowers
 uniform vec2 uRockSnow;
+uniform sampler2D uLookTex; uniform vec4 uLookBox; uniform float uLookOn;  // (the big map's regions' look: kLitIns regionLook)
 uniform int uPushN;
 uniform vec4 uPush[8];  // vehicles as capsules: (x, z, radius) of one end, then (x, z) of the other
 uniform vec3 uSun; uniform float uClouds;       // (the shadows are worked out here, a few times a blade instead of at every pixel)
+uniform vec2 uNoiseOff;  // (the procedural world: see kCommonFS)
 uniform sampler2DShadow uShadow0, uShadow1; uniform mat4 uLightVP0, uLightVP1; uniform vec4 uShadowCfg;
+uniform sampler2D uHorizon; uniform vec4 uHorizonBox;  // (the land's long shadows: kCommonFS horizonShadow)
 out vec3 vPos; out vec3 vN; centroid out vec3 vC0; centroid out vec3 vC1; centroid out vec3 vC2; out vec2 vT; out float vSh;  // (centroid: see kLitVS)
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p){
@@ -1856,8 +1983,13 @@ float grassShadow(vec3 p){
     sh = far;
     if (e0 < 0.5 && c0.z < 1.0) sh = mix(texture(uShadow0, vec3(c0.xy, c0.z - 0.00012)), far, smoothstep(0.42, 0.5, e0));
   }
+  if (uHorizonBox.w > 0.5) {
+    vec2 uv = (p.xz - uHorizonBox.xy) * uHorizonBox.z;
+    float e = max(abs(uv.x - 0.5), abs(uv.y - 0.5));
+    if (e < 0.5) sh = min(sh, mix(1.0 - smoothstep(1.0, 3.5, textureLod(uHorizon, uv, 0.0).r - p.y), 1.0, smoothstep(0.42, 0.5, e)));
+  }
   if (uClouds > 0.0) {
-    vec2 w = p.xz + uSun.xz / max(uSun.y, 0.2) * (1800.0 - p.y);
+    vec2 w = p.xz + uNoiseOff + uSun.xz / max(uSun.y, 0.2) * (1800.0 - p.y);
     sh *= 1.0 - 0.65 * uClouds * smoothstep(0.50, 0.78, fbm(w * 0.00045 + vec2(uTime * 0.004, uTime * 0.0015), 3));
   }
   return sh;
@@ -1867,8 +1999,9 @@ void main(){
   int id = gl_VertexID, k = id % 7, blade = id / 7;
   int tuft = gl_InstanceID;
   int tw = int(uTile.z + 0.5);
-  vec2 cell = floor(uCam.xz / uCell) + uTile.xy + vec2(tuft % tw, tuft / tw) - float(uSide / 2);
-  vec2 base = (cell + vec2(hs(cell, 1u), hs(cell, 2u))) * uCell;
+  vec2 cell = floor((uCam.xz + uNoiseOff) / uCell) + uTile.xy + vec2(tuft % tw, tuft / tw) - float(uSide / 2);
+  vec2 baseN = (cell + vec2(hs(cell, 1u), hs(cell, 2u))) * uCell;  // (on the world's cells: see uNoiseOff)
+  vec2 base = baseN - uNoiseOff;
   float dist = length(base - uCam.xz);
   // This ring's share of the ground here against the rings either side: a tuft is there while its own roll is under the share.
   float share = smoothstep(uRing.x, uRing.y, dist) * (1.0 - smoothstep(uRing.z, uRing.w, dist));
@@ -1893,27 +2026,28 @@ void main(){
   vec2 ps = vec2(length(vec3(uVP[0][0], uVP[1][0], uVP[2][0])), length(vec3(uVP[0][1], uVP[1][1], uVP[2][1])));
   if (uNoCull < 0.5 && (clip.w < -3.5 || abs(clip.x) > clip.w + 3.5 * (ps.x + 1.0) || abs(clip.y) > clip.w + 3.5 * (ps.y + 1.0))) { gone(); return; }
   // The ground shader's own noise: what it makes of the meadow here.
-  float n1 = fbm(base * 0.02, 4);
-  float dry = smoothstep(0.6, 0.8, fbm(base * 0.006 + 3.1, 3));
-  float bald = smoothstep(0.60, 0.80, fbm(base * 0.30 + 9.0, 3));
-  bool meadow = uMap == 0 || uMap == 2;
-  float forest = meadow ? 0.0 : smoothstep(0.40, 0.65, fbm(base * 0.012 + vec2(7.0, -3.0), 3)) * smoothstep(6.0, 22.0, gy);
+  float n1 = fbm(baseN * 0.02, 4);
+  float dry = smoothstep(0.6, 0.8, fbm(baseN * 0.006 + 3.1, 3));
+  float bald = smoothstep(0.60, 0.80, fbm(baseN * 0.30 + 9.0, 3));
+  vec3 lk = uLookOn < 0.5 ? vec3((uMap == 0 || uMap == 2) ? 1.0 : 0.0, uRockSnow)
+                          : textureLod(uLookTex, ((base - uLookBox.xy) / uLookBox.z + 0.5) / uLookBox.w, 0.0).rgb * vec3(1.0, 400.0, 500.0);
+  float forest = (1.0 - lk.x) * smoothstep(0.40, 0.65, fbm(baseN * 0.012 + vec2(7.0, -3.0), 3)) * smoothstep(6.0, 22.0, gy);
   float ny = inversesqrt(1.0 + dot(slope, slope));
-  float steep = meadow ? smoothstep(0.84, 0.62, ny + 0.14 * (n1 - 0.5)) : smoothstep(0.72, 0.55, ny + 0.14 * (n1 - 0.5));
-  float high = smoothstep(uRockSnow.x, uRockSnow.x + 90.0, gy + 30.0 * n1);
-  float snow = smoothstep(uRockSnow.y, uRockSnow.y + 50.0, gy + 70.0 * n1) * smoothstep(0.5, 0.75, ny);
+  float steep = mix(smoothstep(0.72, 0.55, ny + 0.14 * (n1 - 0.5)), smoothstep(0.84, 0.62, ny + 0.14 * (n1 - 0.5)), lk.x);
+  float high = smoothstep(lk.y, lk.y + 90.0, gy + 30.0 * n1);
+  float snow = smoothstep(lk.z, lk.z + 50.0, gy + 70.0 * n1) * smoothstep(0.5, 0.75, ny);
   float wl = t00.a;
   float wet = wl > -500.0 ? 1.0 - smoothstep(0.4, 3.5, gy - wl) : 0.0;
   // How thick: the world's density, clumped (patches and gaps), thinner where the ground shows through.
-  float clump = smoothstep(0.25, 0.75, fbm(base * 0.45 + 2.0, 2));
+  float clump = smoothstep(0.25, 0.75, fbm(baseN * 0.45 + 2.0, 2));
   float d = dens * (0.7 + 0.8 * clump) * (1.0 - 0.8 * bald) * (1.0 - 0.3 * smoothstep(0.35, 0.65, n1) * (1.0 - dry))
           * (1.0 - 0.5 * dry) * (1.0 - 0.75 * forest) * (1.0 - steep) * (1.0 - 0.7 * high) * (1.0 - snow) * (1.0 + 0.5 * wet);
   float e = d - hs(cell, 4u);
   if (e <= 0.0) { gone(); return; }
   grow *= smoothstep(0.0, 0.2, e);
   // What kind of grass.
-  float tallN = smoothstep(0.55, 0.72, fbm(base * 0.045 + 20.0, 2)) * (1.0 - wet) * (1.0 - high);
-  float flowers = smoothstep(0.58, 0.78, fbm(base * 0.07 + 50.0, 2)) * (1.0 - dry * 0.7) * (1.0 - wet) * (1.0 - high);
+  float tallN = smoothstep(0.55, 0.72, fbm(baseN * 0.045 + 20.0, 2)) * (1.0 - wet) * (1.0 - high);
+  float flowers = smoothstep(0.58, 0.78, fbm(baseN * 0.07 + 50.0, 2)) * (1.0 - dry * 0.7) * (1.0 - wet) * (1.0 - high);
   float tuftH = 0.42 * (0.7 + 0.6 * clump) * (1.0 + 0.9 * tallN + 0.7 * wet) * mix(1.0, 0.7, dry) * mix(1.0, 0.5, high);
   vec3 body0 = mix(vec3(0.11, 0.23, 0.04), vec3(0.30, 0.24, 0.09), dry);
   vec3 body1 = mix(vec3(0.34, 0.50, 0.11), vec3(0.74, 0.60, 0.28), dry);
@@ -1943,7 +2077,7 @@ void main(){
   if (uLook.w > 0.5) {
     float fl = hs(cell, 7u);
     if (blade == 0 && fl < 0.01 + 0.4 * flowers) {  // a flower on a stem over the tuft
-      float hue = hs(floor(base * 0.02), 8u);
+      float hue = hs(floor(baseN * 0.02), 8u);
       head = hue < 0.28 ? vec3(0.95, 0.80, 0.12) : hue < 0.55 ? vec3(0.92, 0.92, 0.86) : hue < 0.78 ? vec3(0.58, 0.36, 0.82) : hue < 0.92 ? vec3(0.95, 0.45, 0.60) : vec3(0.88, 0.22, 0.14);
       len *= 1.25 + 0.5 * hs(cell, 9u); lean *= 0.5;
       tA = 0.80; tB = 0.92; wd4 = vec4(0.45, 0.35, 2.2, 0.0); headAt = tA;
@@ -1972,9 +2106,10 @@ void main(){
   }
   len *= 1.0 - 0.6 * squash;
   // Wind: gust fronts crossing the ground, a flutter on top; taller blades give more.
-  float gust = 0.5 + 0.5 * sin(dot(bp, vec2(0.07, 0.045)) - uTime * 0.85 + 1.7 * sin(dot(bp, vec2(-0.03, 0.05)) + uTime * 0.31));
+  vec2 bpN = bp + uNoiseOff;  // (the wind on the world, not the window)
+  float gust = 0.5 + 0.5 * sin(dot(bpN, vec2(0.07, 0.045)) - uTime * 0.85 + 1.7 * sin(dot(bpN, vec2(-0.03, 0.05)) + uTime * 0.31));
   vec2 wdir = vec2(0.82, 0.57);
-  float flutter = sin(uTime * 3.1 + bp.x * 3.7 + bp.y * 2.9 + float(blade) * 1.7) * 0.03;
+  float flutter = sin(uTime * 3.1 + bpN.x * 3.7 + bpN.y * 2.9 + float(blade) * 1.7) * 0.03;
   vec2 sway = (wdir * (0.03 + 0.14 * gust) + vec2(-wdir.y, wdir.x) * flutter) * len;
   // The blade is a curve: up and over toward its lean, with the sway and any push on top.
   vec2 hz = ld * (lean * len * t * t) + (sway + push * len * 0.95) * t * t;
@@ -2025,13 +2160,20 @@ uniform sampler2D uTerrainTex; uniform float uTerrainN;
 uniform vec4 uTerrainWin;          // the window: its first cell (i, j), its texels a side, 1 when it holds the whole map
 uniform sampler2D uTerrainCoarse;
 uniform float uTerrainCoarseN;
-vec4 terrainCell(ivec2 g){
+vec4 terrainCellIn(ivec2 g){
   g = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
   if (uTerrainWin.w > 0.5) return texelFetch(uTerrainTex, g, 0);  // (the whole map is in the window, as stored)
   ivec2 r = g - ivec2(uTerrainWin.xy);
   int w = int(uTerrainWin.z);
   if (r.x < 0 || r.y < 0 || r.x >= w || r.y >= w) return texelFetch(uTerrainCoarse, clamp(g / 4, ivec2(0), ivec2(int(uTerrainCoarseN) - 1)), 0);
   return texelFetch(uTerrainTex, g % w, 0);
+}
+// Past the map's grid (the far backdrop): its height on the edge, but no paint, grass or water. (Clamped whole, a road or a river
+// crossing the edge ran on as a long straight stripe across the far hills.)
+vec4 terrainCell(ivec2 g){
+  ivec2 c = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
+  vec4 t = terrainCellIn(c);
+  return c == g ? t : vec4(t.r, 0.0, 0.0, -1000.0);
 }
 float groundAt(vec2 xz){
   vec2 g = xz + (uTerrainN - 1.0) * 0.5;
@@ -2071,44 +2213,53 @@ void falls(int mat){
   vec3 n = normalize(vNrm);
   vec3 Vv = uCam - vPos;
   float dist = length(Vv);
+  bool puff = mat == 22 || mat == 23;
+  if (puff && dist > 550.0) discard;
   vec3 V = Vv / dist;
-  float sh = shadowAt(vPos, vec3(0, 1, 0));
-  vec3 irr = ambientAt(vec3(0, 1, 0)) * 1.1 + sh * kSunCol * 0.6;
   vec3 white = vec3(0.86, 0.9, 0.92);
-  float t = uTime, a = 0.0;
-  vec3 col = white * irr;
+  float t = uTime, a = 0.0, streak = 0.0, aer = 0.0, f = 0.0;
+  // How see-through it is first: most of a puff's quad and much of the foam is nothing, and those fragments stop here, before the
+  // lighting (the shadow lookup is the dear part: a fall's puffs cover much of the screen near it).
   if (mat == 20) {
     // Streaks that fall as the water does: a parcel s m down left the lip sqrt(2 s / g) seconds ago, so its pattern stretches
     // as it speeds up. Glassy over the lip, white and torn lower down.
     float s = max(vCol.g, 0.0), age = t - sqrt(2.0 * s / 9.81);
     float k1 = vnoise(vec2(vCol.r * 1.6, age * 3.0)), k2 = vnoise(vec2(vCol.r * 4.3 + 7.0, age * 7.0 + 3.1));
-    float streak = 0.55 * k1 + 0.45 * k2;
-    float aer = smoothstep(0.0, 6.0, s);
+    streak = 0.55 * k1 + 0.45 * k2;
+    aer = smoothstep(0.0, 6.0, s);
     a = vCol.b * clamp(0.35 + 0.3 * aer + 0.45 * smoothstep(0.35, 0.8, streak), 0.0, 0.95);
-    vec3 r = reflect(-V, n);
-    vec3 glass = vec3(0.06, 0.11, 0.10) * irr + skyColor(vec3(r.x, max(r.y, 0.02), r.z), 2) * 0.25;
-    col = mix(glass, white * irr * (0.85 + 0.3 * streak), 0.35 + 0.65 * aer);
     a *= 0.6 + 0.4 * abs(dot(n, V));
   } else if (mat == 21) {
-    float f = vnoise(vPos.xz * 1.7 + vec2(t * 0.6, -t * 0.4)) * 0.6 + vnoise(vPos.xz * 4.1 - vec2(t * 1.1, t * 0.7)) * 0.4;
+    f = vnoise(NP.xz * 1.7 + vec2(t * 0.6, -t * 0.4)) * 0.6 + vnoise(NP.xz * 4.1 - vec2(t * 1.1, t * 0.7)) * 0.4;
     a = vCol.b * smoothstep(0.22, 0.6, f) * 0.95 * smoothstep(0.02, 0.25, abs(dot(n, V)));  // (a ledge's band seen edge-on fades)
-    col = white * irr * (0.9 + 0.2 * f);
-  } else if (mat == 22 || mat == 23) {
+  } else if (puff) {
     bool mist = mat == 23;
     vec2 uv = vCol.rg - 0.5;
     float r = length(uv) * 2.0;
+    if (r > 1.0) discard;
+    a = (1.0 - smoothstep(0.25, 1.0, r)) * smoothstep(0.05, 0.45, abs(dot(n, V)))  // (the crossed quad seen edge-on fades out)
+        * smoothstep(1.5, 6.0, dist) * (1.0 - smoothstep(300.0, 550.0, dist));         // (none in your face; nor far off, a few pixels of overdraw)
+    if (a < 0.01) discard;
     float rise = t * (mist ? 0.05 : 0.35) + vCol.b * 10.0;
     float nz = vnoise(uv * (mist ? 2.2 : 3.5) + vec2(vCol.b * 13.0, -rise));
     float pulse = 0.7 + 0.3 * sin(t * (mist ? 0.5 : 2.3) + vCol.b * 6.283);
-    a = (1.0 - smoothstep(0.25, 1.0, r)) * smoothstep(0.2, 0.75, nz) * pulse * (mist ? 0.16 : 0.55);
-    a *= smoothstep(0.05, 0.45, abs(dot(n, V)));  // (the crossed quad seen edge-on fades out)
-    a *= smoothstep(1.5, 6.0, dist);              // (and none in your face)
-    col = white * irr * 1.05;
+    a *= smoothstep(0.2, 0.75, nz) * pulse * (mist ? 0.16 : 0.55);
   } else {
-    float w = 0.5 + 0.5 * sin(vCol.r * 2.6 - t * 3.2 + 2.0 * vnoise(vPos.xz * 0.5));
+    float w = 0.5 + 0.5 * sin(vCol.r * 2.6 - t * 3.2 + 2.0 * vnoise(NP.xz * 0.5));
     a = vCol.b * pow(w, 6.0) * 0.45;
   }
   a = clamp(a, 0.0, 0.97);
+  if (a < 0.004) discard;
+  // (A puff is soft and lit through: no shadow lookup for it.)
+  float sh = puff ? 0.8 : shadowAt(vPos, vec3(0, 1, 0));
+  vec3 irr = ambientAt(vec3(0, 1, 0)) * 1.1 + sh * kSunCol * 0.6;
+  vec3 col = white * irr;
+  if (mat == 20) {
+    vec3 r = reflect(-V, n);
+    vec3 glass = vec3(0.06, 0.11, 0.10) * irr + skyColor(vec3(r.x, max(r.y, 0.02), r.z), 2) * 0.25;
+    col = mix(glass, white * irr * (0.85 + 0.3 * streak), 0.35 + 0.65 * aer);
+  } else if (mat == 21) col = white * irr * (0.9 + 0.2 * f);
+  else if (puff) col = white * irr * 1.05;
   oCol = vec4(applyFog(col, vPos) * a, 1.0);
   oKeep = vec4(vec3(1.0 - a), 1.0);
 }
@@ -2141,8 +2292,8 @@ void main(){
   if (fl > 0.1) {  // two staggered phases of the pattern, blended, so it drifts without smearing
     ph0 = fract(uTime * 0.2), ph1 = fract(uTime * 0.2 + 0.5), wb = abs(1.0 - 2.0 * ph0);
     o0 = flow * ph0 * 5.0, o1 = flow * ph1 * 5.0 + vec2(13.7, 4.1);
-    sl = mix(ripples(p - o1, fd, dist, rough), ripples(p - o0, fd, dist, rough), wb);
-  } else sl = ripples(p, fd, dist, rough);
+    sl = mix(ripples(p + uNoiseOff - o1, fd, dist, rough), ripples(p + uNoiseOff - o0, fd, dist, rough), wb);
+  } else sl = ripples(p + uNoiseOff, fd, dist, rough);
   sl *= 0.26 / (1.0 + dist / 60.0);
   vec3 n = normalize(vec3(-sl.x, 1.0, -sl.y));
   bool under = V.y < 0.0;  // camera below the surface
@@ -2183,13 +2334,13 @@ void main(){
   if (depth < 0.2) {
     vec2 gd = vec2(groundAt(p + vec2(0.75, 0.0)) - groundAt(p - vec2(0.75, 0.0)), groundAt(p + vec2(0.0, 0.75)) - groundAt(p - vec2(0.0, 0.75))) / 1.5;
     float dd = depth / max(length(gd), 0.03);  // metres to where the water ends
-    float lap = 0.22 + 0.12 * sin(uTime * 1.1 + vnoise(p * 0.7) * 6.28);
-    foam = (1.0 - smoothstep(lap * 0.3, lap + 0.1, dd)) * smoothstep(0.3, 0.7, vnoise(p * 7.0 + uTime * 0.35));
+    float lap = 0.22 + 0.12 * sin(uTime * 1.1 + vnoise((p + uNoiseOff) * 0.7) * 6.28);
+    foam = (1.0 - smoothstep(lap * 0.3, lap + 0.1, dd)) * smoothstep(0.3, 0.7, vnoise((p + uNoiseOff) * 7.0 + uTime * 0.35));
     foam += (1.0 - smoothstep(0.0, 0.1, dd)) * 0.5;  // the wet line itself
   }
   // White water where it runs fast and shallow.
   float fast = smoothstep(0.9, 2.2, fl) * (1.0 - smoothstep(0.3, 1.2, depth));
-  foam = max(foam, fast * smoothstep(0.45, 0.8, mix(vnoise((p - o1) * 2.3), vnoise((p - o0) * 2.3), wb)));
+  foam = max(foam, fast * smoothstep(0.45, 0.8, mix(vnoise((p + uNoiseOff - o1) * 2.3), vnoise((p + uNoiseOff - o0) * 2.3), wb)));
   foam *= 1.0 - 0.8 * murk;
   foam = clamp(foam, 0.0, 1.0) * 0.8;
   col = mix(col, vec3(0.8, 0.84, 0.84) * (irr * 0.7 + 0.05), foam);
@@ -2441,12 +2592,25 @@ void setShaderCacheDir(const std::string& dir) { gShaderCacheDir = dir; }
 ShaderCacheStats gShaderCacheStats;
 namespace {
 
+// Samplers every lit program reads from the same unit, whatever pass draws it: set once, as it's linked (a uniform's value isn't
+// kept in a program binary, so a cached one too).
+void fixedSamplers(GLuint p) {
+    const GLint at = GetUniformLocation(p, "uHorizon");
+    if (at < 0) return;
+    GLint was = 0;
+    GetIntegerv(GL_CURRENT_PROGRAM, &was);
+    UseProgram(p);
+    Uniform1i(at, kHorizonUnit);
+    UseProgram(was && IsProgram((GLuint)was) ? (GLuint)was : 0);  // (one deleted while in use is gone once it's left)
+}
+
 GLuint linkProgram(const std::string& vsSrc, const std::string& fsSrc, std::string& err) {
     const bool cache = binariesOk();
     const std::string path = cache ? shaderCachePath(vsSrc, fsSrc) : std::string();
     if (cache)
         if (GLuint p = loadCachedProgram(path)) {
             gShaderCacheStats.hits++;
+            fixedSamplers(p);
             return p;
         }
     const char* vs = vsSrc.c_str();
@@ -2471,6 +2635,7 @@ GLuint linkProgram(const std::string& vsSrc, const std::string& fsSrc, std::stri
     }
     gShaderCacheStats.compiled++;
     if (cache) saveCachedProgram(p, path);
+    fixedSamplers(p);
     return p;
 }
 
@@ -2583,12 +2748,35 @@ bool Renderer::init(const World& world, std::string& err) {
     const std::string header = "#version 330 core\n";
     const double lpShaders0 = loadprof::nowMs();
     progLit = linkProgram(kLitVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
-    progCar = linkProgram(kCarVS, header + kCommonFS + kCarFSBody, err);
+    static const bool oneCarProg = std::getenv("CZ_CAR_ONEPROG") != nullptr;  // (for comparison: one program for every shell, as before)
+    for (int s = 0; s < kCarShells; s++) {  // (a program per body shell: see CAR_SHELL in kCarFSBody)
+        progCarShell[s] = oneCarProg && s ? progCarShell[0]
+                                          : linkProgram(kCarVS, header + (oneCarProg ? std::string() : "#define CAR_SHELL " + std::to_string(s) + "\n") + kCommonFS + kCarFSBody, err);
+        if (!progCarShell[s]) return false;
+    }
+    progCar = progCarShell[0];
     progDepth = linkProgram(kDepthVS, kDepthFS, err);
     progParts = linkProgram(std::string(kPartsXf) + kPartsVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
     progPartsDepth = linkProgram(std::string(kPartsXf) + kPartsDepthVS, kDepthFS, err);
     progTree = linkProgram(kTreeVS, header + kCommonFS + kLitIns + kTreeFSBody, err);
     progTreeDepth = linkProgram(kTreeDepthVS, kDepthFS, err);
+    progTreePre = linkProgram(kTreeVS, header + kCommonFS + kTreePreFSBody, err);
+    if (!progTreePre) std::fprintf(stderr, "tree pre-pass shader: %s\n", err.c_str()), err.clear();
+    {  // (the far trees' pictures: if their shaders won't build, the meshes go on drawing to the end)
+        std::string ierr;
+        progImpostor = linkProgram(header + kImpostorPlace + kImpostorVS, header + kCommonFS + kImpostorFSBody, ierr);
+        progImpostorDepth = linkProgram(header + kImpostorPlace + kImpostorVS, kImpostorDepthFS, ierr);
+        progImpCapture = linkProgram(kImpostorCaptureVS, kImpostorCaptureFS, ierr);
+        progFarForest = linkProgram(header + kImpostorPlace + kFarForestVS, header + kCommonFS + kImpostorFSBody, ierr);
+        if (!progFarForest) std::fprintf(stderr, "far forest shader: %s\n", ierr.c_str());
+        if (!progImpostor || !progImpostorDepth || !progImpCapture) {
+            std::fprintf(stderr, "tree impostor shaders: %s\n", ierr.c_str());
+            progImpostor = progImpostorDepth = progImpCapture = 0;
+        }
+        static const bool noImp = std::getenv("CZ_NO_IMPOSTORS") != nullptr;  // (for comparing: the meshes all the way out)
+        impAtlas_.captureProg = progImpCapture;
+        if (!noImp && progImpCapture) trees_.enableImpostors(&impAtlas_), staged_.trees.enableImpostors(&impAtlas_);
+    }
     progLine = linkProgram(kLineVS, kLineFS, err);
     progXray = linkProgram(kXrayVS, kXrayFS, err);
     progSky = linkProgram(kSkyVS, header + kCommonFS + kSkyFSBody, err);
@@ -2600,6 +2788,7 @@ bool Renderer::init(const World& world, std::string& err) {
         if (!progIcon || !progIconMesh) std::fprintf(stderr, "icon shaders: %s\n", ierr.c_str()), progIcon = progIconMesh = 0;
     }
     progFx = linkProgram(kFxVS, header + kCommonFS + kFxFSBody, err);
+    progGlow = linkProgram(kFxVS, kGlowFS, err);
     progAO = linkProgram(kPostVS, kAOFS, err);
     progDown = linkProgram(kPostVS, kDownFS, err);
     progUp = linkProgram(kPostVS, kUpFS, err);
@@ -2860,7 +3049,7 @@ void Renderer::postProcess(const View& view, const M4& proj) {
     ActiveTexture(GL_TEXTURE0);
     // The chain sums kBloomLevels blurred copies: normalize it here.
     // (More glow round the lamps at night, when the eye is open wide.)
-    Uniform1f(uniformLocation(progComposite, "uBloomK"), bloom && rs.blur <= 0 ? fadeBloom_ * 0.08f * (1 + 0.8f * daylight.night) / kBloomLevels : 0.0f);
+    Uniform1f(uniformLocation(progComposite, "uBloomK"), bloom && rs.blur <= 0 ? fadeBloom_ * 0.12f * (1 + 1.0f * daylight.night) / kBloomLevels : 0.0f);
     Uniform1f(uniformLocation(progComposite, "uNight"), daylight.night);
     Uniform1f(uniformLocation(progComposite, "uBlur"), chain ? rs.blur : 0.0f);
     Uniform1f(uniformLocation(progComposite, "uBlurNorm"), 0.8f / kBloomLevels);
@@ -2878,6 +3067,7 @@ namespace {
 // mountains (too steep to drive, so the physics keeps them smooth), and beyond the map a
 // range of mountains to the horizon.
 double sceneryHeight(const World& world, double x, double z) {
+    if (world.map == MAP_PROCEDURAL) return proc::farHeight(world, x, z);  // (past its window: more of the same land, coarse)
     const double half = world.halfSize();
     if (world.wrapPeriod > 0 && std::fabs(z) < half - 80) {
         // The freeway: the valley and the road run on beyond the map, a period at a time.
@@ -2900,13 +3090,84 @@ double sceneryHeight(const World& world, double x, double z) {
 }
 }  // namespace
 
+void Renderer::anchorNoise(const World& world) {
+    if (world.map != MAP_PROCEDURAL) {
+        noiseAnchored_ = false, noiseOff_[0] = noiseOff_[1] = 0;
+        return;
+    }
+    const int64_t ox = world.proc.ox, oz = world.proc.oz;
+    if (!noiseAnchored_ || noiseSeed_ != world.proc.seed || std::llabs(ox - noiseAnchor_[0]) > 12000 || std::llabs(oz - noiseAnchor_[1]) > 12000)
+        noiseAnchored_ = true, noiseSeed_ = world.proc.seed, noiseAnchor_[0] = ox, noiseAnchor_[1] = oz;
+    noiseOff_[0] = (float)(ox - noiseAnchor_[0]), noiseOff_[1] = (float)(oz - noiseAnchor_[1]);
+}
+
+void Renderer::updateLook(const World& world) {
+    lookOn_ = world.map == MAP_BACKCOUNTRY && world.halfSize() > kOldBackcountryHalf + 1;
+    if (!lookOn_) return;
+    const double cell = 64, h = world.halfSize();
+    const int n = (int)std::ceil(2 * h / cell) + 1;
+    std::vector<uint8_t> px((size_t)n * n * 4);
+    parallelRows(n, [&](int j) {
+        for (int i = 0; i < n; i++) {
+            const GroundLook g = groundLookAt(-h + i * cell, -h + j * cell);
+            uint8_t* q = &px[((size_t)j * n + i) * 4];
+            q[0] = (uint8_t)std::lround(clampd(g.meadow, 0, 1) * 255), q[1] = (uint8_t)std::lround(clampd(g.rockFrom / 400.0, 0, 1) * 255);
+            q[2] = (uint8_t)std::lround(clampd(g.snowFrom / 500.0, 0, 1) * 255), q[3] = 255;
+        }
+    });
+    if (!lookTex_) GenTextures(1, &lookTex_);
+    BindTexture(GL_TEXTURE_2D, lookTex_);
+    TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, n, n, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    lookBox_[0] = (float)-h, lookBox_[1] = (float)-h, lookBox_[2] = (float)cell, lookBox_[3] = (float)n;
+}
+
 void Renderer::setWorld(const World& world) {
     LOADPROF("renderer.setWorld");
+    waitStreaming();
+    anchorNoise(world);
     mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;  // (the wilds are painted as the freeway's meadows are: land and paints, no pad or road)
+    updateLook(world);
     { LOADPROF("terrain.build+upload"); buildTerrain(world); }
     treeSig_ = scenerySig_ = bushSig_ = 0;  // (a new world: everything is built afresh)
     updateObjects(world);
     updateWater(world);
+    ensureSpare();
+}
+
+// The procedural world: a spare set of terrain buffers and textures the size of the ones drawn, made now (at the load), so the
+// first window that slides in has somewhere to go without allocating (a big float texture costs hundreds of ms to make).
+void Renderer::ensureSpare() {
+    if (mapId != MAP_PROCEDURAL) {
+        dropSpare();
+        return;
+    }
+    if (spare_.vbo || !terrainBytes_[0] || terrainWinW_ <= 0) return;
+    LOADPROF("terrain.spare");
+    GLuint* bufs[4] = {&spare_.vbo, &spare_.ibo, &spare_.cvbo, &spare_.cibo};
+    const GLenum targets[4] = {GL_ARRAY_BUFFER, GL_ELEMENT_ARRAY_BUFFER, GL_ARRAY_BUFFER, GL_ELEMENT_ARRAY_BUFFER};
+    const GLenum usage[4] = {GL_DYNAMIC_DRAW, GL_STATIC_DRAW, GL_DYNAMIC_DRAW, GL_STATIC_DRAW};
+    for (int k = 0; k < 4; k++) {
+        GenBuffers(1, bufs[k]);
+        BindBuffer(targets[k], *bufs[k]);
+        BufferData(targets[k], (GLsizeiptr)terrainBytes_[k], nullptr, usage[k]);
+    }
+    spare_.vBytes = terrainBytes_[0], spare_.iBytes = terrainBytes_[1], spare_.cvBytes = terrainBytes_[2], spare_.ciBytes = terrainBytes_[3];
+    spare_.idxHash = 0;  // (nothing in them yet)
+    for (GLuint* t : {&spare_.tex, &spare_.ctex}) {
+        GenTextures(1, t);
+        BindTexture(GL_TEXTURE_2D, *t);
+        const int side = t == &spare_.tex ? terrainWinW_ : terrainCoarseN_;
+        TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, side, side, 0, GL_RGBA, GL_FLOAT, nullptr);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    spare_.texW = terrainWinW_, spare_.coarseN = terrainCoarseN_;
 }
 
 namespace {
@@ -2922,9 +3183,9 @@ struct Sig {
     void str(const std::string& t) { bytes(t.data(), t.size()), num((double)t.size()); }
 };
 // What every scenery mesh shares: the world, its hand-edited cells, the props quality and what the scans cover.
-Sig sceneryBase(const World& w, int props, const ScanCover& c) {
+Sig sceneryBase(const World& w, int props, const ScanCover& c, const void* at = nullptr) {
     Sig s;
-    const void* wp = &w;
+    const void* wp = at ? at : &w;  // (at: where the world will be once it's moved there: a procedural window made on a worker)
     s.bytes(&wp, sizeof wp);
     s.num((double)w.map), s.num((double)w.cellEdits), s.num(props);
     s.num(c.pines), s.num(c.snags), s.num(c.rocks), s.num(c.logs), s.num(c.bushes);
@@ -2932,6 +3193,19 @@ Sig sceneryBase(const World& w, int props, const ScanCover& c) {
     return s;
 }
 }  // namespace
+
+// The scenery a procedural window's swap would build on the frame thread, made on its worker instead (render.h).
+struct Renderer::Prepared::PreObjects {
+    int pq = 0;
+    ScanCover cover;
+    uint64_t treeSig = 0, bushSig = 0, scenerySig = 0;
+    forest::Set treeSet, bushSet;
+    std::vector<Vtx> bushVerts, sceneryVerts, boxVerts;
+    std::vector<StaticBatch> bushBatches, sceneryBatches, boxBatches;
+    bool hasLayout = false;
+    PropRenderer::Layout props;  // (the scans: laid out on the worker, adopted on the swap)
+    TreeDraw::Built treeBuilt, bushBuilt;  // (the trees' and bushes' meshes and pickers, made on the worker)
+};
 
 void Renderer::updateObjects(const World& world) {
     for (int s = 0; s < 4; s++) updateObjectsStage(world, s);
@@ -2955,6 +3229,35 @@ void Renderer::updateObjectsStage(const World& world, int stage) {
     }
     // (The trees and the rest of the scenery are only rebuilt when something they're made from changed: moving a block in the
     // editor leaves the forest alone, so a drag keeps up with the mouse.)
+    // (A procedural window's swap: what the worker made, when it was made for this quality and cover.)
+    Prepared::PreObjects* pre = preObjs_ && preObjs_->pq == pq && preObjs_->cover.pines == cover.pines && preObjs_->cover.snags == cover.snags &&
+                                              preObjs_->cover.rocks == cover.rocks && preObjs_->cover.logs == cover.logs && preObjs_->cover.bushes == cover.bushes
+                                          ? preObjs_.get()
+                                          : nullptr;
+    if (stage == 3) preObjs_.reset();  // (once: later rebuilds are the ordinary kind)
+    if (pre && stage == 1) {
+        treeSig_ = pre->treeSig;
+        trees_.build(pre->treeSet);
+        treeVertexCount = (int)trees_.meshVertices();
+        return;
+    }
+    if (pre && stage == 2) {
+        bushSig_ = pre->bushSig;
+        bushes_.build(pre->bushSet);
+        std::vector<Vtx> v = std::move(pre->bushVerts);  // (moved: a dense wood's logs are a few hundred MB)
+        bushBatches = pre->bushBatches;
+        uploadStatic(bushVao, bushVbo, v);
+        bushVertexCount = (int)v.size();
+        return;
+    }
+    if (pre && stage == 3) {
+        scenerySig_ = pre->scenerySig;
+        std::vector<Vtx> v = std::move(pre->sceneryVerts);
+        sceneryBatches = pre->sceneryBatches;
+        uploadStatic(sceneryVao, sceneryVbo, v);
+        sceneryVertexCount = (int)v.size();
+        return;
+    }
     if (stage == 1) {
     Sig ts = sceneryBase(world, pq, cover);
     for (const Tree& t : world.trees) ts.vec(t.base), ts.num(t.height), ts.num(t.radius), ts.num(t.kind), ts.num(t.tint);
@@ -3003,6 +3306,9 @@ void Renderer::updateObjectsStage(const World& world, int stage) {
         LOADPROF("scenery.bin+upload");
         uploadBatches(sceneryVao, sceneryVbo, v, sceneryBatches);
         sceneryVertexCount = (int)v.size();
+        // (The last stage of a build: the meshes' CPU copies, hundreds of MB in a dense wood, have been freed; malloc keeps freed
+        // memory unless asked to hand it back.)
+        std::thread([] { releaseFreedMemory(); }).detach();
     }
 }
 
@@ -3010,24 +3316,104 @@ void Renderer::updateObjectsStage(const World& world, int stage) {
 // vertices, so large objects crossing bin edges remain conservatively visible.
 void Renderer::uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices,
                              std::vector<StaticBatch>& batches) {
-    std::map<std::pair<int, int>, std::vector<Vtx>> bins;
-    for (size_t k = 0; k + 2 < vertices.size(); k += 3) {
+    binBatches(vertices, batches);
+    uploadStatic(vao, vbo, vertices);
+}
+
+void Renderer::binBatches(std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches) {
+    // (In place: the triangles' indices sorted by bin, stably, then the triangles moved round their cycles. No second copy of the
+    // vertices: a dense wood's logs are a few hundred MB of them.)
+    const size_t nt = vertices.size() / 3;
+    vertices.resize(nt * 3);
+    std::vector<std::pair<std::pair<int, int>, uint32_t>> key(nt);
+    for (size_t t = 0; t < nt; t++) {
+        const size_t k = t * 3;
         const float x = (vertices[k].p[0] + vertices[k+1].p[0] + vertices[k+2].p[0]) / 3;
         const float z = (vertices[k].p[2] + vertices[k+1].p[2] + vertices[k+2].p[2]) / 3;
-        auto& bin = bins[{(int)std::floor(x / 64), (int)std::floor(z / 64)}];
-        bin.insert(bin.end(), vertices.begin() + k, vertices.begin() + k + 3);
+        key[t] = {{(int)std::floor(x / 64), (int)std::floor(z / 64)}, (uint32_t)t};
     }
-    vertices.clear();
+    std::sort(key.begin(), key.end());
+    std::vector<bool> done(nt, false);  // (key[i].second: the triangle that goes to slot i)
+    for (size_t i = 0; i < nt; i++) {
+        if (done[i] || key[i].second == i) { done[i] = true; continue; }
+        const Vtx hold[3] = {vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]};
+        for (size_t cur = i;;) {
+            const size_t src = key[cur].second;
+            done[cur] = true;
+            if (src == i) {
+                for (int q = 0; q < 3; q++) vertices[cur * 3 + q] = hold[q];
+                break;
+            }
+            for (int q = 0; q < 3; q++) vertices[cur * 3 + q] = vertices[src * 3 + q];
+            cur = src;
+        }
+    }
     batches.clear();
-    for (const auto& entry : bins) {
+    for (size_t i = 0; i < nt;) {
+        size_t j = i;
         StaticBatch batch;
-        batch.first = (int)vertices.size();
-        batch.count = (int)entry.second.size();
-        for (const auto& v : entry.second) batch.bounds.add(V3(v.p[0], v.p[1], v.p[2]));
-        vertices.insert(vertices.end(), entry.second.begin(), entry.second.end());
+        batch.first = (int)(i * 3);
+        for (; j < nt && key[j].first == key[i].first; j++)
+            for (int q = 0; q < 3; q++) {
+                const Vtx& v = vertices[j * 3 + q];
+                batch.bounds.add(V3(v.p[0], v.p[1], v.p[2]));
+            }
+        batch.count = (int)((j - i) * 3);
         batches.push_back(batch);
+        i = j;
     }
-    uploadStatic(vao, vbo, vertices);
+}
+
+void Renderer::prepareProps(const World& world, Prepared& p) const {
+    if (!p.objs || !propsOk) return;
+    LOADPROF("props.layout (worker)");
+    props.layout(world, p.objs->pq, p.objs->props);
+    p.objs->hasLayout = true;
+}
+
+void Renderer::prepareObjects(const World& world, Prepared& p, const void* asAt, int pq, const ScanCover& cover) {
+    LOADPROF("objects.prepare (worker)");
+    auto o = std::make_shared<Prepared::PreObjects>();
+    o->pq = pq, o->cover = cover;
+    Sig ts = sceneryBase(world, pq, cover, asAt);
+    for (const Tree& t : world.trees) ts.vec(t.base), ts.num(t.height), ts.num(t.radius), ts.num(t.kind), ts.num(t.tint);
+    o->treeSig = ts.h;
+    forest::build(world, cover.pines, cover.snags, o->treeSet);
+    TreeDraw::prepare(o->treeSet, o->treeBuilt);
+    Sig bs = sceneryBase(world, pq, cover, asAt);
+    for (const Bush& b : world.bushes) bs.vec(b.p), bs.num(b.r), bs.num(b.tint), bs.num(b.kind);
+    for (const Log& g : world.logs) bs.vec(g.a), bs.vec(g.b), bs.num(g.r);
+    o->bushSig = bs.h;
+    if (!cover.bushes) forest::buildBushes(world, o->bushSet);
+    TreeDraw::prepare(o->bushSet, o->bushBuilt);
+    buildBushMesh(world, o->bushVerts, cover);
+    binBatches(o->bushVerts, o->bushBatches);
+    Sig ss = sceneryBase(world, pq, cover, asAt);
+    for (const Rock& k : world.rocks) ss.vec(k.c), ss.num(k.r), ss.num(k.tint), ss.num(k.scan), ss.num((double)k.v.size()), ss.vec(k.v.empty() ? V3() : k.v[0]);
+    for (const Box& b : world.boxes)
+        if (b.rock) ss.vec(b.c), ss.vec(b.h), ss.vec(b.ax[0]), ss.vec(b.ax[1]);
+    for (const Log& g : world.logs) ss.vec(g.a), ss.vec(g.b), ss.num(g.r);
+    for (const Prop& f : world.fixtures) ss.num(f.kind), ss.vec(f.a), ss.vec(f.b), ss.num(f.yaw), ss.num(f.col[0]), ss.num(f.col[1]), ss.num(f.col[2]);
+    for (const Placed& m : world.models) {
+        ss.str(m.id), ss.vec(m.p), ss.num(m.yaw), ss.vec(m.scale), ss.num(m.variant), ss.num(m.oriented), ss.num(m.wear);
+        for (int i = 0; i < 3; i++) ss.vec(m.ax[i]);
+        for (const auto& kv : m.set) ss.str(kv.first), ss.num(kv.second);
+    }
+    o->scenerySig = ss.h;
+    buildBoxMesh(world, o->boxVerts);
+    binBatches(o->boxVerts, o->boxBatches);
+    buildRockMesh(world, o->sceneryVerts, cover);
+    buildPropMesh(world, o->sceneryVerts);
+    binBatches(o->sceneryVerts, o->sceneryBatches);
+    p.objs = std::move(o);
+}
+
+void Renderer::dropSpare() {
+    for (GLuint* b : {&spare_.vbo, &spare_.ibo, &spare_.cvbo, &spare_.cibo})
+        if (*b) DeleteBuffers(1, b);
+    for (GLuint* t : {&spare_.tex, &spare_.ctex})
+        if (*t) DeleteTextures(1, t);
+    spare_ = Spare();
 }
 
 void Renderer::drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow) {
@@ -3073,7 +3459,7 @@ void terrainTexel(const World& world, double x, double z, float* t) {
     t[3] = (float)std::max(world.waterLevel(x, z), -1000.0);
 }
 // The window's first cell for a camera at grid cell (ci, cj), on a map of n cells a side.
-int windowStart(int c, int n, int w) { return std::min(std::max(c - w / 2, 0), std::max(0, n - w)); }
+int windowStart(int c, int n, int w) { return streamwin::start(c, n, w); }
 // The whole map's coarse texels.
 void coarseTexels(const World& world, int n, std::vector<float>& out, int& cn) {
     cn = (n + kCoarseCell - 1) / kCoarseCell;
@@ -3178,7 +3564,158 @@ void Renderer::drawTerrain(const M4& vp, const View& view, const std::function<v
     }
 }
 
+// The ground in a shadow pass: every loaded chunk in the light's box, the near cascade at full detail and the far one at the
+// next LOD (every LOD keeps the chunk's edges: no gaps between them). Only the faces turned from the light go in (the lit
+// ones culled), pushed back by the pass's polygon offset: the sunny ground never shadows itself, while a slope's lee side
+// stands in front of what lies beyond it. Depth clamped: a hill nearer the light than the box's near plane still casts.
+void Renderer::drawTerrainCasters(const M4& lightVP, int cascade) {
+    static const bool off = std::getenv("CZ_NO_TERRAIN_SHADOW") != nullptr;  // (for comparing)
+    if (off || !terrainVao || terrainChunks.empty() || terrainLods_.empty()) return;
+    UseProgram(progDepth);
+    uniformM4(progDepth, "uLightVP", lightVP);
+    uniformM4(progDepth, "uModel", m4identity());
+    Enable(GL_DEPTH_CLAMP);
+    Enable(GL_CULL_FACE);
+    CullFace(GL_FRONT);
+    BindVertexArray(terrainVao);
+    const int lod = cascade == 0 ? 0 : 1;
+    for (const TerrainChunk& chunk : terrainChunks) {
+        if (chunk.backdrop || chunk.slot < 0 || !chunk.bounds.visible(lightVP)) continue;
+        const LodSet& set = terrainLods_[chunk.lodSet];
+        DrawElementsBaseVertex(GL_TRIANGLES, set.count[lod], GL_UNSIGNED_INT, reinterpret_cast<const void*>((uintptr_t)set.first[lod] * sizeof(unsigned)),
+                               chunk.slot * kChunkVerts);
+        geometryStats_.shadowTerrainTriangles += set.count[lod] / 3;
+    }
+    CullFace(GL_BACK);
+    Disable(GL_CULL_FACE);
+    Disable(GL_DEPTH_CLAMP);
+}
+
+namespace {
+// The long-shadow map's texels (Renderer::updateHorizon): from each texel's middle, toward the key light over the coarse terrain
+// texture (filtered: a sampler object for this pass), the highest the land rises above the light's line, as a height there.
+// A point under it is in the land's shade. The steps grow with the distance (fine near, a few tens of metres far off) and stop
+// once even the highest land couldn't rise above what's found. Past the map's edge the land is taken as low.
+const char* kHorizonFS = R"(#version 330 core
+uniform sampler2D uTerrainCoarse;
+uniform float uTerrainCoarseN, uHalf, uMaxH, uT0, uReach;
+uniform vec4 uBox;    // the map's corner (x, z), metres a texel
+uniform vec3 uToSun;  // toward the key light: across the ground (x, z), and its rise a metre
+out float oH;
+float hAt(vec2 xz){
+  vec2 c = (xz + uHalf - 2.0) * 0.25;  // (coarse texel ci's middle is at -half + 4 ci + 2)
+  if (min(c.x, c.y) < -0.5 || max(c.x, c.y) > uTerrainCoarseN - 0.5) return -1e6;
+  return textureLod(uTerrainCoarse, (c + 0.5) / uTerrainCoarseN, 0.0).r;
+}
+void main(){
+  vec2 p = uBox.xy + gl_FragCoord.xy * uBox.z;
+  float best = -1e6;
+  const int N = 96;
+  for (int k = 0; k < N; k++){
+    float f = float(k) / float(N - 1);
+    float t = uT0 + (uReach - uT0) * f * f;
+    if (uMaxH - t * uToSun.z < best) break;
+    best = max(best, hAt(p + uToSun.xy * t) - t * uToSun.z);
+  }
+  oH = best;
+})";
+}  // namespace
+
+void Renderer::horizonLandChanged(bool newLand) {
+    horizonGen_++;
+    if (newLand) horizon_.live = -1, horizon_.back = -1;  // (else a map being made carries on, and the next one starts after: an edit
+                                                          // every frame, a brush stroke, still gets one finished)
+}
+
+void Renderer::updateHorizon(const V3& eye, const V3& keyDir, int shadowQuality) {
+    static const bool off = std::getenv("CZ_NO_HORIZON") != nullptr;  // (for comparing)
+    Horizon& H = horizon_;
+    H.on = false;
+    const double flat = std::hypot(keyDir.x, keyDir.z);
+    if (off || shadowQuality < 2 || !terrainCoarseTex || terrainGridN <= 1 || flat < 1e-3 || keyDir.y <= 0 || terrainChunks.empty()) return;
+    const int N = kHorizonTexels;
+    if (!H.prog) {
+        std::string err;
+        H.prog = linkProgram(kPostVS, kHorizonFS, err);
+        if (!H.prog) {
+            std::fprintf(stderr, "long shadows: %s\n", err.c_str());
+            H.prog = ~0u;
+        }
+        GenSamplers(1, &H.sampler);
+        SamplerParameteri(H.sampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        SamplerParameteri(H.sampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        SamplerParameteri(H.sampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        SamplerParameteri(H.sampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        for (int k = 0; k < 2; k++) {
+            GenTextures(1, &H.tex[k]);
+            BindTexture(GL_TEXTURE_2D, H.tex[k]);
+            TexImage2D(GL_TEXTURE_2D, 0, GL_R32F, N, N, 0, GL_RED, GL_FLOAT, nullptr);
+            noteRT("long shadow map", "R32F", N, N, 4);
+            TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            GenFramebuffers(1, &H.fbo[k]);
+            BindFramebuffer(GL_FRAMEBUFFER, H.fbo[k]);
+            FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, H.tex[k], 0);
+            if (CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) H.prog = ~0u;
+        }
+        BindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+    if (H.prog == ~0u) return;
+    // Where it wants to be: round the camera (a step at a time), with the light where it is now.
+    const float span = N * kHorizonTexel;
+    const float x0 = std::round((float)eye.x / kHorizonSnap) * kHorizonSnap - span * 0.5f, z0 = std::round((float)eye.z / kHorizonSnap) * kHorizonSnap - span * 0.5f;
+    auto current = [&](int k) { return k >= 0 && H.x0[k] == x0 && H.z0[k] == z0 && H.gen[k] == horizonGen_ && dot(H.sun[k], keyDir) > 0.99999994; };  // (0.02 degrees)
+    if (H.back < 0 && !current(H.live)) {
+        H.back = H.live < 0 ? 0 : 1 - H.live;
+        H.rowsDone = 0;
+        H.x0[H.back] = x0, H.z0[H.back] = z0, H.sun[H.back] = keyDir, H.gen[H.back] = horizonGen_;
+    }
+    if (H.back >= 0) {
+        const int b = H.back;
+        if (H.rowsDone == 0) {
+            // The land's highest and lowest point (the march's reach and its early stop): the chunks' bounds, backdrop and all.
+            float hi = -1e9f, lo = 1e9f;
+            for (const TerrainChunk& c : terrainChunks)
+                if (c.bounds.hi.y >= c.bounds.lo.y) hi = std::max(hi, (float)c.bounds.hi.y), lo = std::min(lo, (float)c.bounds.lo.y);
+            H.maxH = hi >= lo ? hi + 2 : 1e4f, H.minH = hi >= lo ? lo : 0;
+        }
+        const int rows = H.live < 0 ? N - H.rowsDone : std::min(N / 8, N - H.rowsDone);  // (none yet: all of it now)
+        const V3 k = H.sun[b];
+        const double fl = std::hypot(k.x, k.z), rise = k.y / fl;
+        const float reach = (float)std::min(4000.0, (H.maxH - H.minH) / std::max(rise, 0.05) + 50);
+        BindFramebuffer(GL_FRAMEBUFFER, H.fbo[b]);
+        Viewport(0, H.rowsDone, N, rows);
+        Disable(GL_DEPTH_TEST);
+        Disable(GL_BLEND);
+        UseProgram(H.prog);
+        ActiveTexture(GL_TEXTURE0 + 10);
+        BindTexture(GL_TEXTURE_2D, terrainCoarseTex);
+        BindSampler(10, H.sampler);
+        Uniform1i(uniformLocation(H.prog, "uTerrainCoarse"), 10);
+        Uniform1f(uniformLocation(H.prog, "uTerrainCoarseN"), (float)terrainCoarseN_);
+        Uniform1f(uniformLocation(H.prog, "uHalf"), (float)(terrainGridN - 1) * 0.5f);
+        Uniform1f(uniformLocation(H.prog, "uMaxH"), H.maxH);
+        Uniform1f(uniformLocation(H.prog, "uT0"), 12.0f);
+        Uniform1f(uniformLocation(H.prog, "uReach"), std::max(reach, 100.0f));
+        Uniform4f(uniformLocation(H.prog, "uBox"), H.x0[b], H.z0[b], kHorizonTexel, 0);
+        Uniform3f(uniformLocation(H.prog, "uToSun"), (float)(k.x / fl), (float)(k.z / fl), (float)rise);
+        BindVertexArray(postVao);
+        DrawArrays(GL_TRIANGLES, 0, 3);
+        BindSampler(10, 0);
+        ActiveTexture(GL_TEXTURE0);
+        BindFramebuffer(GL_FRAMEBUFFER, 0);
+        Enable(GL_DEPTH_TEST);
+        geometryStats_.horizonRows += rows;
+        H.rowsDone += rows;
+        if (H.rowsDone >= N) H.live = b, H.back = -1;
+    }
+    H.on = H.live >= 0;
+}
+
 void Renderer::updateWater(const World& world) {
+    dropStreamJobs();  // (the texture is made again below)
     std::vector<Vtx> wv;
     buildWaterMesh(world, wv);
     uploadStatic(waterVao, waterVbo, wv);
@@ -3245,8 +3782,10 @@ void Renderer::uploadTerrainCoarse(const World& world, int i0, int j0, int i1, i
         TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         terrainCoarseN_ = got;
+        horizonLandChanged(true);
         return;
     }
+    horizonLandChanged(i0 <= 0 && j0 <= 0 && i1 >= n - 1 && j1 >= n - 1);  // (all of it: a new land of the same size)
     const double half = world.halfSize();
     const int c0 = std::max(0, i0 / kCoarseCell), c1 = std::min(cn - 1, i1 / kCoarseCell), r0 = std::max(0, j0 / kCoarseCell), r1 = std::min(cn - 1, j1 / kCoarseCell);
     if (c1 < c0 || r1 < r0) return;
@@ -3324,6 +3863,7 @@ static void farPatch(const World& world, double spacing, int i0, int j0, int w, 
 
 void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, int j1) {
     if (!terrainVao || terrainGridN <= 0) return;
+    dropStreamJobs();  // (what they're making may be from before the edit)
     const double half = world.halfSize();
     // (One past the edit each way: the normals there changed too.)
     i0 = std::max(0, i0 - 2), j0 = std::max(0, j0 - 2), i1 = std::min(terrainGridN - 1, i1 + 2), j1 = std::min(terrainGridN - 1, j1 + 2);
@@ -3396,7 +3936,7 @@ static bool chunkHasProcPaint(const World& world, const RenderBounds& b) {
 // small map; round the spawn on a big one), the far patches and the backdrop, and the occlusion pyramid. Pure: any thread.
 void Renderer::prepareTerrain(const World& world, Prepared& p) {
     // 1 m on the mountain (its crawl features are small) and the wilds (the sections' steps), 2 m on the proving ground.
-    const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY || world.map == MAP_WILDS ? 1.0 : 2.0, half = world.halfSize();
+    const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY || world.map == MAP_WILDS || world.map == MAP_PROCEDURAL ? 1.0 : 2.0, half = world.halfSize();
     const int n = (int)(2 * half / spacing) + 1, cells = n - 1, cn = (cells + kChunkCells - 1) / kChunkCells;
     p.spacing = spacing;
     p.n = n;
@@ -3494,7 +4034,8 @@ void Renderer::prepareTerrain(const World& world, Prepared& p) {
     // Backdrop is already coarse; spatially batch it for camera culling too.
     std::vector<Vtx> bv;
     std::vector<unsigned> bi;
-    buildBackdrop(world, bv, bi);
+    if (world.map == MAP_PROCEDURAL) p.farForest = std::make_shared<FarForestGrid>();
+    buildBackdrop(world, bv, bi, p.farForest.get());
     const unsigned bbase = (unsigned)p.coarseVerts.size();
     p.coarseVerts.insert(p.coarseVerts.end(), bv.begin(), bv.end());
     std::map<std::pair<int, int>, std::vector<unsigned>> backdrop;
@@ -3537,30 +4078,120 @@ void Renderer::prepareTerrain(const World& world, Prepared& p) {
     p.occl.build(hs, on, spacing * f, -half);
 }
 
-// Loads the full meshes of the chunks near the camera and drops the far ones (a big map; a small one has them all).
+// The streaming's background jobs (render.h): what each was asked for, and what it made.
+struct Renderer::TexJob {
+    const World* world = nullptr;
+    uint64_t stamp = 0, gen = 0;
+    int fromI = 0, fromJ = 0, toI = 0, toJ = 0;  // the window it steps from, and to
+    struct Strip {
+        int a0, b0, cw, ch;  // first cell (i, j) and size: one piece that doesn't wrap in the texture
+        std::vector<float> data;
+    };
+    std::vector<Strip> strips;
+    std::atomic<bool> done{false};
+};
+struct Renderer::ChunkJob {
+    const World* world = nullptr;
+    uint64_t stamp = 0, gen = 0;
+    std::vector<int> chunks, slots;  // each chunk built, and the pool slot it's for
+    std::vector<Vtx> verts;          // kChunkVerts each, in that order
+    int uploaded = 0;
+    std::atomic<bool> done{false};
+};
+constexpr int kTexStep = 32;              // cells the window steps at a time (a strip of 32 x 2048 texels, 1 MB, a few ms of a background thread)
+constexpr int kChunkUploadsPerFrame = 8;  // built chunk meshes put in their slots a frame (8 x 165 KB)
+constexpr double kStreamNow = 160;        // m: a chunk wanted this close (after a jump) is built in the frame, as it always was
+
+void Renderer::dropStreamJobs() {
+    if (chunkJob_)
+        for (size_t q = 0; q < chunkJob_->chunks.size(); q++) {
+            if (chunkJob_->chunks[q] < (int)chunkQueued_.size()) chunkQueued_[chunkJob_->chunks[q]] = 0;
+            if (chunkJob_->slots[q] < (int)slotChunk_.size() && slotChunk_[chunkJob_->slots[q]] == -2) slotChunk_[chunkJob_->slots[q]] = -1;
+        }
+    texJob_.reset(), chunkJob_.reset();
+    texMoving_ = false;
+    streamGen_++;
+    streamEye_ = V3(1e9, 0, 1e9), streamPending_ = true;
+}
+
+void Renderer::waitStreaming() {
+    waitWorldReaders();  // (this one's, and any other background work that reads the world: the autopilot's replans)
+    dropStreamJobs();
+}
+
+// Loads the full meshes of the chunks near the camera and drops the far ones (a big map; a small one has them all), and keeps
+// the terrain texture's window round the camera. The CPU work is done on a background thread (bg_): the frame only uploads.
 void Renderer::streamTerrain(const World& world, const V3& eye) {
     // The texture's window follows the camera, a strip at a time.
     if (terrainWinW_ > 0 && terrainWinW_ < terrainGridN && terrainTex) {
+        FRAMEWORK("stream.texwindow");
         const double half = world.halfSize();
         const int w = terrainWinW_, n = terrainGridN;
+        // A strip made: in it goes, and the window steps onto it (what the step uncovers was the far edge it stepped away from).
+        if (texJob_ && texJob_->done.load(std::memory_order_acquire)) {
+            const TexJob& j = *texJob_;
+            if (j.world == &world && j.stamp == world.stamp && j.gen == streamGen_ && j.fromI == terrainWinI_ && j.fromJ == terrainWinJ_) {
+                BindTexture(GL_TEXTURE_2D, terrainTex);
+                for (const TexJob::Strip& st : j.strips) TexSubImage2D(GL_TEXTURE_2D, 0, st.a0 % w, st.b0 % w, st.cw, st.ch, GL_RGBA, GL_FLOAT, st.data.data());
+                terrainWinI_ = j.toI, terrainWinJ_ = j.toJ;
+            }
+            texJob_.reset();
+        }
         const int wi = windowStart((int)std::lround(eye.x + half), n, w), wj = windowStart((int)std::lround(eye.z + half), n, w);
-        if (std::abs(wi - terrainWinI_) > kTexSlack || std::abs(wj - terrainWinJ_) > kTexSlack) {
-            const int oi = terrainWinI_, oj = terrainWinJ_;
+        const int di = wi - terrainWinI_, dj = wj - terrainWinJ_;
+        if (std::abs(di) >= w / 2 || std::abs(dj) >= w / 2) {
+            // A jump (a respawn, the drone sent far): the whole window, now, as a load would.
+            texJob_.reset(), texMoving_ = false;
             terrainWinI_ = wi, terrainWinJ_ = wj;
-            // What's new: the columns past the old window, then the rows (the whole window when it jumped further than it is wide).
-            if (std::abs(wi - oi) >= w || std::abs(wj - oj) >= w) {
-                uploadTerrainCells(world, wi, wj, wi + w - 1, wj + w - 1);
-            } else {
-                if (wi > oi) uploadTerrainCells(world, oi + w, wj, wi + w - 1, wj + w - 1);
-                if (wi < oi) uploadTerrainCells(world, wi, wj, oi - 1, wj + w - 1);
-                if (wj > oj) uploadTerrainCells(world, wi, oj + w, wi + w - 1, wj + w - 1);
-                if (wj < oj) uploadTerrainCells(world, wi, wj, wi + w - 1, oj - 1);
+            uploadTerrainCells(world, wi, wj, wi + w - 1, wj + w - 1);
+        } else if (!texJob_) {
+            // One step (streamwin.h): the cells it brings in are a strip along the window's leading edge.
+            const streamwin::Step step = streamwin::next(terrainWinI_, terrainWinJ_, wi, wj, w, n, kTexSlack, kTexStep, texMoving_);
+            if (!step.pieces.empty()) {
+                auto job = std::make_shared<TexJob>();
+                job->world = &world, job->stamp = world.stamp, job->gen = streamGen_;
+                job->fromI = terrainWinI_, job->fromJ = terrainWinJ_, job->toI = step.toI, job->toJ = step.toJ;
+                for (const streamwin::Piece& pc : step.pieces) job->strips.push_back({pc.a0, pc.b0, pc.cw, pc.ch, {}});
+                texJob_ = job;
+                bg_.post([job, half] {
+                    for (TexJob::Strip& st : job->strips) {
+                        st.data.resize((size_t)st.cw * st.ch * 4);
+                        for (int r = 0; r < st.ch; r++)
+                            for (int c = 0; c < st.cw; c++) terrainTexel(*job->world, -half + st.a0 + c, -half + st.b0 + r, &st.data[((size_t)r * st.cw + c) * 4]);
+                    }
+                    job->done.store(true, std::memory_order_release);
+                });
             }
         }
     }
     if (terrainAll_ || !terrainVao || slotChunk_.empty()) return;
+    if (chunkQueued_.size() != terrainChunks.size()) chunkQueued_.assign(terrainChunks.size(), 0);
+    // Built meshes: into their slots, a few a frame.
+    if (chunkJob_ && chunkJob_->done.load(std::memory_order_acquire)) {
+        FRAMEWORK("stream.chunkupload");
+        ChunkJob& j = *chunkJob_;
+        const bool good = j.world == &world && j.stamp == world.stamp && j.gen == streamGen_;
+        BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
+        const int end = good ? std::min((int)j.chunks.size(), j.uploaded + kChunkUploadsPerFrame) : (int)j.chunks.size();
+        for (int q = j.uploaded; q < end; q++) {
+            const int k = j.chunks[q], slot = j.slots[q];
+            chunkQueued_[k] = 0;
+            if (slotChunk_[slot] != -2) continue;
+            TerrainChunk& c = terrainChunks[k];
+            if (!good || c.slot >= 0 || c.bounds.distance(eye) > kStreamOut) {  // (gone out of range meanwhile)
+                slotChunk_[slot] = -1;
+                continue;
+            }
+            c.slot = slot, slotChunk_[slot] = k;
+            if (chunkGroup_[k] >= 0) farGroups_[chunkGroup_[k]].loaded++;
+            BufferSubData(GL_ARRAY_BUFFER, (GLintptr)((size_t)slot * kChunkVerts * sizeof(Vtx)), (GLsizeiptr)(kChunkVerts * sizeof(Vtx)), &j.verts[(size_t)q * kChunkVerts]);
+        }
+        j.uploaded = end;
+        if (j.uploaded >= (int)j.chunks.size()) chunkJob_.reset();
+    }
     // (Looked at again once the camera has gone 8 m, or while there's something still to load.)
     if (!streamPending_ && len(eye - streamEye_) < 8) return;
+    FRAMEWORK("stream.chunks");
     streamEye_ = eye;
     static std::vector<std::pair<double, int>> want;
     want.clear();
@@ -3572,32 +4203,61 @@ void Renderer::streamTerrain(const World& world, const V3& eye) {
             slotChunk_[c.slot] = -1, c.slot = -1;
             if (chunkGroup_[k] >= 0) farGroups_[chunkGroup_[k]].loaded--;
         }
-        else if (c.slot < 0 && d < kStreamIn) want.push_back({d, k});
+        else if (c.slot < 0 && !chunkQueued_[k] && d < kStreamIn) want.push_back({d, k});
     }
-    streamPending_ = (int)want.size() > kStreamPerFrame;
+    streamPending_ = !want.empty() || chunkJob_;
     if (want.empty()) return;
     std::sort(want.begin(), want.end());
-    std::vector<int> slots;
-    for (int s = 0; s < (int)slotChunk_.size() && (int)slots.size() < std::min((int)want.size(), kStreamPerFrame); s++)
-        if (slotChunk_[s] < 0) slots.push_back(s);
-    if (slots.empty()) return;
-    const int m = (int)slots.size();
     static const bool dbg = std::getenv("CZ_STREAM_DEBUG") != nullptr;
-    const double t0 = loadprof::nowMs();
-    struct Done { const double& t0; int m; ~Done() { if (dbg) std::printf("stream: %d chunks %.2f ms\n", m, loadprof::nowMs() - t0); } } done{t0, m};
-    static std::vector<Vtx> buf;
-    buf.assign((size_t)m * kChunkVerts, Vtx{});
-    parallelRows(m, [&](int q) {
-        const TerrainChunk& c = terrainChunks[want[q].second];
-        chunkVertices(world, terrainSpacing, c.i0, c.j0, c.w, c.h, &buf[(size_t)q * kChunkVerts]);
-    }, 1);
-    BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
-    for (int q = 0; q < m; q++) {
-        TerrainChunk& c = terrainChunks[want[q].second];
-        c.slot = slots[q], slotChunk_[slots[q]] = want[q].second;
-        if (chunkGroup_[want[q].second] >= 0) farGroups_[chunkGroup_[want[q].second]].loaded++;
-        BufferSubData(GL_ARRAY_BUFFER, (GLintptr)((size_t)c.slot * kChunkVerts * sizeof(Vtx)), (GLsizeiptr)(kChunkVerts * sizeof(Vtx)), &buf[(size_t)q * kChunkVerts]);
+    std::vector<int> slots;
+    // Right by the camera (after a jump): built now, on a few threads, as it always was (else its coarse patch would show).
+    int now = 0;
+    while (now < (int)want.size() && now < kStreamPerFrame && want[now].first < kStreamNow) now++;
+    if (now) {
+        for (int s = 0; s < (int)slotChunk_.size() && (int)slots.size() < now; s++)
+            if (slotChunk_[s] == -1) slots.push_back(s);
+        const int m = (int)slots.size();
+        const double t0 = loadprof::nowMs();
+        static std::vector<Vtx> buf;
+        buf.assign((size_t)m * kChunkVerts, Vtx{});
+        parallelRows(m, [&](int q) {
+            const TerrainChunk& c = terrainChunks[want[q].second];
+            chunkVertices(world, terrainSpacing, c.i0, c.j0, c.w, c.h, &buf[(size_t)q * kChunkVerts]);
+        }, 1);
+        BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
+        for (int q = 0; q < m; q++) {
+            TerrainChunk& c = terrainChunks[want[q].second];
+            c.slot = slots[q], slotChunk_[slots[q]] = want[q].second;
+            if (chunkGroup_[want[q].second] >= 0) farGroups_[chunkGroup_[want[q].second]].loaded++;
+            BufferSubData(GL_ARRAY_BUFFER, (GLintptr)((size_t)c.slot * kChunkVerts * sizeof(Vtx)), (GLsizeiptr)(kChunkVerts * sizeof(Vtx)), &buf[(size_t)q * kChunkVerts]);
+        }
+        if (dbg) std::printf("stream: %d chunks in the frame %.2f ms\n", m, loadprof::nowMs() - t0);
+        streamPending_ = true;
+        return;
     }
+    // The rest: built in the background, the nearest first.
+    if (chunkJob_) return;
+    for (int s = 0; s < (int)slotChunk_.size() && (int)slots.size() < std::min((int)want.size(), kStreamPerFrame); s++)
+        if (slotChunk_[s] == -1) slots.push_back(s);
+    if (slots.empty()) return;
+    auto job = std::make_shared<ChunkJob>();
+    job->world = &world, job->stamp = world.stamp, job->gen = streamGen_;
+    std::vector<std::array<int, 4>> rect;
+    for (int q = 0; q < (int)slots.size(); q++) {
+        const int k = want[q].second;
+        job->chunks.push_back(k), job->slots.push_back(slots[q]);
+        chunkQueued_[k] = 1, slotChunk_[slots[q]] = -2;  // (-2: the slot is spoken for)
+        rect.push_back({terrainChunks[k].i0, terrainChunks[k].j0, terrainChunks[k].w, terrainChunks[k].h});
+    }
+    chunkJob_ = job;
+    const double spacing = terrainSpacing;
+    bg_.post([job, rect = std::move(rect), spacing] {
+        const double t0 = loadprof::nowMs();
+        job->verts.assign(rect.size() * kChunkVerts, Vtx{});
+        for (size_t q = 0; q < rect.size(); q++) chunkVertices(*job->world, spacing, rect[q][0], rect[q][1], rect[q][2], rect[q][3], &job->verts[q * kChunkVerts]);
+        if (dbg) std::printf("stream: %zu chunks in the background %.2f ms\n", rect.size(), loadprof::nowMs() - t0);
+        job->done.store(true, std::memory_order_release);
+    });
 }
 
 void Renderer::buildTerrain(const World& world) {
@@ -3613,8 +4273,9 @@ void Renderer::buildTerrain(const World& world) {
 
 // ---- A map switch without a frozen frame (render.h: prepareWorld) ----
 
-std::shared_ptr<Renderer::Prepared> Renderer::prepareWorld(const World& world, const ScanCover& cover) {
+std::shared_ptr<Renderer::Prepared> Renderer::prepareWorld(const World& world, const ScanCover& cover, const V3* focus) {
     auto p = std::make_shared<Prepared>();
+    p->keepSpare = world.map == MAP_PROCEDURAL;
     prepareTerrain(world, *p);
     buildWaterMesh(world, p->water);
     {  // (builds the placed models' meshes, which the scenery stage then finds made)
@@ -3629,7 +4290,8 @@ std::shared_ptr<Renderer::Prepared> Renderer::prepareWorld(const World& world, c
     const double half = world.halfSize();
     const int n = (int)(2 * half) + 1, w = std::min(n, kTexWindow);
     p->gridN = n, p->texW = w;
-    p->winI = windowStart((int)std::lround(world.spawn.x + half), n, w), p->winJ = windowStart((int)std::lround(world.spawn.z + half), n, w);
+    const V3 at = focus ? *focus : world.spawn;  // (a slid procedural window: round the player, near its middle; else the start)
+    p->winI = windowStart((int)std::lround(at.x + half), n, w), p->winJ = windowStart((int)std::lround(at.z + half), n, w);
     p->data.resize((size_t)w * w * 4);
     parallelRows(w, [&](int r) {
         const int j = p->winJ + r;
@@ -3639,12 +4301,19 @@ std::shared_ptr<Renderer::Prepared> Renderer::prepareWorld(const World& world, c
         }
     });
     coarseTexels(world, n, p->coarse, p->coarseN);
+    if (p->keepSpare) {  // (the same for every window of the same size: the swap needn't send them again)
+        uint64_t h = 1469598103934665603ull;
+        for (unsigned v : p->lodIdx) h = (h ^ v) * 1099511628211ull;
+        for (unsigned v : p->coarseIdx) h = (h ^ v) * 1099511628211ull;
+        p->idxHash = h ^ p->lodIdx.size() ^ (p->coarseIdx.size() << 32);
+    }
     return p;
 }
 
 void Renderer::beginUpload(std::shared_ptr<Prepared> p) {
     pending_ = std::move(p);
     pending_->stage = 0;
+    staged_.step = 0, staged_.done = 0, staged_.ready = false;  // (stageWorld starts over for this one)
 }
 
 bool Renderer::pumpUpload(double budgetMs) {
@@ -3663,7 +4332,21 @@ bool Renderer::pumpUpload(double budgetMs) {
         }
         return true;
     };
+    if (p->stage == 0 && p->keepSpare && spare_.vbo && spare_.tex && spare_.vBytes == (size_t)p->poolSlots * kChunkVerts * sizeof(Vtx) &&
+        spare_.iBytes == p->lodIdx.size() * sizeof(unsigned) && spare_.cvBytes == std::max<size_t>(1, p->coarseVerts.size()) * sizeof(Vtx) &&
+        spare_.ciBytes == std::max<size_t>(1, p->coarseIdx.size()) * sizeof(unsigned) && spare_.texW == p->texW && spare_.coarseN == p->coarseN) {
+        // (The last window's buffers, the same sizes: refilled, nothing allocated. The coarse texture is small: written whole.)
+        p->vbo = spare_.vbo, p->ibo = spare_.ibo, p->cvbo = spare_.cvbo, p->cibo = spare_.cibo, p->tex = spare_.tex, p->ctex = spare_.ctex;
+        p->bytes[0] = spare_.vBytes, p->bytes[1] = spare_.iBytes, p->bytes[2] = spare_.cvBytes, p->bytes[3] = spare_.ciBytes;
+        if (spare_.idxHash == p->idxHash) p->iDone = p->lodIdx.size() * sizeof(unsigned), p->ciDone = p->coarseIdx.size() * sizeof(unsigned);
+        spare_ = Spare();
+        p->coarseLater = true;  // (its coarse texture goes up with the rest, a slice a frame: stage 3)
+        p->stage = 1;
+        if (over()) return false;
+    }
     if (p->stage == 0) {
+        p->bytes[0] = (size_t)p->poolSlots * kChunkVerts * sizeof(Vtx), p->bytes[1] = p->lodIdx.size() * sizeof(unsigned);
+        p->bytes[2] = std::max<size_t>(1, p->coarseVerts.size()) * sizeof(Vtx), p->bytes[3] = std::max<size_t>(1, p->coarseIdx.size()) * sizeof(unsigned);
         GenBuffers(1, &p->vbo);
         GenBuffers(1, &p->ibo);
         GenBuffers(1, &p->cvbo);
@@ -3707,17 +4390,41 @@ bool Renderer::pumpUpload(double budgetMs) {
             const int rows = std::max(1, (int)(slice / ((size_t)p->texW * 16)));
             while (p->rowsDone < p->texW) {
                 const int k = std::min(rows, p->texW - p->rowsDone);
-                TexSubImage2D(GL_TEXTURE_2D, 0, 0, p->rowsDone, p->texW, k, GL_RGBA, GL_FLOAT, &p->data[(size_t)p->rowsDone * p->texW * 4]);
+                const float* rowsData = &p->data[(size_t)p->rowsDone * p->texW * 4];
+                if (p->keepSpare) {  // (through a pixel buffer, so the copy is the GPU's: written straight, a texture this big stalls the driver)
+                    if (!unpackPbo_) GenBuffers(1, &unpackPbo_);
+                    BindBuffer(GL_PIXEL_UNPACK_BUFFER, unpackPbo_);
+                    BufferData(GL_PIXEL_UNPACK_BUFFER, (GLsizeiptr)((size_t)p->texW * k * 16), rowsData, GL_STREAM_DRAW);
+                    TexSubImage2D(GL_TEXTURE_2D, 0, 0, p->rowsDone, p->texW, k, GL_RGBA, GL_FLOAT, nullptr);
+                    BindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+                } else TexSubImage2D(GL_TEXTURE_2D, 0, 0, p->rowsDone, p->texW, k, GL_RGBA, GL_FLOAT, rowsData);
                 p->rowsDone += k;
                 if (over()) return false;
             }
+            if (p->coarseLater) {  // (the coarse texture too, through the pixel buffer, a megabyte's rows at a time)
+                BindTexture(GL_TEXTURE_2D, p->ctex);
+                const int crow = std::max(1, (int)(slice / ((size_t)p->coarseN * 16)));
+                while (p->coarseRows < p->coarseN) {
+                    const int k = std::min(crow, p->coarseN - p->coarseRows);
+                    BindBuffer(GL_PIXEL_UNPACK_BUFFER, unpackPbo_);
+                    BufferData(GL_PIXEL_UNPACK_BUFFER, (GLsizeiptr)((size_t)p->coarseN * k * 16), &p->coarse[(size_t)p->coarseRows * p->coarseN * 4], GL_STREAM_DRAW);
+                    TexSubImage2D(GL_TEXTURE_2D, 0, 0, p->coarseRows, p->coarseN, k, GL_RGBA, GL_FLOAT, nullptr);
+                    BindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+                    p->coarseRows += k;
+                    if (over()) return false;
+                }
+            }
         }
-        std::vector<Vtx>().swap(p->poolVerts);
-        std::vector<unsigned>().swap(p->lodIdx);
-        std::vector<Vtx>().swap(p->coarseVerts);
-        std::vector<unsigned>().swap(p->coarseIdx);
-        std::vector<float>().swap(p->data);
-        std::vector<float>().swap(p->coarse);
+        // (Handed back on a thread of their own: freeing a few hundred MB is ms of a frame.)
+        struct Junk {
+            std::vector<Vtx> a, b;
+            std::vector<unsigned> c, d;
+            std::vector<float> e, f;
+        };
+        auto junk = std::make_shared<Junk>();
+        junk->a.swap(p->poolVerts), junk->c.swap(p->lodIdx), junk->b.swap(p->coarseVerts), junk->d.swap(p->coarseIdx);
+        junk->e.swap(p->data), junk->f.swap(p->coarse);
+        std::thread([junk]() mutable { junk.reset(); }).detach();
         p->stage = 4;
     }
     return true;
@@ -3725,6 +4432,18 @@ bool Renderer::pumpUpload(double budgetMs) {
 
 // The uploaded terrain becomes the one drawn (its buffers replace the old ones).
 void Renderer::adoptTerrain(Prepared& p) {
+    dropSpare();
+    if (p.keepSpare && terrainVbo && terrainIbo && coarseVbo && coarseIbo && terrainBytes_[0] == p.bytes[0] && terrainBytes_[1] == p.bytes[1] &&
+        terrainBytes_[2] == p.bytes[2] && terrainBytes_[3] == p.bytes[3]) {  // (a procedural window: the next one refills these)
+        spare_.idxHash = terrainIdxHash_;
+        spare_.vbo = terrainVbo, spare_.vBytes = terrainBytes_[0];
+        spare_.ibo = terrainIbo, spare_.iBytes = terrainBytes_[1];
+        spare_.cvbo = coarseVbo, spare_.cvBytes = terrainBytes_[2];
+        spare_.cibo = coarseIbo, spare_.ciBytes = terrainBytes_[3];
+        terrainVbo = terrainIbo = coarseVbo = coarseIbo = 0;
+    }
+    for (int k = 0; k < 4; k++) terrainBytes_[k] = p.bytes[k];
+    terrainIdxHash_ = p.idxHash;
     if (terrainVbo) DeleteBuffers(1, &terrainVbo);
     if (terrainIbo) DeleteBuffers(1, &terrainIbo);
     if (coarseVbo) DeleteBuffers(1, &coarseVbo);
@@ -3746,6 +4465,8 @@ void Renderer::adoptTerrain(Prepared& p) {
         for (int k : farGroups_[g].chunks) chunkGroup_[k] = g, farGroups_[g].loaded += terrainChunks[k].slot >= 0;
     }
     occl_ = std::move(p.occl);
+    if (p.farForest) farForest_.upload(p.farForest);
+    else farForest_.clear();
     if (!terrainVao) GenVertexArrays(1, &terrainVao);
     if (!coarseVao) GenVertexArrays(1, &coarseVao);
     setupVtxVao(terrainVao, terrainVbo);
@@ -3759,19 +4480,108 @@ void Renderer::adoptTerrain(Prepared& p) {
 
 void Renderer::adoptWorld(const World& world) {
     LOADPROF("renderer.adoptWorld");
+    waitStreaming();
     std::shared_ptr<Prepared> p = std::move(pending_);
     mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;
-    if (terrainTex) DeleteTextures(1, &terrainTex);
-    if (terrainCoarseTex) DeleteTextures(1, &terrainCoarseTex);
+    anchorNoise(world);
+    updateLook(world);  // (the regions' ground look: a small texture)
+    const GLuint oldTex = terrainTex, oldCoarse = terrainCoarseTex;
+    const int oldW = terrainWinW_, oldCoarseN = terrainCoarseN_;
     terrainTex = p->tex, terrainCoarseTex = p->ctex, terrainGridN = p->gridN;
     terrainWinW_ = p->texW, terrainWinI_ = p->winI, terrainWinJ_ = p->winJ, terrainCoarseN_ = p->coarseN;
     noteRT("terrain height map", "RGBA32F", p->texW, p->texW, 16, 0, true);
-    adoptTerrain(*p);
+    adoptTerrain(*p);  // (drops the last spare set; with keepSpare, the old buffers are the new one)
+    horizonLandChanged(true);  // (a new land, or the procedural window slid: the long-shadow map's coordinates moved)
+    if (p->keepSpare && spare_.vbo && oldTex && oldCoarse && oldW == p->texW && oldCoarseN == p->coarseN)
+        spare_.tex = oldTex, spare_.ctex = oldCoarse, spare_.texW = oldW, spare_.coarseN = oldCoarseN;
+    else {
+        if (oldTex) DeleteTextures(1, &oldTex);
+        if (oldCoarse) DeleteTextures(1, &oldCoarse);
+        if (spare_.vbo && !spare_.tex) dropSpare();  // (half a set is no use)
+    }
+    preObjs_ = p->objs;
+    ensureSpare();
+    if (staged_.ready && p->objs) {  // (a procedural window staged a piece a frame: swapped in whole, nothing built now)
+        Prepared::PreObjects& o = *p->objs;
+        std::swap(waterVao, staged_.waterVao), std::swap(waterVbo, staged_.waterVbo);
+        waterVertexCount = (int)p->water.size();
+        stagePq_ = o.pq;
+        if (o.hasLayout) o.props.world = &world, props.adopt(std::move(o.props));
+        else props.setWorld(world, o.pq);
+        scanCover_ = o.cover;
+        treeFade_.assign(world.trees.size(), 0.0f);
+        propsApplied = settings.props;
+        std::swap(boxVao, staged_.boxVao), std::swap(boxVbo, staged_.boxVbo);
+        std::swap(boxBatches, o.boxBatches), boxVertexCount = (int)o.boxVerts.size();
+        std::swap(trees_, staged_.trees), treeSig_ = o.treeSig, treeVertexCount = (int)trees_.meshVertices();
+        std::swap(bushes_, staged_.bushes), bushSig_ = o.bushSig;
+        std::swap(bushVao, staged_.bushVao), std::swap(bushVbo, staged_.bushVbo);
+        std::swap(bushBatches, o.bushBatches), bushVertexCount = (int)o.bushVerts.size();
+        std::swap(sceneryVao, staged_.sceneryVao), std::swap(sceneryVbo, staged_.sceneryVbo);
+        std::swap(sceneryBatches, o.sceneryBatches), sceneryVertexCount = (int)o.sceneryVerts.size();
+        scenerySig_ = o.scenerySig;
+        preObjs_.reset();
+        staged_.ready = false, staged_.step = 0;
+        objStage_ = 4;
+        std::thread([p]() mutable { p.reset(); releaseFreedMemory(); }).detach();  // (what went out, and what came in's CPU copies: freed off this frame, and handed back)
+        return;
+    }
     uploadStatic(waterVao, waterVbo, p->water);
     waterVertexCount = (int)p->water.size();
     treeSig_ = scenerySig_ = bushSig_ = 0;
     updateObjectsStage(world, 0);
     objStage_ = 1;
+}
+
+// A procedural window's scenery onto the GPU ahead of its swap, a piece a frame into buffers of its own (the ones the window before
+// last used): the water, the boxes, the trees, the bushes, the reeds and logs, the rocks and models. Big buffers go a megabyte at a
+// time. The frame it goes in only swaps them (adoptWorld).
+bool Renderer::stageWorld(double budgetMs) {
+    Prepared* p = pending_.get();
+    if (!p || !p->objs || p->stage < 4) return false;
+    if (staged_.ready) return true;
+    Prepared::PreObjects& o = *p->objs;
+    if (o.pq != (propsOk ? std::min(std::max(settings.props, 0), 3) : 0)) return staged_.ready = false, true;  // (the quality changed: built the ordinary way)
+    const double t0 = loadprof::nowMs();
+    auto over = [&] { return loadprof::nowMs() - t0 >= budgetMs; };
+    // One buffer of vertices, a slice at a time: false while there's more.
+    auto slices = [&](GLuint& vao, GLuint& vbo, const std::vector<Vtx>& v) {
+        if (!vao) {
+            GenVertexArrays(1, &vao);
+            GenBuffers(1, &vbo);
+            setupVtxVao(vao, vbo);
+        }
+        BindBuffer(GL_ARRAY_BUFFER, vbo);
+        const size_t total = v.size() * sizeof(Vtx);
+        if (staged_.done == 0) {  // (made bigger only when it must, with room to spare: a big buffer's allocation is ms of a frame)
+            GLint have = 0;
+            GetBufferParameteriv(GL_ARRAY_BUFFER, 0x8764 /* GL_BUFFER_SIZE */, &have);
+            if ((size_t)have < total || total == 0) BufferData(GL_ARRAY_BUFFER, (GLsizeiptr)std::max<size_t>(total + total / 4, 16), nullptr, GL_STATIC_DRAW);
+        }
+        while (staged_.done < total) {
+            const size_t k = std::min<size_t>(1 << 20, total - staged_.done);
+            BufferSubData(GL_ARRAY_BUFFER, (GLintptr)staged_.done, (GLsizeiptr)k, (const char*)v.data() + staged_.done);
+            staged_.done += k;
+            if (over() && staged_.done < total) return false;
+        }
+        staged_.done = 0;
+        return true;
+    };
+    while (!over() || staged_.step == 0) {
+        bool next = true;
+        switch (staged_.step) {
+            case 0: next = slices(staged_.waterVao, staged_.waterVbo, p->water); break;
+            case 1: next = slices(staged_.boxVao, staged_.boxVbo, o.boxVerts); break;
+            case 2: staged_.trees.upload(std::move(o.treeBuilt)); break;
+            case 3: staged_.bushes.upload(std::move(o.bushBuilt)); break;
+            case 4: next = slices(staged_.bushVao, staged_.bushVbo, o.bushVerts); break;
+            case 5: next = slices(staged_.sceneryVao, staged_.sceneryVbo, o.sceneryVerts); break;
+            default: staged_.ready = true; return true;
+        }
+        if (next) staged_.step++;
+        if (staged_.step == 3 || staged_.step == 4) break;  // (a tree set's upload is a frame's work on its own)
+    }
+    return false;
 }
 
 bool Renderer::stepWorld(const World& world) {
@@ -3781,11 +4591,72 @@ bool Renderer::stepWorld(const World& world) {
 
 // The mountain range around the map, 3 km past its edge: a coarse grid with the map's
 // square cut out of it (its edge meets the crags at the rim).
-void Renderer::buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx) {
-    const double spacing = 24.0, half = world.halfSize(), reach = half + 3000.0;
+void Renderer::buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx, FarForestGrid* farForest) {
+    // (The procedural world: its ranges seen far off, 6 km past its window, a little coarser.)
+    const bool endless = world.map == MAP_PROCEDURAL;
+    const double spacing = endless ? 32.0 : 24.0, half = world.halfSize(), reach = half + (endless ? 6000.0 : 3000.0);
     const int n = (int)(2 * reach / spacing) + 1;
     const unsigned base = (unsigned)verts.size();
     verts.resize(base + (size_t)n * n);
+    if (endless) {
+        // (Its heights once each, on the grid, the slopes from the neighbours: the land with its valleys cut is dear to work out.
+        // On the window's edge, the window's own ground, so the two meet.)
+        std::vector<double> H((size_t)n * n);
+        // (The far forest's field on the same grid: the generator's tree rule at each sample, from the climate there.)
+        struct Clim { float w[proc::PB_COUNT], wet; };
+        std::vector<Clim> clim(farForest ? (size_t)n * n : 0);
+        const proc::ProcWorld& G = proc::ProcWorld::forSeed(world.proc.seed);
+        parallelRows(n, [&](int i) {
+            for (int j = 0; j < n; j++) {
+                const double x = -reach + i * spacing, z = -reach + j * spacing;
+                const bool inside = std::fabs(x) <= half + 1e-6 && std::fabs(z) <= half + 1e-6;
+                if (!farForest) {
+                    H[(size_t)i * n + j] = inside ? world.height(x, z) : sceneryHeight(world, x, z);
+                    continue;
+                }
+                // (sceneryHeight's own sums: the generator's ground, its valleys cut, from the climate kept for the trees)
+                const double gx = x + (double)world.proc.ox, gz = z + (double)world.proc.oz;
+                const proc::Macro m = G.macroCached(gx, gz);  // (worn where its erosion tiles are made: never waits on one)
+                H[(size_t)i * n + j] = inside ? world.height(x, z) : G.groundHeight(gx, gz, m);
+                Clim& c = clim[(size_t)i * n + j];
+                for (int b = 0; b < proc::PB_COUNT; b++) c.w[b] = (float)m.w[b];
+                c.wet = (float)m.wet;
+            }
+        });
+        if (farForest) {
+            FarForestGrid& F = *farForest;
+            F.n = n, F.spacing = spacing, F.origin = -reach, F.ox = world.proc.ox, F.oz = world.proc.oz;
+            F.cover.assign((size_t)n * n * 4, 0);
+            F.height.resize((size_t)n * n);
+            parallelRows(n, [&](int i) {
+                for (int j = 0; j < n; j++) {
+                    const size_t k = (size_t)i * n + j, t = (size_t)j * n + i;  // (t: as the textures hold it, a row for each z)
+                    F.height[t] = (float)H[k];
+                    const int i0 = std::max(0, i - 1), i1 = std::min(n - 1, i + 1), j0 = std::max(0, j - 1), j1 = std::min(n - 1, j + 1);
+                    const double slope = std::hypot((H[(size_t)i1 * n + j] - H[(size_t)i0 * n + j]) / ((i1 - i0) * spacing),
+                                                    (H[(size_t)i * n + j1] - H[(size_t)i * n + j0]) / ((j1 - j0) * spacing));
+                    proc::Macro m;
+                    for (int b = 0; b < proc::PB_COUNT; b++) m.w[b] = clim[k].w[b];
+                    m.wet = clim[k].wet;
+                    const double gx = -reach + i * spacing + (double)world.proc.ox, gz = -reach + j * spacing + (double)world.proc.oz;
+                    const proc::ProcWorld::TreeCover tc = G.treeCover(gx, gz, m, H[k], slope);
+                    auto byte = [](double v) { return (uint8_t)std::clamp((int)std::lround(v * 255), 0, 255); };
+                    F.cover[t * 4 + 0] = (uint8_t)std::clamp((int)std::lround(FarForestGrid::realized(tc.triedPerHa) / FarForestGrid::kPerHaUnit), 0, 255);
+                    F.cover[t * 4 + 1] = byte(tc.conifer), F.cover[t * 4 + 2] = byte(tc.snag), F.cover[t * 4 + 3] = byte(1 - tc.shrink);
+                }
+            });
+            F.finish();
+        }
+        parallelRows(n, [&](int i) {
+            for (int j = 0; j < n; j++) {
+                const double x = -reach + i * spacing, z = -reach + j * spacing;
+                const int i0 = std::max(0, i - 1), i1 = std::min(n - 1, i + 1), j0 = std::max(0, j - 1), j1 = std::min(n - 1, j + 1);
+                const V3 nrm = norm(V3((H[(size_t)i0 * n + j] - H[(size_t)i1 * n + j]) / ((i1 - i0) * spacing), 1.0,
+                                       (H[(size_t)i * n + j0] - H[(size_t)i * n + j1]) / ((j1 - j0) * spacing)));
+                verts[base + (size_t)i * n + j] = vtx(V3(x, H[(size_t)i * n + j], z), nrm, 0, 0, 0, SM_TERRAIN);
+            }
+        });
+    } else
     parallelRows(n, [&](int i) {
         for (int j = 0; j < n; j++) {
             double x = -reach + i * spacing, z = -reach + j * spacing;
@@ -4366,6 +5237,13 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
             carDrawArrays(0, wheelVertexCount[0][st]);
         }
     };
+    const GLint rimLoc = uniformLocation(prog, "uRimTint");
+    auto rimTint = [&](const Car* car) {  // (the accent colour on the rims of a painted car; off for everything else)
+        float c[3] = {0, 0, 0};
+        const bool on = car && car->paint.accentSet;
+        if (on) car->paint.accentF(c);
+        Uniform4f(rimLoc, c[0], c[1], c[2], on ? 1.0f : 0.0f);
+    };
     for (const Car& car : sim.cars) {
         if (car.wheels.empty() || !carShown(&car - sim.cars.data())) continue;
         Frame fr = car.frame();
@@ -4373,6 +5251,7 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
         // The car's own tread on this wheel (and chains over it when they're on).
         const int tread = std::min(std::max(car.spec->tireType, 0), TIRE_TYPES - 1);
         auto drawTread = [&](int st, const M4& tm, double chain) {  // (chain: how much of one is wrapped on, 0..1)
+            rimTint(nullptr);
             uniformM4(prog, "uModel", tm);
             BindVertexArray(tireVao[L][st][tread]);
             carDrawArrays(0, treadVertexCount[L][st][tread]);
@@ -4394,6 +5273,7 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
             };
             const int st = std::min(std::max(wh.mounted ? wh.item.style : car.spec->wheelStyle, 0), WHEEL_STYLES - 1);
             BindVertexArray(wheelVao[L][st]);
+            rimTint(&car);
             if (!wh.mounted) {
                 // Nothing on the hub but its rotor (the caliper below) and the studs: a sliver of rim face.
                 uniformM4(prog, "uModel", wm(true, kBareHubR / wh.R));
@@ -4408,6 +5288,7 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
                 const M4 tm = wm(true, scale);
                 drawTread(st, tm, chain);
                 BindVertexArray(wheelVao[L][st]);
+                rimTint(&car);
                 uniformM4(prog, "uModel", wm(true));
                 carDrawArrays(tireVertexCount[L][st], wheelVertexCount[L][st] - tireVertexCount[L][st]);
             } else {
@@ -4417,9 +5298,11 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
                 const double bulge = 1 + 0.3 * (1 - vertical);
                 drawTread(st, wm(true, 1.0, vertical, bulge), chain);
                 BindVertexArray(wheelVao[L][st]);
+                rimTint(&car);
                 uniformM4(prog, "uModel", wm(true));
                 carDrawArrays(tireVertexCount[L][st], wheelVertexCount[L][st] - tireVertexCount[L][st]);
             }
+            rimTint(nullptr);
             if (L) continue;
             BindVertexArray(caliperVao);
             // (The off-road rim is smaller for its tire: its brake is too.)
@@ -4569,7 +5452,8 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug, const V3& eye) {
         }
         int shattered = 0;
         for (const Tri& tr : car.tris) shattered += tr.shattered;
-        const bool bodyDirty = moved || shattered != slot.shattered;
+        const uint32_t paintKey = 1u + car.paint.finish + ((uint32_t)(car.color.x * 255) << 8) + ((uint32_t)(car.color.y * 255) << 16) + ((uint32_t)(car.color.z * 255) << 24);
+        const bool bodyDirty = moved || shattered != slot.shattered || paintKey != slot.paintKey;
 
         const int beam = ci < carBeams.size() ? carBeams[ci] : 0;
         if (carLampState.size() < sim.cars.size()) carLampState.resize(sim.cars.size());
@@ -4619,6 +5503,12 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug, const V3& eye) {
             }
             local.clear();
             evalParts(P, t, local);
+            slot.paintKey = paintKey;
+            // (Painted parts were made in the colour the first car of this type wore: this one's own.)
+            if (std::fabs(t.bakedPaint[0] - car.color.x) + std::fabs(t.bakedPaint[1] - car.color.y) + std::fabs(t.bakedPaint[2] - car.color.z) > 0.004)
+                for (Vtx& pv : local)
+                    if (pv.c[3] > 3.5f && pv.c[3] < 4.5f && std::fabs(pv.c[0] - t.bakedPaint[0]) + std::fabs(pv.c[1] - t.bakedPaint[1]) + std::fabs(pv.c[2] - t.bakedPaint[2]) < 0.004f)
+                        pv.c[0] = (float)car.color.x, pv.c[1] = (float)car.color.y, pv.c[2] = (float)car.color.z;
             for (Vtx& pv : local) {
                 if (pv.c[3] < 5.5f || pv.c[3] > 6.5f) continue;
                 const int sd = pv.p[2] < 0 ? 0 : 1;  // (local z: toward the car's right)
@@ -4685,14 +5575,101 @@ int Renderer::skinLod(const CarSlot& slot) const {
     return L;
 }
 
-void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
+// Glow sprites at the lit lamps: headlamps (seen from the front), tail and brake lamps (from behind) and the
+// reversing lamps. Brighter the more you look into them; a lamp that's smashed or put out gives none.
+void Renderer::buildLampGlow(const Sim& sim, const V3& eye, std::vector<Vtx>& out) {
+    out.clear();
+    const float night = daylight.night;
+    auto quad = [&](const V3& c, double R, const V3& e, const float rgb[3]) {
+        const V3 cc = c + e * std::min(0.12, 0.3 * len(eye - c));
+        V3 r = cross(V3(0, 1, 0), e);
+        if (len(r) < 1e-4) r = V3(1, 0, 0);
+        r = norm(r);
+        const V3 u = cross(e, r);
+        const float col[4] = {rgb[0], rgb[1], rgb[2], 1};
+        const V3 q[4] = {cc - r * R - u * R, cc + r * R - u * R, cc + r * R + u * R, cc - r * R + u * R};
+        static const float uv[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
+        static const int idx[6] = {0, 1, 2, 0, 2, 3};
+        for (int k : idx)
+            out.push_back(Vtx{{(float)q[k].x, (float)q[k].y, (float)q[k].z}, {uv[k][0], uv[k][1], 0}, {col[0], col[1], col[2], col[3]}});
+    };
+    for (size_t ci = 0; ci < sim.cars.size() && ci < carLampState.size(); ci++) {
+        const CarLamps& lp = carLampState[ci];
+        if (!lp.placed || !carShown(ci)) continue;
+        const Car& car = sim.cars[ci];
+        const float brake = (float)std::max(car.brake, car.handbrake * 0.6);
+        const double dist = len(lp.headPos[0] - eye);
+        if (dist > 500) continue;
+        auto emit = [&](const V3& c, const V3& axis, float k, const float tint[3], double size) {
+            if (k <= 0.01f) return;
+            const V3 e = norm(eye - c);
+            const double facing = dot(e, axis);
+            const float front = (float)smoothstep(-0.05, 0.55, facing);
+            if (front <= 0.001f) return;
+            const float glare = (float)std::pow(std::max(facing, 0.0), 6.0);  // looking straight into it
+            const double d = len(eye - c);
+            const double R = size * (1.0 + 1.6 * glare) + d * 0.004;
+            const float a = k * front * (0.6f + 1.4f * glare) * (float)std::min(1.0, 0.45 + 70.0 / (d * d + 70.0));
+            const float rgb[3] = {tint[0] * a, tint[1] * a, tint[2] * a};
+            quad(c, R, e, rgb);
+        };
+        // Beam haze (medium quality and up; dusk and night): a thin cone out of each lit headlamp.
+        if (lp.beam > 0 && settings.bloom && night > 0.2f && dist < 120) {
+            const V3 right = norm(cross(lp.fwd, lp.up));
+            const bool hi = lp.beam == 2;
+            const double Lc = hi ? 60 : 32, rh = hi ? 0.11 : 0.28, rv = hi ? 0.05 : 0.035, drop = hi ? -0.01 : 0.0;  // (kept off the ground: a cone cutting the road shows its edge)
+            const float k = (hi ? 0.06f : 0.045f) * night;
+            for (int s = 0; s < 2; s++) {
+                if (lp.head[s] < 0.5f) continue;
+                const V3 c = lp.headPos[s] + lp.fwd * 0.1;
+                const float col[4] = {k * 1.0f, k * 0.90f, k * 0.76f, 1};
+                const int N = 14;
+                V3 ring[N];
+                for (int j = 0; j < N; j++) {
+                    const double t = j * 2 * M_PI / N;
+                    ring[j] = c + lp.fwd * Lc + (right * (std::cos(t) * rh) + lp.up * (std::sin(t) * rv - drop)) * Lc;
+                }
+                auto vtx = [&](const V3& p, float along) {
+                    out.push_back(Vtx{{(float)p.x, (float)p.y, (float)p.z}, {along, 0, 1}, {col[0], col[1], col[2], col[3]}});
+                };
+                for (int j = 0; j < N; j++) {
+                    const V3 &a = ring[j], &b = ring[(j + 1) % N];
+                    vtx(c, 0), vtx(a, 1), vtx(b, 1);
+                }
+            }
+        }
+        static const float kHead[3] = {1.0f, 0.90f, 0.74f}, kRed[3] = {1.0f, 0.018f, 0.006f}, kWhite[3] = {1.0f, 0.93f, 0.78f};
+        if (lp.beam > 0)
+            for (int s = 0; s < 2; s++)
+                if (lp.head[s] > 0.5f) emit(lp.headPos[s] + lp.fwd * 0.04, lp.fwd, lp.beam == 2 ? 1.6f : 1.0f, kHead, 0.20);
+        const V3 back = lp.fwd * -1.0;
+        const V3 mid = (lp.tailPos[0] + lp.tailPos[1]) * 0.5;
+        for (int s = 0; s < 2; s++) {
+            if (lp.tail[s] < 0.5f) continue;
+            const float k = (lp.beam ? 0.5f : 0.0f) + 2.0f * brake;
+            emit(lp.tailPos[s] - lp.fwd * 0.04, back, k * (0.6f + 0.4f * night), kRed, 0.12 + 0.10 * brake);
+            if (car.gear < 0) emit(lp.tailPos[s] * 0.6 + mid * 0.4 - lp.fwd * 0.04 - lp.up * 0.1, back, 1.3f, kWhite, 0.12);
+        }
+    }
+}
+
+void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass, const std::function<void(GLuint)>& use) {
+    const bool bodyPass = prog == progCar;
+    GLuint current = prog;
     for (size_t ci = 0; ci < sim.cars.size() && ci < carSlots.size(); ci++) {
         if (!carShown(ci)) continue;
         const Car& car = sim.cars[ci];
         const CarSlot& slot = carSlots[ci];
         if (!slot.tpl) continue;
         const VisualTemplate& t = *static_cast<const VisualTemplate*>(slot.tpl);
-        if (prog == progCar) {
+        if (bodyPass) {
+            const GLuint want = t.shell >= 0 && t.shell < kCarShells ? progCarShell[t.shell] : progCar;
+            if (want != current) {
+                if (use) use(want);
+                else UseProgram(want);
+                current = want;
+            }
+            prog = current;
             Uniform3f(uniformLocation(prog, "uPaint"), (float)car.color.x, (float)car.color.y, (float)car.color.z);
             Uniform1i(uniformLocation(prog, "uPass"), glassPass ? 1 : 0);
             Uniform1f(uniformLocation(prog, "uBrake"), (float)std::max(car.brake, car.handbrake * 0.6));
@@ -4706,7 +5683,13 @@ void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
             Uniform4f(uniformLocation(prog, "uStyle"), t.style[0], t.style[1], t.style[2], t.style[3]);
             const VehicleSpec& vs = *car.spec;
             Uniform1i(uniformLocation(prog, "uVehicle"), vs.model);
-            Uniform4f(uniformLocation(prog, "uTrim"), vs.trimColor[0], vs.trimColor[1], vs.trimColor[2], vs.trimTop);
+            {
+                float ac[3] = {vs.trimColor[0], vs.trimColor[1], vs.trimColor[2]};
+                if (car.paint.accentSet) car.paint.accentF(ac);
+                Uniform4f(uniformLocation(prog, "uTrim"), ac[0], ac[1], ac[2], vs.trimTop);
+                Uniform4f(uniformLocation(prog, "uAccent"), ac[0], ac[1], ac[2], car.paint.accentSet ? 1.0f : 0.0f);
+                Uniform1i(uniformLocation(prog, "uFinish"), car.paint.finish);
+            }
             const float* sp = t.shellParam;
             Uniform1i(uniformLocation(prog, "uShell"), t.shell);
             Uniform4f(uniformLocation(prog, "uShA"), sp[0], sp[1], sp[2], sp[3]);
@@ -5050,8 +6033,43 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
                 // Peak intensities: a low beam lights the road about evenly out to ~30 m,
                 // a high beam reaches past 100 m.
                 U[0] = (float)lp.up.x, U[1] = (float)lp.up.y, U[2] = (float)lp.up.z;
-                U[3] = (lp.beam == 2 ? 45000.0f : 20000.0f) * lp.head[s];
+                U[3] = (lp.beam == 2 ? 28000.0f : 14000.0f) * lp.head[s];
                 lampCount++;
+            }
+        }
+        // The rear lamps light the ground behind a car a little, red (and white in reverse): one soft light
+        // each between the tail lamps, for the nearest few cars, at dusk and night only (by day they'd not show).
+        if (daylight.night > 0.08f) {
+            std::vector<std::pair<double, int>> rear;
+            for (size_t ci = 0; ci < sim.cars.size() && ci < carLampState.size(); ci++) {
+                const CarLamps& lp = carLampState[ci];
+                const Car& car = sim.cars[ci];
+                const float brake = (float)std::max(car.brake, car.handbrake * 0.6);
+                if (!lp.placed || lp.tail[0] + lp.tail[1] < 0.1f || (lp.beam == 0 && brake < 0.05f && car.gear >= 0)) continue;
+                const double d = len(lp.tailPos[0] - view.eye);
+                if (d < 60) rear.push_back({d, (int)ci});
+            }
+            std::sort(rear.begin(), rear.end());
+            int cars = 0;
+            for (const auto& r : rear) {
+                const CarLamps& lp = carLampState[r.second];
+                const Car& car = sim.cars[r.second];
+                const float brake = (float)std::max(car.brake, car.handbrake * 0.6);
+                const float ok = 0.5f * (lp.tail[0] + lp.tail[1]);
+                const V3 mid = (lp.tailPos[0] + lp.tailPos[1]) * 0.5 - lp.fwd * 0.08;
+                for (int kind = 0; kind < 2 && lampCount < kMaxLamps; kind++) {
+                    const bool rev = kind == 1;
+                    if (rev && car.gear >= 0) continue;
+                    float* P = lampPos + lampCount * 4;
+                    float* D = lampDir + lampCount * 4;
+                    float* U = lampUp + lampCount * 4;
+                    P[0] = (float)mid.x, P[1] = (float)mid.y, P[2] = (float)mid.z, P[3] = rev ? 5.0f : 3.0f;
+                    D[0] = (float)lp.fwd.x, D[1] = (float)lp.fwd.y, D[2] = (float)lp.fwd.z, D[3] = rev ? 14.0f : 11.0f;
+                    U[0] = (float)lp.up.x, U[1] = (float)lp.up.y, U[2] = (float)lp.up.z;
+                    U[3] = rev ? 9.0f * ok : (lp.beam ? 2.5f : 0.0f) * ok + 7.0f * brake * ok;
+                    lampCount++;
+                }
+                if (++cars >= 4) break;
             }
         }
     }
@@ -5087,6 +6105,8 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
                      lightView;
     }
 
+    updateHorizon(view.eye, keyDir, sq);  // (the land's long shadows: a slice of the next map, when the light or camera moved)
+
     Enable(GL_DEPTH_TEST);
     DepthFunc(GL_LEQUAL);
     Disable(GL_CULL_FACE);
@@ -5098,6 +6118,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     const SeeThrough seeThrough{view.eye, view.focus, view.hasFocus && !noSeeThrough, noSeeThrough ? 0.0f : view.fadeNear};
     props.setSeeThrough(seeThrough);
     props.occluder = &occl_;
+    props.timing = gpuTiming;  // (its timer queries only when they're read: F3, the bench)
     props.beginFrame(sim.world, view.eye, M4(), propsOk ? settings.props : 0, view.time);
 
     farZ_ = settings.drawDistance > 0 ? std::max(150.0f, settings.drawDistance) : 6000.0f;  // (a draw distance: everything past it is clipped)
@@ -5137,8 +6158,24 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         uniformM4(progTreeDepth, "uLightVP", lightVP[c]);
         if (!noVegShadow) {
             // (shadows from the lighter copies; a bush's only near the eye: further off it's a speck)
-            geometryStats_.shadowSceneryVertices += trees_.draw({lightVP[c], view.eye, vegDetail(), 1 + c, true, 1, nullptr, terrainAll_ ? 0.0 : 600.0}, &vegStats_.treesShadow);  // (a big map: the cascades reach a few hundred metres)
-            geometryStats_.shadowSceneryVertices += bushes_.draw({lightVP[c], view.eye, vegDetail(), 0, true, 0.5, nullptr, terrainAll_ ? 0.0 : 400.0}, &vegStats_.bushesShadow);
+            // (The far cascade: past the meshes' reach, the pictures turned to the light. The near one keeps every mesh.)
+            forest::View sv{lightVP[c], view.eye, vegDetail(), 1 + c, true, 1, nullptr, terrainAll_ ? 0.0 : 600.0};
+            const bool pictures = c == 1 && treePictures && trees_.impostorsReady() && progImpostorDepth;
+            if (pictures) sv.impostorFrom = kShadowImpostorFrom;
+            geometryStats_.shadowSceneryVertices += trees_.draw(sv, &vegStats_.treesShadow);  // (a big map: the cascades reach a few hundred metres)
+            if (pictures) {
+                UseProgram(progImpostorDepth);
+                uniformM4(progImpostorDepth, "uVP", lightVP[c]);
+                Uniform1i(uniformLocation(progImpostorDepth, "uFaceLight"), 1);
+                Uniform3f(uniformLocation(progImpostorDepth, "uLightDir"), (float)keyDir.x, (float)keyDir.y, (float)keyDir.z);
+                TreeDraw::ImpostorRange ir;
+                ir.from = kShadowImpostorFrom, ir.thin = sv.maxDist, ir.to = sv.maxDist, ir.toBand = 0.15 * sv.maxDist;
+                geometryStats_.shadowSceneryVertices += trees_.drawImpostors(sv, ir, progImpostorDepth, true, &vegStats_.treesShadow);
+                UseProgram(progTreeDepth);
+            }
+            // (A bush's shadow only in the near cascade on a big map: further off it's a speck, and a dense wood's undergrowth is
+            // thousands of them.)
+            if (c == 0 || terrainAll_) geometryStats_.shadowSceneryVertices += bushes_.draw({lightVP[c], view.eye, vegDetail(), 0, true, 0.5, nullptr, terrainAll_ ? 0.0 : 400.0}, &vegStats_.bushesShadow);
         }
         UseProgram(progDepth);
         drawBatches(sceneryVao, sceneryBatches, lightVP[c], true);
@@ -5160,8 +6197,14 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         carVisible_.clear();
         shadowPass_ = false;
         props.drawShadow(lightVP[c], c, keyDir);
+        drawTerrainCasters(lightVP[c], c);
         Disable(GL_POLYGON_OFFSET_FILL);
     }
+    // The long-shadow map for every lit pass (kCommonFS horizonShadow; the programs' uHorizon is this unit). (Something is
+    // always bound there, so the unit never holds a texture of another kind.)
+    ActiveTexture(GL_TEXTURE0 + kHorizonUnit);
+    BindTexture(GL_TEXTURE_2D, horizon_.on ? horizon_.tex[horizon_.live] : terrainCoarseTex);
+    ActiveTexture(GL_TEXTURE0);
 
     // Main pass, into the HDR target.
     passMark(FP_SKY);
@@ -5180,6 +6223,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Uniform3f(uniformLocation(prog, "uFog"), kFog[0], kFog[1], kFog[2]);
         Uniform1f(uniformLocation(prog, "uTime"), view.time);
         Uniform1f(uniformLocation(prog, "uClouds"), fadeClouds_);
+        Uniform2f(uniformLocation(prog, "uNoiseOff"), noiseOff_[0], noiseOff_[1]);
         Uniform1f(uniformLocation(prog, "uFogFar"), settings.drawDistance > 0 ? farZ_ : 0.0f);
         const Daylight& d = daylight;
         const std::pair<const char*, V3> sky[] = {
@@ -5216,6 +6260,10 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         uniformM4(prog, "uLightVP0", lightVP[0]);
         uniformM4(prog, "uLightVP1", lightVP[1]);
         Uniform4f(uniformLocation(prog, "uShadowCfg"), sq ? 1.0f : 0.0f, (float)kShadowTaps[sq], 0, 0);
+        if (horizon_.on) {
+            const int k = horizon_.live;
+            Uniform4f(uniformLocation(prog, "uHorizonBox"), horizon_.x0[k], horizon_.z0[k], 1.0f / (kHorizonTexels * kHorizonTexel), 1.0f);
+        } else Uniform4f(uniformLocation(prog, "uHorizonBox"), 0, 0, 0, 0);
         for (int c = 0; c < 2; c++) {
             ActiveTexture(GL_TEXTURE0 + c);
             BindTexture(GL_TEXTURE_2D, shadowTex[c]);
@@ -5236,6 +6284,13 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         ActiveTexture(GL_TEXTURE0);
         Uniform1i(uniformLocation(prog, "uTerrainCoarse"), 10);
         Uniform1f(uniformLocation(prog, "uTerrainCoarseN"), (float)terrainCoarseN_);
+        // (The regions' ground look: onemap.h. Bound even when off, so the sampler never shares a unit with another kind.)
+        ActiveTexture(GL_TEXTURE0 + 11);
+        BindTexture(GL_TEXTURE_2D, lookOn_ ? lookTex_ : terrainCoarseTex);
+        ActiveTexture(GL_TEXTURE0);
+        Uniform1i(uniformLocation(prog, "uLookTex"), 11);
+        Uniform4f(uniformLocation(prog, "uLookBox"), lookBox_[0], lookBox_[1], lookBox_[2], lookBox_[3]);
+        Uniform1f(uniformLocation(prog, "uLookOn"), lookOn_ ? 1.0f : 0.0f);
     };
     setLighting(progLit);
     uniformM4(progLit, "uModel", m4identity());
@@ -5246,6 +6301,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     if (mapId == MAP_MOUNTAIN) Uniform2f(uniformLocation(progLit, "uRockSnow"), 165.0f, 205.0f);
     else if (mapId == MAP_FRONTIER) Uniform2f(uniformLocation(progLit, "uRockSnow"), 125.0f, 400.0f);  // (its snow is painted on)
     else if (mapId == MAP_BACKCOUNTRY) Uniform2f(uniformLocation(progLit, "uRockSnow"), 105.0f, 400.0f);  // (its snow is painted on)
+    else if (mapId == MAP_PROCEDURAL) Uniform2f(uniformLocation(progLit, "uRockSnow"), (float)proc::rules().alpine.treeLine, (float)proc::rules().alpine.snowDust);  // (bare rock high in its ranges; its snow is painted on)
     else Uniform2f(uniformLocation(progLit, "uRockSnow"), 60.0f, 240.0f);
     passMark(FP_OPAQUE);
     UseProgram(progLit);
@@ -5314,14 +6370,69 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Uniform1i(uniformLocation(progTree, "uMap"), mapId);
         Uniform1i(uniformLocation(progTree, "uTreeFadeN"), n);
         if (n) Uniform4fv(uniformLocation(progTree, "uTreeFade"), n, list);
+        if (progTreePre) {
+            UseProgram(progTreePre);
+            uniformM4(progTreePre, "uVP", vp);
+            Uniform1i(uniformLocation(progTreePre, "uTreeFadeN"), n);
+            if (n) Uniform4fv(uniformLocation(progTreePre, "uTreeFade"), n, list);
+            UseProgram(progTree);
+        }
     }
     if (!noVeg) {
         // (On a big map the forest stops at 2 km, 800 m on the lowest props setting: the fog has most of it by then.)
-        const forest::View tv{vp, view.eye, vegDetail(), 0, false, 1, &occl_, terrainAll_ ? 0.0 : settings.props <= 0 ? 800.0 : 1200.0};
-        geometryStats_.sceneryVertices += trees_.draw(tv, &vegStats_.trees);
+        forest::View tv{vp, view.eye, vegDetail(), 0, false, 1, &occl_, terrainAll_ ? 0.0 : settings.props <= 0 ? 800.0 : 1200.0};
+        const bool pictures = treePictures && trees_.impostorsReady() && progImpostor;
+        if (pictures) tv.impostorFrom = kImpostorFrom, tv.impostorBand = kImpostorBand;
+        {
+            FRAMEWORK("veg.trees");
+            // (A dense wood is leaf behind leaf: its depth first, then each pixel shaded once.)
+            static const bool noPre = std::getenv("CZ_NO_TREE_PREPASS") != nullptr;
+            if (progTreePre && !noPre) {
+                UseProgram(progTreePre);
+                ColorMask(0, 0, 0, 0);
+                trees_.draw(tv, nullptr);
+                ColorMask(1, 1, 1, 1);
+                UseProgram(progTree);
+                DepthMask(0);
+                geometryStats_.sceneryVertices += trees_.redraw(&vegStats_.trees);
+                DepthMask(1);
+            } else geometryStats_.sceneryVertices += trees_.draw(tv, &vegStats_.trees);
+        }
+        if (pictures) {
+            // Past the meshes: the same trees as pictures, thinned as the meshes were, out to where the far forest takes over (or the
+            // meshes' old reach).
+            FRAMEWORK("veg.impostors");
+            UseProgram(progImpostor);
+            setLighting(progImpostor);
+            uniformM4(progImpostor, "uVP", vp);
+            Uniform1i(uniformLocation(progImpostor, "uFaceLight"), 0);
+            TreeDraw::ImpostorRange ir;
+            ir.from = kImpostorFrom, ir.band = kImpostorBand, ir.thin = tv.maxDist;
+            ir.to = tv.maxDist, ir.toBand = 0.15 * tv.maxDist;
+            static const bool noFar = std::getenv("CZ_NO_FARFOREST") != nullptr;  // (for comparing: the window's trees only)
+            const bool far = farForestOn && !noFar && progFarForest && farForest_.ready() && tv.maxDist > 0;
+            if (!far) farForest_.tilesDrawn = 0;
+            if (far) ir.to = kFarForestFrom, ir.toBand = 0.15 * kFarForestFrom;
+            forest::View iv = tv;
+            iv.hidden = nullptr;  // (the horizon test costs the CPU more than the pictures it would save cost the GPU)
+            geometryStats_.sceneryVertices += trees_.drawImpostors(iv, ir, progImpostor, false, &vegStats_.trees);
+            if (far) {
+                // Past the window's trees, out to the fog: the far forest (farforest.h), in the same pictures.
+                FRAMEWORK("veg.farforest");
+                UseProgram(progFarForest);
+                setLighting(progFarForest);
+                Uniform1i(uniformLocation(progFarForest, "uFaceLight"), 0);
+                FarForest::Range fr;
+                fr.from = ir.to, fr.fromBand = ir.toBand, fr.to = std::min<double>(farZ_, 6000.0);
+                farForest_.draw(tv, fr, progFarForest, trees_, nullptr, &vegStats_.farTrees);  // (no horizon test: as for the pictures)
+            }
+            UseProgram(progTree);
+        }
         Uniform1i(uniformLocation(progTree, "uTreeFadeN"), 0);  // (the see-through trees' leaves only)
         forest::View bv = tv;
         if (!terrainAll_) bv.maxDist = 400;  // (a big map: no bush reaches further than this anyway, and its cells aren't even looked at)
+        if (!terrainAll_) bv.reach = 0.7;  // (a big map: the undergrowth not as far as on the small ones; trees hide most of it past that)
+        FRAMEWORK("veg.bushes");
         geometryStats_.sceneryVertices += bushes_.draw(bv, &vegStats_.bushes);
     }
     passMark(FP_PROPS);
@@ -5331,10 +6442,13 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     if (!noVeg) drawBushes(vp, view.eye, false, vegStats_.logs);
     geometryStats_.occlusionTests = occl_.asked, geometryStats_.occlusionHidden = occl_.hidden;
     passMark(FP_PROPS);
-    props.draw(vp, [&](GLuint prog) {
-        setLighting(prog);
-        Uniform1i(uniformLocation(prog, "uMap"), mapId);
-    });
+    {
+        FRAMEWORK("props.draw");
+        props.draw(vp, [&](GLuint prog) {
+            setLighting(prog);
+            Uniform1i(uniformLocation(prog, "uMap"), mapId);
+        });
+    }
     passMark(FP_VEG);
     UseProgram(progLit);
     if (settings.grass > 0) {
@@ -5353,6 +6467,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         if (mapId == MAP_MOUNTAIN) Uniform2f(uniformLocation(progGrass, "uRockSnow"), 165.0f, 205.0f);
         else if (mapId == MAP_FRONTIER) Uniform2f(uniformLocation(progGrass, "uRockSnow"), 125.0f, 400.0f);
         else if (mapId == MAP_BACKCOUNTRY) Uniform2f(uniformLocation(progGrass, "uRockSnow"), 105.0f, 400.0f);
+        else if (mapId == MAP_PROCEDURAL) Uniform2f(uniformLocation(progGrass, "uRockSnow"), (float)proc::rules().alpine.treeLine, (float)proc::rules().alpine.snowDust);
         else Uniform2f(uniformLocation(progGrass, "uRockSnow"), 60.0f, 240.0f);
         // Vehicles near the camera, each as a capsule along its wheels, for the grass to bend away from.
         float push[32] = {};
@@ -5446,19 +6561,23 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         setLighting(progLit);
     }
     passMark(FP_OPAQUE);
+    auto stage = [&](const char* s) { if (stageMarks) loadprof::phase(s); };  // (the first frame's hang report: which draw)
+    stage("OPAQUE: car parts and wheels");
     BindVertexArray(dynVao);
     carKind_ = 3, carDrawArrays(0, (GLsizei)partVerts.size());
     drawCarParts(sim, progLit);
     drawWheels(sim, progLit);
     if (partRows) {  // the cars' mechanical parts (CarModels)
+        stage("OPAQUE: car models");
         setLighting(progParts);
         bindTerrainTex(progParts);
         Uniform1i(uniformLocation(progParts, "uMap"), mapId);
         drawCarModels(progParts);
     }
 
+    stage("OPAQUE: car bodies");
     setLighting(progCar);
-    drawCarBodies(sim, progCar, false);
+    drawCarBodies(sim, progCar, false, setLighting);
 
     // The ground last of the solid things, nearest chunks first: what's in front of it (cars, rocks, trees, grass, nearer
     // hills) has its depth down already, so the ground's costly shader only runs where the ground shows.
@@ -5481,8 +6600,15 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             if (mapId == MAP_MOUNTAIN) rs[0] = 165.0f, rs[1] = 205.0f;
             else if (mapId == MAP_FRONTIER) rs[0] = 125.0f, rs[1] = 400.0f;
             else if (mapId == MAP_BACKCOUNTRY) rs[0] = 105.0f, rs[1] = 400.0f;
+            else if (mapId == MAP_PROCEDURAL) rs[0] = (float)proc::rules().alpine.treeLine, rs[1] = (float)proc::rules().alpine.snowDust;
             else rs[0] = 60.0f, rs[1] = 240.0f;
             Uniform2f(uniformLocation(prog, "uRockSnow"), rs[0], rs[1]);
+            // (The snow drawn on natural ground: over how many metres it comes in, how much of the ground it covers at most, and how much
+            // lower it comes on a north face. The procedural world's is a dusting from its rules (its snowfields are painted on).)
+            if (mapId == MAP_PROCEDURAL) {
+                const proc::AlpineRule& A = proc::rules().alpine;
+                Uniform3f(uniformLocation(prog, "uSnowLook"), (float)std::max(50.0, A.snowFull - A.snowDust), (float)A.snowDustCover, (float)A.snowNorth);
+            } else Uniform3f(uniformLocation(prog, "uSnowLook"), 50.0f, 1.0f, 0.0f);
             ActiveTexture(GL_TEXTURE0 + 3);
             BindTexture(GL_TEXTURE_2D_ARRAY, groundTex.albedo);
             ActiveTexture(GL_TEXTURE0 + 4);
@@ -5490,6 +6616,10 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             ActiveTexture(GL_TEXTURE0);
             Uniform1i(uniformLocation(prog, "uGroundA"), 3);
             Uniform1i(uniformLocation(prog, "uGroundB"), 4);
+            // (the far forest's canopy colour on the far ground: the procedural world's)
+            static const bool noCanopy = std::getenv("CZ_NO_CANOPY") != nullptr;
+            if (farForestOn && !noCanopy && farForest_.ready()) farForest_.bindGround(prog, 12, kCanopyFrom, kCanopyFull);
+            else Uniform2f(uniformLocation(prog, "uFFFade"), 0, 0);
             if (cheap || groundTier(gq) <= 1) {  // (the cheap tiers read their noise from a texture)
                 ActiveTexture(GL_TEXTURE0 + 5);
                 BindTexture(GL_TEXTURE_2D, noiseTex);
@@ -5572,9 +6702,28 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Enable(GL_BLEND);
         BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         DepthMask(0);
-        drawCarBodies(sim, progCar, true);
+        drawCarBodies(sim, progCar, true, setLighting);
         DepthMask(1);
         Disable(GL_BLEND);
+    }
+
+    // Lamp glow: sprites added on over the lit lamps.
+    if (progGlow && debug != DEBUG_PARTS && debug != DEBUG_BEAMS_ONLY) {
+        buildLampGlow(sim, view.eye, glowVerts);
+        if (!glowVerts.empty()) {
+            UseProgram(progGlow);
+            uniformM4(progGlow, "uVP", vp);
+            uniformV3(progGlow, "uCam", view.eye);
+            BindBuffer(GL_ARRAY_BUFFER, fxVbo);
+            BufferData(GL_ARRAY_BUFFER, glowVerts.size() * sizeof(Vtx), glowVerts.data(), GL_STREAM_DRAW);
+            BindVertexArray(fxVao);
+            Enable(GL_BLEND);
+            BlendFunc(GL_ONE, GL_ONE);
+            DepthMask(0);
+            DrawArrays(GL_TRIANGLES, 0, (GLsizei)glowVerts.size());
+            DepthMask(1);
+            Disable(GL_BLEND);
+        }
     }
 
     // Hurt parts glowing through what hides them: only where something's in front (depth greater), added on.
@@ -5747,6 +6896,7 @@ void Renderer::preload(const World& world) {
 
 void Renderer::passMark(FramePass p) {
     if (syncTiming) Finish();
+    if (stageMarks) loadprof::phase(framePassName(p));
     frameProfile().enter(p);
     if (!gpuTiming) return;
     GpuMarks& m = gpuMarks_[gpuMarkFrame_];

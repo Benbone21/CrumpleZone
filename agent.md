@@ -54,7 +54,8 @@ Without `--time`, captures start at 10:00 with the clock running.
 | `src/carvisual.cpp` | Builds the visible car: a smooth skin from the lattice, plus parts (engine, suspension incl. leaf packs and shackles, frame rails, interior) and `buildExtras()` (wing, flares, armor bumpers, snorkel, roof basket...) |
 | `src/bodyshell.cpp` | Sculpted body shells (`ShellLines` + a per-car `Style`), bound to the physics cells so they dent and their panels open. Pickups (`ShellLines::bed`): behind `xCab` each section is the U of the bed |
 | `src/render.cpp` | GL renderer. The body shader draws lamps, grilles, door seams and two-tone trim from lattice coordinates. Wheel meshes come in a style per `WheelStyle`. The pipeline is HDR: the scene renders into an RGBA16F target (MSAA), then `postProcess()` runs SAO, the bloom chain and the ACES composite. There are two shadow cascades. Sky, clouds and fog live in `kCommonFS`; everything outputs linear HDR. Scenery-only terrain (crags and the backdrop range) comes from `sceneryHeight()` |
-| `src/main.cpp` | Window, input, camera, HUD, garage UI, command-line flags |
+| `src/main.cpp` | Window, input, camera, HUD, command-line flags |
+| `src/garageshop.h/.cpp`, `src/garageshopdraw.*` | The garage shop (docs/plans/garage-shop.md): categories and items from career.h / mods.h, the stats against what's fitted, each part's turntable model (`displayFor`), the navigation (`shop::Shop`), the garage camera, `liftSync` (the truck wears what's tried on). `--garage` opens it; scripted: `CZ_SHOP=CAT[,PART[,try]]`, `CZ_SHOP_SPIN`, `CZ_SHOP_STATION=1`. Tests `shop/*` |
 | `src/keybinds.h/.cpp` | Remappable keyboard keys, with no SDL or GL: `Keybinds::gameKey()` turns a physical key into the default key of the action it is bound to (the key switch in main.cpp is written against the defaults; pad taps skip it). Esc is always the menu. Settings lines `key_*`. Rebinding page: pause menu page 7 (Settings -> CONTROLLER -> KEYBOARD KEYBINDS). `--press FRAME:SC,...` taps keys in a scripted run |
 | `src/music.h/.cpp` | Generative background music, one style per map (`Style`, indexed by `World::map`; later maps reuse them in turn, and the Backcountry (map 4) takes MOUNTAIN's). Seeded progressions, motif-based melodies, sections of 30–90 s; band-limited synths, Karplus-Strong plucks, an FDN reverb. `Audio` mixes it in the callback; volume is `Settings::music` x master. Offline review: `build/review/music/musictest.cpp` (WAVs, spectrograms, `layers`, `trace`, `soak`) |
 | `src/daylight.h/.cpp` | Time of day: `computeDaylight(hours)` gives the sun, moon and key-light directions, light and sky colors, exposure and the star sphere's turn; `kKeys` holds the sky keyframes by sun height. The game runs the clock (`dayHours` in main.cpp; setting TIME OF DAY: the cycle at a day length, or a fixed time; `--time H` holds it) and hands `Renderer::daylight` the result; in multiplayer the host's clock goes out as `MSG_CLOCK` |
@@ -169,8 +170,8 @@ Without `--time`, captures start at 10:00 with the clock running.
 
 - **Release integration (2026-10-14):** all available branch work is merged into `main` for
   `v0.1.9`; read `docs/release-merge-0.1.9.md` and the new handoff first. Release defaults
-  preserve the verified suspension behavior. High-speed damping and free coils remain
-  opt-in development experiments (`CZ_HIGH_SPEED_DAMPING=1`, `CZ_FREE_COILS=1`) after
+  preserve the verified suspension behavior. Free coils remain an
+  opt-in development experiment (`CZ_FREE_COILS=1`; the old `CZ_HIGH_SPEED_DAMPING` is gone, replaced by the shared `Damper` valving in softbody.h) after
   regression checks found instability. The final functional suite passes 448/468 with
   the same 20 failures as the prior verified build; no new failing scenarios.
   Networking passes after sandbox restrictions were removed. Native Windows CI exposed

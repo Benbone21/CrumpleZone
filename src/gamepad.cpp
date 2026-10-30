@@ -225,7 +225,12 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
     }
     if (P(B_A)) tap(SC_RETURN);
     if (P(B_B) || P(B_START)) tap(SC_ESCAPE);
-    if (P(B_Y)) tap(SC_B);  // (the garage: buy the part, at a station in a career)
+    if (P(B_Y)) tap(SC_B);  // (the garage: the factory part back)
+    // The garage: X tries the part on the truck, LB / RB the categories either side, the right stick turns the model.
+    if (P(B_X)) tap(SC_T);
+    if (P(B_LB)) tap(SC_Q);
+    if (P(B_RB)) tap(SC_E);
+    in.lookX = R.x, in.lookY = R.y;
 }
 
 bool Logic::apply(Car& c, double dt, bool steeringAssist) {

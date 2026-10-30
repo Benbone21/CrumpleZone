@@ -1,10 +1,82 @@
-# Serving game updates (instructions for an agent on the server machine)
+# Serving game updates
 
-The game updates itself (`src/updater.h`). On launch it fetches one small signed file,
-`manifest.txt`, over HTTPS from this server. When the file names a newer version, the game
-downloads that platform's zip from the folder beside it. GitHub Actions builds and **signs** each
-release (`docs/update-signing-keys.md`). This box only copies the release from GitHub, checks it,
-and serves it:
+The game updates itself (`src/updater.h`). On launch it fetches one small signed file, the
+release manifest, over HTTPS. When it names a newer version, the game downloads that platform's
+zip, checks its size and SHA-256 against the signed manifest, and installs it. GitHub Actions
+builds and **signs** each release (`docs/update-signing-keys.md`).
+
+**Part A (the default): GitHub Releases.** Nothing to run anywhere. **Part B (optional): an own
+server**, for a hold/rollback switch or a mirror; most setups never need it.
+
+## A. GitHub Releases (the default)
+
+The games read
+`https://github.com/Benbone21/CrumpleZone/releases/latest/download/update-manifest.txt`
+(`kDefaultUpdateUrl` in `src/updatekeys.h`). GitHub redirects `/releases/latest/download/<name>`
+to that file on the newest release that isn't a draft or a pre-release, and from there to its
+file host (objects.githubusercontent.com). The game follows those redirects on every platform
+(libcurl and the curl program with `--location`, WinHTTP's redirect policy), only ever over
+HTTPS.
+
+On a version tag, `.github/workflows/release.yml` does it all:
+
+1. builds `CrumpleZone-<v>-windows.zip`, `-linux.zip` (and `-mac.zip` when the Mac job runs),
+   the installer and the .deb;
+2. signs `update-manifest.txt` with the secret `UPDATE_SIGNING_KEY` ("Sign the update
+   manifest"; the key is never printed). No secret: a warning, and the release goes out without
+   a manifest;
+3. attaches the zips and the manifest to the tag's release ("Publish the release"): it creates
+   the release, or adds to the one you made (`gh release create` with your own .deb and
+   installer). Files the release already has (your `.deb`, `setup.exe`, `SHA256SUMS`) are kept;
+   only the updater's zips and manifest are (re)uploaded with `--clobber`. Nothing is deleted.
+
+The manifest names each file by its absolute URL in that release:
+
+```
+crumplezone-update 1
+version 0.4.9
+net 10
+date 2026-10-30
+notes https://github.com/Benbone21/CrumpleZone/releases/tag/v0.4.9
+file windows https://github.com/Benbone21/CrumpleZone/releases/download/v0.4.9/CrumpleZone-0.4.9-windows.zip <size> <sha256>
+file linux   https://github.com/Benbone21/CrumpleZone/releases/download/v0.4.9/CrumpleZone-0.4.9-linux.zip ...
+file deb     https://github.com/Benbone21/CrumpleZone/releases/download/v0.4.9/CrumpleZone-0.4.9-linux.deb ...   (only linked)
+signature <Ed25519 over every line above>
+```
+
+The URLs are inside the signed text: a changed address fails the signature like any other
+change. (A relative name, `CrumpleZone-0.4.9-linux.zip`, also works: for a `/releases/latest/`
+manifest it resolves in `.../releases/download/v<version>/`, the release the manifest says it
+is, never under `/latest/`.)
+
+Check a published release the way a game sees it:
+
+```bash
+make build/cz-update
+build/cz-update --verify https://github.com/Benbone21/CrumpleZone/releases/latest/download/update-manifest.txt --fetch
+```
+
+**Rollback on GitHub:** games never move to an older version, so a bad release is fixed by a
+newer one (tag 0.4.10). To stop offering a release at once, mark it a pre-release (or delete its
+`update-manifest.txt` asset): `/latest/` then points at the release before, which games already
+have, so they're told nothing. **Stop updates entirely:** remove `update-manifest.txt` from the
+newest release; games then quietly note "COULDN'T CHECK FOR UPDATES".
+
+**Other addresses** (testing, or part B): `make UPDATE_URL=https://.../manifest.txt` builds a
+game with another default; one player can use `<config>/update.txt` with a line
+`url https://...` (`url off` turns checks off; `check off` keeps the address but skips the launch
+check), or `--update-url URL` on the command line. A development build (no install marker) does
+no launch check against the default address.
+
+## B. An own update server (optional; instructions for an agent on the server machine)
+
+The server copies each signed release from GitHub, checks it, and serves its manifest. With
+CI's absolute URLs (part A) the games still download the zips from GitHub; the server decides
+**which** release is offered (`update_mirror.sh --use` holds one). It also keeps a copy of
+each version's files, so `--use` can check a kept version. Only older manifests (relative
+`v<version>/` names) make the games download from the server itself. Then the games are built
+with `make UPDATE_URL=https://<update host>/crumplezone/manifest.txt` (or `kDefaultUpdateUrl`
+changed in `src/updatekeys.h`).
 
 ```
 https://<update host>/crumplezone/manifest.txt                          the newest signed manifest (the games read this)
@@ -224,8 +296,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://<update host>/crumplezone/.hold
 Also check that Nextcloud still works (log in to its page, or `curl -sI https://<its name>/status.php`).
 
 ## 7. Tell the owner the address
-The address for `src/updatekeys.h` (`kDefaultUpdateUrl`) is the `$URL` above. One player can try
-an address before a release has it compiled in: `<config>/update.txt` with the line
+The address to build the games with (`make UPDATE_URL=...`, or `kDefaultUpdateUrl` in
+`src/updatekeys.h` instead of the GitHub one) is the `$URL` above. One player can try an address
+before a release has it compiled in: `<config>/update.txt` with the line
 `url https://<update host>/crumplezone/manifest.txt` (config: `%APPDATA%\crumplezone`,
 `~/.config/crumplezone`), or the command-line option `--update-url URL`.
 

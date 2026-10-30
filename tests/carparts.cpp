@@ -549,7 +549,7 @@ SCENARIO(driveShaftOnYokes, "carparts/drive-shaft-joints", "Every listed vehicle
                 std::vector<V3> yokes;  // every yoke a shaft can couple to
                 int shafts = 0;
                 for (const Placed& pl : all) {
-                    if (pl.id == "differential" || pl.id == "gearbox_manual" || pl.id == "gearbox_auto") yokes.push_back(partYoke(pl, false));
+                    if (pl.id == "differential" || pl.id.rfind("gearbox_", 0) == 0) yokes.push_back(partYoke(pl, false));
                     if (pl.id == "transfer_case") yokes.push_back(partYoke(pl, false)), yokes.push_back(partYoke(pl, true));
                 }
                 for (const Placed& pl : all) {

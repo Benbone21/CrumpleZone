@@ -10,6 +10,12 @@
 #include <vector>
 
 #include "net.h"
+#include "places.h"
+#include "procreveal.h"
+#include "procworld.h"
+#include <map>
+#include <memory>
+#include <tuple>
 #include "render.h"
 #include "softbody.h"
 
@@ -68,16 +74,23 @@ public:
     void drawChat(Renderer& r, int W, int H) const;
     // A marker in the world (or an arrow at the screen's edge pointing to it).
     void drawMarker(Renderer& r, const Sim& sim, const View& view, int W, int H, const V3& at, const std::string& text, const float col[3], double age = 0) const;
-    void drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, int H, const std::vector<std::pair<std::string, V3>>& places);
+    void drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, int H, const std::vector<DiscoverSpot>& places);
 
     // Exploring: the places on each map you've found (kept between sessions).
     std::vector<std::string> discovered;  // "MAP:NAME"
     bool isDiscovered(int map, const std::string& name) const;
-    // Marks places within 30 m of `p` found; returns the newly found names.
-    std::vector<std::string> discover(int map, const V3& p, const std::vector<std::pair<std::string, V3>>& places);
+    // Marks places near `p` found (each within its own radius: places.h); returns the newly found names.
+    std::vector<std::string> discover(int map, const V3& p, const std::vector<DiscoverSpot>& places);
     void loadDiscoveries(const std::string& path);
     void saveDiscoveries(const std::string& path) const;
     int mapNow = 0;  // (set by the game: which map the places are on)
+
+    // The procedural world's map is fogged and endless (procreveal.h): ground is shown only where someone has been. Call every
+    // ~0.5 s on that map: reveals round every vehicle (and `walker`, if on foot), loads the seed's file when the world is entered
+    // and saves now and then. `dir`: the config folder ("" = keep it in memory only: scripted runs).
+    void exploreProc(const Sim& sim, const V3* walker, const std::string& dir);
+    void saveProcReveal();  // (now, if there's anything unsaved and a file)
+    proc::Reveal procReveal;
 
 private:
     int mapN = 0;
@@ -86,6 +99,19 @@ private:
     double mapCx = 0, mapCz = 0, mapZoom = 1;  // view: center (world), zoom (1 = the whole map fits)
     float mapX = 0, mapY = 0, mapS = 1;        // where the map was last drawn (HUD px, px per meter)
     int mapWorld = -1;
+    // The procedural map: the view's centre (mapCx/mapCz) is GLOBAL there; the window's origin as last drawn turns local into global.
+    bool mapInfinite = false;
+    double mapOffX = 0, mapOffZ = 0;
+    uint64_t mapProcSeed = 0;
+    bool mapProcInit = false;
+    proc::MapImage procImage;
+    std::map<std::tuple<int64_t, int64_t, int>, std::shared_ptr<const proc::TrailEdge>> procEdges;
+    uint64_t procLiveSeed = 0;
+    bool procLive = false;
+    std::string procPath;
+    double procSaved = 0;
+    void drawProcGround(Renderer& r, int W, int H);
+    void drawProcTrails(Renderer& r, int W, int H, float u);
     double mapHalf = World::kDefaultHalfSize;  // the map's half-size (World::halfSize) when it was drawn
 };
 

@@ -55,6 +55,7 @@ struct State {
     bool busy = false;        // a worker thread is running
     bool laterChosen = false;
     std::string skip;
+    std::string told, telling;  // a release the launch check already told a .deb (or other manual) install about (update-told.txt), and the one on the card now
     std::deque<std::string> notices;
     http::Progress progress;
     // (testSetup: the tests' config folder, install folder and key)
@@ -126,7 +127,7 @@ void runCheck(bool explicitAsk, int hostNet) {
         logLine(url.empty() ? "no update server set in this build" : "no update key in this build");
         finish([&] {
             if (explicitAsk)
-                setInfo("UPDATES AREN'T SET UP IN THIS BUILD", "GET THE NEWEST VERSION FROM THE GAME'S RELEASES PAGE", "https://github.com/Benbone21/crumplezone/releases");
+                setInfo("UPDATES AREN'T SET UP IN THIS BUILD", "GET THE NEWEST VERSION FROM THE GAME'S RELEASES PAGE", "https://github.com/Benbone21/CrumpleZone/releases");
             else
                 s.st = Status();
         });
@@ -160,7 +161,7 @@ void runCheck(bool explicitAsk, int hostNet) {
         s.manifest = m;
         const Decision d = decide(m, currentVersion(), s.inst, url, hostNet, ourNet);
         logLine("server has " + m.version + ", this is " + currentVersion() + ": " + d.message);
-        const bool quiet = !explicitAsk && (s.laterChosen || m.version == s.skip);
+        const bool quiet = !explicitAsk && (s.laterChosen || m.version == s.skip || (d.verdict == Verdict::Manual && m.version == s.told));
         if (d.verdict == Verdict::UpToDate) {
             if (explicitAsk) setInfo(hostNet > ourNet ? "NO NEWER VERSION YET" : "UP TO DATE", d.message);
             else s.st = Status();
@@ -172,7 +173,7 @@ void runCheck(bool explicitAsk, int hostNet) {
         }
         if (d.verdict == Verdict::SelfUpdate) {
             s.file = *d.file;
-            s.file.url = resolveUrl(url, d.file->url);
+            s.file.url = fileUrl(url, m, *d.file);
             s.st = Status();
             s.st.phase = Phase::Offer;
             s.st.title = "UPDATE " + m.version + " AVAILABLE";
@@ -181,8 +182,10 @@ void runCheck(bool explicitAsk, int hostNet) {
             return;
         }
         std::string link = m.notes;
-        if (d.file) link = resolveUrl(url, d.file->url);
+        if (d.file) link = fileUrl(url, m, *d.file);
         setInfo("UPDATE " + m.version + " IS OUT", d.message, link);
+        // (OK on the launch check's "get it by hand" card: not again on every launch for this release; a newer one is told again)
+        if (!explicitAsk && d.verdict == Verdict::Manual) s.telling = m.version;
     });
 }
 
@@ -211,6 +214,11 @@ void runInstall() {
         f = s.file;
         inst = s.inst;
         version = s.manifest.version;
+    }
+    if (inst.layout != Layout::Windows && inst.layout != Layout::Mac && inst.layout != Layout::LinuxUser) {
+        // (never reached: decide() only offers UPDATE NOW to these. The .deb's files in /opt and /usr belong to the package manager.)
+        fail("THIS INSTALL CAN'T REPLACE ITSELF");
+        return;
     }
     makeDir(cfgDir());
     const std::string zip = downloadPath();
@@ -381,6 +389,7 @@ bool init(int argc, char** argv, int ourNet) {
             ls >> k >> v;
             if (k == "url") s.url = v;
             else if (k == "check" && v == "off") s.launchCheck = false;
+            if (k == "url" && v == "off") s.url.clear();
         }
     }
     for (int i = 1; i < argc; i++) {
@@ -394,6 +403,10 @@ bool init(int argc, char** argv, int ourNet) {
     }
     s.inst = detectInstall(s.testExeDir.empty() ? exeDir() : s.testExeDir);
 
+    {
+        std::istringstream told(readFile(cfgDir() + "/update-told.txt"));
+        told >> s.told;
+    }
     AfterSwap a = readAfterSwap(readFile(statePath()));
     s.skip = a.skip;
     switch (onStart(a, currentVersion())) {
@@ -472,6 +485,9 @@ void checkOnLaunch() {
     State& s = S();
     std::lock_guard<std::mutex> g(s.m);
     if (!s.inited || !s.launchCheck || s.busy || s.st.phase != Phase::Idle) return;
+    // A development build (no install marker) can't update itself: no launch check (no network) unless an address was given on
+    // purpose (update.txt, --update-url, a build's UPDATE_URL). The multiplayer hook (checkFor) still asks.
+    if (s.inst.layout == Layout::None && s.url == kDefaultUpdateUrlBuiltin) return;
     startWorker([] { runCheck(false, 0); });
 }
 
@@ -536,6 +552,12 @@ void dismiss() {
     State& s = S();
     std::lock_guard<std::mutex> g(s.m);
     if (s.st.phase == Phase::Info || s.st.phase == Phase::Checking) s.st = Status();
+    if (!s.telling.empty()) {
+        s.told = s.telling;
+        s.telling.clear();
+        makeDir(cfgDir());
+        writeFileAtomic(cfgDir() + "/update-told.txt", s.told + "\n");
+    }
 }
 
 bool restart(int argc, char** argv) {
@@ -583,6 +605,7 @@ void testSetup(const std::string& config, const std::string& exeDirectory, const
     s.laterChosen = false;
     s.launchCheck = true;
     s.inited = false;
+    s.told.clear(), s.telling.clear();
     s.testConfig = config;
     s.testExeDir = exeDirectory;
     s.testKeys = keys;

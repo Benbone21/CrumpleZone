@@ -129,6 +129,18 @@ SCENARIO(keysSettings, "keybinds/settings", "Bindings round-trip through setting
     twice.loadSetting("key_brake", SC_W);
     twice.sanitize();
     ctx.check("two actions on one key are thrown out", twice.isDefault());
+
+    Keybinds legacy;  // (a file from before the parking brake had P: pause on P, the brake moved aside to F7)
+    for (int k = 0; k < KA_COUNT; k++) legacy.loadSetting(settingsName((KeyAction)k), Keybinds().saveValue((KeyAction)k));
+    legacy.loadSetting("key_pause", SC_P);
+    legacy.loadSetting("key_parkbrake", 64);
+    legacy.sanitize();
+    ctx.check("an old file's parking brake comes back to P", legacy.key(KA_PARK_BRAKE) == SC_P && legacy.actionFor(SC_F6) == -1);
+    Keybinds chosen;  // (a player who put pause on P after the brake had it keeps theirs)
+    chosen.loadSetting("key_parkbrake", SC_K);
+    chosen.loadSetting("key_pause", SC_P);
+    chosen.sanitize();
+    ctx.check("a parking brake the player put on another key stays there", chosen.key(KA_PARK_BRAKE) == SC_K);
 }
 
 SCENARIO(keysTable, "keybinds/table", "Every keyboard action is in the table once, with a label, a settings name and a group; no clashes among the defaults") {
@@ -222,17 +234,17 @@ SCENARIO(keysResetExport, "keybinds/reset-export", "Reset all gives the defaults
     Keybinds kb;
     kb.bind(KA_WINCH, SC_K);
     kb.bind(KA_LIGHTS, SC_B, false);
-    kb.unbind(KA_PAUSE);
-    ctx.check("unbound shows as NONE and resolves to nothing", kb.name(KA_PAUSE) == "NONE" && kb.resolve(SC_F6, false, false, KCTX_DRIVE, false).action == -1);
+    kb.unbind(KA_HELP);
+    ctx.check("unbound shows as NONE and resolves to nothing", kb.name(KA_HELP) == "NONE" && kb.resolve(defaultKey(KA_HELP), false, false, KCTX_DRIVE, false).action == -1);
     ctx.check("nothing clashes after the rebinds", !anyClash(kb) && !kb.isDefault());
     const std::string text = kb.exportDefaults();
     int lines = 0;
     for (char ch : text) lines += ch == '\n';
     ctx.check("the export is a comment line and one {key, shift} line per action", lines == KA_COUNT + 1 && text.find("{25, false},  // key_winch") == std::string::npos &&
-                                                                                  text.find("key_winch: K") != std::string::npos && text.find("key_pause: NONE") != std::string::npos &&
-                                                                                  text.find("{0, false},  // key_pause") != std::string::npos);
+                                                                                  text.find("key_winch: K") != std::string::npos && text.find("key_help: NONE") != std::string::npos &&
+                                                                                  text.find("{0, false},  // key_help") != std::string::npos);
     kb.resetDefaults();
-    ctx.check("reset all: the defaults, every action", kb.isDefault() && kb.name(KA_LIGHTS) == "SHIFT+L" && kb.key(KA_PAUSE) == SC_F6);
+    ctx.check("reset all: the defaults, every action", kb.isDefault() && kb.name(KA_LIGHTS) == "SHIFT+L" && kb.key(KA_HELP) == defaultKey(KA_HELP));
     const std::string def = kb.exportDefaults();
     ctx.check("the default export lists the defaults", def.find("key_throttle: W") != std::string::npos && def.find("key_lights: SHIFT+L") != std::string::npos &&
                                                          def.find("key_devmenu: F12") != std::string::npos);
@@ -286,4 +298,20 @@ SCENARIO(keysHints, "keybinds/hints", "The names the hints show follow the bindi
     kb.bind(KA_PLAYTEST_BACK, SC_F6);
     ctx.check("rebound", kb.name(KA_REPAIR) == "F7" && kb.name(KA_INTERACT) == "G" && kb.name(KA_PLAYTEST_BACK) == "F6");
     ctx.check("a combo shows its Shift", (kb.bind(KA_HELP, SC_F, true), kb.name(KA_HELP) == "SHIFT+F"));
+}
+
+SCENARIO(keyAutopilotPick, "keybinds/autopilot-pick", "AUTOPILOT: WHERE TO and JOBS have their own rebindable keys (Shift+U, Shift+J), clear of the others and of the dev F keys") {
+    Keybinds kb;
+    ctx.check("defaults", kb.name(KA_AUTOPILOT_PICK) == "SHIFT+U" && kb.name(KA_JOBS) == "SHIFT+J" && kb.name(KA_AUTOPILOT) == "U");
+    ctx.check("in the RECOVERY group", actionGroup(KA_AUTOPILOT_PICK) == KG_RECOVERY && actionGroup(KA_JOBS) == KG_RECOVERY);
+    ctx.check("Shift+U opens the picker, U still starts and stops",
+              kb.resolve(SC_U, true, false, KCTX_DRIVE, false).action == KA_AUTOPILOT_PICK && kb.resolve(SC_U, false, false, KCTX_DRIVE, false).action == KA_AUTOPILOT);
+    ctx.check("Shift+J is the jobs, J still gets out", kb.resolve(SC_J, true, false, KCTX_FOOT, false).action == KA_JOBS && kb.resolve(SC_J, false, false, KCTX_FOOT, false).action == KA_GET_IN_OUT);
+    ctx.check("works on foot too", actionContexts(KA_AUTOPILOT_PICK) == KCTX_ANY);
+    bool clear = true;
+    for (int a = 0; a < KA_COUNT; a++)
+        if (a != KA_AUTOPILOT_PICK && a != KA_JOBS && kb.key((KeyAction)a) == kb.key(KA_AUTOPILOT_PICK) && kb.shiftOf((KeyAction)a)) clear = false;
+    ctx.check("no other action has Shift+U", clear);
+    ctx.check("F8 stays the free cam's", kb.key(KA_DEV_FREECAM) == SC_F8 && kb.key(KA_AUTOPILOT_PICK) != SC_F8 && kb.key(KA_JOBS) != SC_F8);
+    ctx.check("rebindable", kb.bind(KA_AUTOPILOT_PICK, SC_F6) && kb.name(KA_AUTOPILOT_PICK) == "F6" && kb.resolve(SC_F6, false, false, KCTX_DRIVE, false).action == KA_AUTOPILOT_PICK);
 }

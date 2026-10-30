@@ -13,6 +13,7 @@
 // Quality (RenderSettings::props): 0 off (all code-made), 1 low, 2 high, 3 ultra: LOD
 // distances, the billboard distance, scatter reach and density, texture size.
 #pragma once
+#include <cmath>
 #include "occlusion.h"
 #include <functional>
 #include <map>
@@ -54,6 +55,11 @@ public:
     ScanCover cover(int quality) const;
     // The map's static instances (trees, snags, logs, bushes, scanned rocks, cliffs).
     void setWorld(const World& world, int quality);
+    // The same in two halves: what the world's scans are (any thread, nothing of this object changed), then that put in place.
+    // (A procedural window's slide lays its next one out on a worker and adopts it on the frame it goes in.)
+    struct Layout;
+    void layout(const World& world, int quality, Layout& out) const;
+    void adopt(Layout&& l);
     // Per frame, before beginFrame: the camera trees dissolve for (treefade.h).
     void setSeeThrough(const SeeThrough& s) { see = s; }
     // Per frame, before any pass: picks LODs, culls against the view and updates the scatter.
@@ -64,6 +70,9 @@ public:
     // Main pass: `setLighting` sets the shared uniforms (sun, sky, fog, shadows, lamps) on a program.
     void draw(const M4& viewProj, const std::function<void(GLuint)>& setLighting);
     void endFrame();  // collects the GPU timings
+    // GPU timer queries on its passes (F3, the bench: the renderer's gpuTiming). Off, nothing asks the driver for a query's
+    // result: that waits for the driver's thread to catch up with the frame so far (Mesa's glthread), a stall in the frame.
+    bool timing = false;
     // Main pass only (never a shadow pass): cells and scatter behind the ground are skipped (occlusion.h). Set once; null = off.
     const TerrainOcclusion* occluder = nullptr;
     // The editor changed the ground in [x0, x1] x [z0, z1]: the scatter there is placed again.
@@ -133,6 +142,34 @@ private:
     std::vector<Cell> cells;      // statics in 32 m cells
     int cellN = 0;
     const World* world = nullptr;
+    // The procedural world: where this window's origin is in the world (whole metres), so picks key off world positions.
+    bool anchored = false;
+    double anchorX = 0, anchorZ = 0;
+    uint32_t placeHash(double x, double z, uint32_t salt) const {  // (of a world position to 1/8 m)
+        const uint64_t a = (uint64_t)(int64_t)std::llround((x + anchorX) * 8), b = (uint64_t)(int64_t)std::llround((z + anchorZ) * 8);
+        uint64_t h = a * 0x9E3779B97F4A7C15ull ^ (b + 0x632BE59BD9B4E019ull) * 0xC2B2AE3D27D4EB4Full ^ salt;
+        h ^= h >> 31, h *= 0x7FB5D329728EA185ull, h ^= h >> 27;
+        return (uint32_t)(h >> 16);
+    }
+public:
+    struct Layout {
+        const World* world = nullptr;
+        bool anchored = false;
+        double anchorX = 0, anchorZ = 0;
+        std::vector<Inst> statics;
+        std::vector<Cell> cells;
+        int cellN = 0;
+        std::vector<Block> blocks;
+        std::vector<uint8_t> treeNear;
+        int treeNearN = 0;
+        uint32_t hash(double x, double z, uint32_t salt) const {
+            const uint64_t a = (uint64_t)(int64_t)std::llround((x + anchorX) * 8), b = (uint64_t)(int64_t)std::llround((z + anchorZ) * 8);
+            uint64_t h = a * 0x9E3779B97F4A7C15ull ^ (b + 0x632BE59BD9B4E019ull) * 0xC2B2AE3D27D4EB4Full ^ salt;
+            h ^= h >> 31, h *= 0x7FB5D329728EA185ull, h ^= h >> 27;
+            return (uint32_t)(h >> 16);
+        }
+    };
+private:
     int quality = 2;
     float time = 0;
     V3 eye;
@@ -162,6 +199,7 @@ private:
     static const int kQueryFrames = 4;
     GLuint queries[kQueryFrames][3] = {};
     bool queryUsed[kQueryFrames][3] = {};
+    bool queryOpen = false;
     int queryFrame = 0;
     double lastGpuMs = -1;
     void beginQuery(int pass);
@@ -169,7 +207,7 @@ private:
 
     GLuint texture(const std::string& file, bool srgb, int maxSize);
     void addInstance(std::vector<Inst>& out, int model, const V3 ax[3], const V3& origin, float tint, float snow, uint32_t seed, bool tree,
-                     bool shadow, float size);
+                     bool shadow, float size) const;
     void buildScatterCell(int cx, int cz, std::vector<Inst>& out);
     void select(const float planes[6][4], bool useBillboards, int lodBias, bool shadowPass);
     void submit(GLuint prog, bool depth, long long& tris, int& draws, int& instances);

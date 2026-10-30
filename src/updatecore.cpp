@@ -233,6 +233,18 @@ std::string resolveUrl(const std::string& manifestUrl, const std::string& fileUr
     return base.substr(0, slash + 1) + fileUrl;
 }
 
+std::string releaseManifestUrl(const std::string& manifestUrl, const std::string& version) {
+    static const std::string latest = "/releases/latest/download/";
+    const size_t q = manifestUrl.find_first_of("?#");
+    const size_t at = manifestUrl.find(latest);
+    if (at == std::string::npos || (q != std::string::npos && at > q) || !validVersion(version)) return manifestUrl;
+    return manifestUrl.substr(0, at) + "/releases/download/v" + version + "/" + manifestUrl.substr(at + latest.size());
+}
+
+std::string fileUrl(const std::string& manifestUrl, const Manifest& m, const FileEntry& f) {
+    return resolveUrl(releaseManifestUrl(manifestUrl, m.version), f.url);
+}
+
 // ---- installs --------------------------------------------------------------------------------------------------------
 const char* layoutName(Layout l) {
     switch (l) {
@@ -381,12 +393,16 @@ Decision decide(const Manifest& m, const std::string& current, const Install& in
     if (inst.layout == Layout::Deb) {
         d.verdict = Verdict::Manual;
         d.file = m.file("deb");
-        const std::string url = d.file ? resolveUrl(manifestUrl, d.file->url) : "";
-        d.message = lead + " AVAILABLE: DOWNLOAD THE NEW .DEB FROM " + (url.empty() ? where : url) + " (THE .DEB INSTALL CAN'T UPDATE ITSELF)";
+        const std::string url = d.file ? fileUrl(manifestUrl, m, *d.file) : "";
+        // (Never a swap here: /opt/crumplezone and /usr/games belong to the package manager and need sudo. The player picks one of two.)
+        // (The card shows text in capitals, so no file names to type: COPY LINK copies the .deb's address.)
+        d.message = lead + " AVAILABLE. THIS COPY WAS INSTALLED FROM THE .DEB, WHICH CAN'T UPDATE ITSELF. EITHER GET THE NEW .DEB (COPY LINK: " +
+                    (url.empty() ? where : url) + ") AND OPEN IT WITH YOUR SOFTWARE INSTALLER, OR SWITCH TO THE PER-USER INSTALL, WHICH UPDATES " +
+                    "ITSELF: GET THE LINUX .ZIP FROM " + where + ", UNZIP IT AND RUN INSTALL.SH (NO SUDO NEEDED)";
         return d;
     }
     const FileEntry* f = m.file(layoutName(inst.layout));
-    if (!f || resolveUrl(manifestUrl, f->url).empty()) {
+    if (!f || fileUrl(manifestUrl, m, *f).empty()) {
         d.verdict = Verdict::NotForThisOS;
         const char* os = inst.layout == Layout::Windows ? "WINDOWS" : inst.layout == Layout::Mac ? "MAC" : "LINUX";
         d.message = lead + " IS OUT, BUT NOT FOR " + os + " YET";

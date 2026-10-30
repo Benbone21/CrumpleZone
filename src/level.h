@@ -150,6 +150,13 @@ SectionBuilt standLiveSection(const Level& lv, World& w);
 int wildsKindForSection(int sectionType);
 int wildsKindForKind(int sectionKind);
 
+// A level made on an old map that is a region of the big map now (onemap.h: the Mountain, the Frontier, the meadow open country), moved
+// onto the big map to be played there: its map becomes the Backcountry and everything in it (start, gates, objects, the base-map
+// objects it takes away, its section's canvas, the cells it changed) moves by the region's offset; heights are unchanged. False, and
+// left as it was: not such a level (the open country's other kinds, desert, forest and the rest, stay on their own small maps).
+// `from`: the map it was made on (when moved).
+bool placeInRegion(Level& lv, int* from = nullptr);
+
 // Puts a level's edits on the world made by levelWorld(level), then rebuilds its lookups.
 void applyLevel(const Level& lv, World& w);
 // Adds one object to the world (as applyLevel does).

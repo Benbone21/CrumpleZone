@@ -14,6 +14,10 @@
 //   file deb     v0.4.1/CrumpleZone-0.4.1-linux.deb ...      (not self-installed: the .deb's link for the message)
 //   signature <128 hex: Ed25519 over every byte before this line>
 // A file's URL is relative to the manifest's own URL unless it starts with https:// (or http:// for a loopback host, the tests).
+// On GitHub Releases (the default, docs/server-updates-setup.md) CI writes absolute URLs,
+//   file linux https://github.com/Benbone21/CrumpleZone/releases/download/v0.4.1/CrumpleZone-0.4.1-linux.zip ...
+// and a relative one there resolves in that release's download folder, not under .../releases/latest/ (releaseManifestUrl).
+// The URLs are inside the signed text, so a changed address is refused like any other change.
 // Lines with other keys are ignored (a newer CI can add some); the signature covers them too.
 #pragma once
 #include <array>
@@ -58,6 +62,12 @@ bool readManifest(const std::string& text, const std::vector<PublicKey>& keys, M
 std::vector<PublicKey> builtinKeys();
 // A file's full URL: relative ones against the manifest's folder. "" when it is not allowed (not https, "..", spaces...).
 std::string resolveUrl(const std::string& manifestUrl, const std::string& fileUrl);
+// The folder a release's relative file names belong in. GitHub's .../releases/latest/download/<name> (the default update address)
+// only redirects to the newest release, so its files are looked for in .../releases/download/v<version>/ (the release the
+// manifest says it is), not under /latest/. Any other address is its own folder (returned as it is).
+std::string releaseManifestUrl(const std::string& manifestUrl, const std::string& version);
+// resolveUrl against releaseManifestUrl: where a manifest's file really is.
+std::string fileUrl(const std::string& manifestUrl, const Manifest& m, const FileEntry& f);
 // https://, or http:// to 127.0.0.1 / localhost / [::1] (the tests' server).
 bool allowedUrl(const std::string& url);
 

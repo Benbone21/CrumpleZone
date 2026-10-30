@@ -4,8 +4,9 @@
 # - On a version tag (v1.2.3): also publishes them as a GitHub release, with the notes in
 #   docs/releases/<tag>.md when it exists (else GitHub writes them from the commits).
 #   The release also carries the self-updater's files (src/updater.h): a per-platform zip for each OS and update-manifest.txt,
-#   signed with the Ed25519 key in the secret UPDATE_SIGNING_KEY (docs/update-signing-keys.md). The owner's server copies them
-#   from the release (docs/server-updates-setup.md). Without the secret the release is published as before, with no manifest.
+#   signed with the Ed25519 key in the secret UPDATE_SIGNING_KEY (docs/update-signing-keys.md). The games read the newest release's
+#   manifest (.../releases/latest/download/update-manifest.txt, docs/server-updates-setup.md). Without the secret the release is
+#   published as before, with no manifest. A release the owner already made (his own .deb and installer) only gets files added.
 #   The mac job is skipped on a pushed tag unless the repository variable RELEASE_MAC is "true"
 #   (Settings > Variables); the release then has the .deb and .exe only. To add the Mac files
 #   later: run this workflow by hand (Run workflow) on the tag, or use release-recovery.yml.
@@ -16,13 +17,34 @@ on:
     branches: [sync, main]
     tags: ["v*", "V*"]
   workflow_dispatch:
+    inputs:
+      mac_only:
+        description: "Only the mac job (a check of the Mac app; nothing is published off a tag either way)"
+        type: boolean
+        default: false
+      mac_regression:
+        description: "Run the mac job's native regression checks (about 45 minutes) before the packaged app smoke test"
+        type: boolean
+        default: true
+      smoke_runs:
+        description: "How many times to launch the packaged Mac app in its smoke test"
+        type: number
+        default: 1
+      smoke_flags:
+        description: "Extra flags for the smoke test's launches, one launch per ';'-separated set (each run)"
+        type: string
+        default: ""
+      version:
+        description: "Version to build and name the files with on a by-hand run off a tag, e.g. 0.4.7 (blank: 0.0.0-dev). Nothing is published off a tag."
+        type: string
+        default: ""
 
 permissions:
   contents: write
 
 env:
   # v1.2.3 on a tag, else 0.0.0-dev (a Debian version has to start with a digit)
-  VERSION: ${{ (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V')) && github.ref_name || '0.0.0-dev' }}
+  VERSION: ${{ (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V')) && github.ref_name || inputs.version || '0.0.0-dev' }}
   # ccache (the Makefile uses it when installed); the folder is cached between runs per job
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_MAXSIZE: 2G
@@ -31,12 +53,16 @@ jobs:
   # Opt-in PGO: build instrumented, run a fixed training workload (tools/pgo.sh), hand the profile to the linux job.
   # Never blocks a release: if this job fails, the linux job finds no profile and build plain LTO.
   profile:
+    if: ${{ !inputs.mac_only }}
     runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
-        with: { path: .ccache, key: ccache-profile-${{ github.sha }}, restore-keys: ccache-profile- }
+        with:
+          path: .ccache
+          key: ccache-profile-${{ github.sha }}
+          restore-keys: ccache-profile-
       - name: Toolchain
         run: sudo apt-get update -q && sudo apt-get install -y -q g++ libsdl2-2.0-0 libegl1 libgl1-mesa-dri libglx-mesa0 ccache
       - name: Train
@@ -50,7 +76,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
-        with: { path: .ccache, key: ccache-linux-${{ github.sha }}, restore-keys: ccache-linux- }
+        with:
+          path: .ccache
+          key: ccache-linux-${{ github.sha }}
+          restore-keys: ccache-linux-
       - name: Toolchain
         run: sudo apt-get update -q && sudo apt-get install -y -q g++ libsdl2-2.0-0 libegl1 libgl1-mesa-dri libglx-mesa0 ccache
       - uses: actions/download-artifact@v4
@@ -67,6 +96,8 @@ jobs:
           make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" build/test_visibility
           ./build/test_visibility
           ./build/rel/run_tests --jobs 1 engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure net/state vtools/ update/
+          # The big map's fingerprint (src/worldprint.h): every OS must build Linux's world (the WORLDPRINT lines can be compared across the logs).
+          CZ_XPLAT_SCANS=1 ./build/rel/run_tests --jobs 1 -v onemap/xplat-fingerprint
           SDL_VIDEODRIVER=offscreen LP_NUM_THREADS=2 ./build/rel/test_render
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/rel/test_audio
           python3 tests/test_engine_import.py
@@ -78,11 +109,15 @@ jobs:
         with: { name: linux, path: out/* }
 
   windows:
+    if: ${{ !inputs.mac_only }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
-        with: { path: .ccache, key: ccache-windows-${{ github.sha }}, restore-keys: ccache-windows- }
+        with:
+          path: .ccache
+          key: ccache-windows-${{ github.sha }}
+          restore-keys: ccache-windows-
       - name: Toolchain
         run: sudo apt-get update -q && sudo apt-get install -y -q g++-mingw-w64-x86-64-posix zip nsis ccache
       - name: Cross-compile and build the installer
@@ -94,6 +129,7 @@ jobs:
           make -j"$(nproc)" build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe build/win/test_visibility.exe
           mkdir -p build/win/cpu-tests
           cp build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe build/win/test_visibility.exe third_party/sdl2-win64/SDL2.dll build/win/cpu-tests/
+          mkdir -p build/win/cpu-tests/assets && cp -r assets/props build/win/cpu-tests/assets/  # (the scanned rocks, for onemap/xplat-fingerprint)
           x86_64-w64-mingw32-objdump -p build/win/CrumpleZone/crumplezone.exe > build/win/imports.txt
           grep -q 'NvOptimusEnablement' build/win/imports.txt
           grep -q 'AmdPowerXpressRequestHighPerformance' build/win/imports.txt
@@ -133,6 +169,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Windows culling/LOD geometry checks failed" }
           .\cpu-tests\run_tests.exe --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/ update/
           if ($LASTEXITCODE -ne 0) { throw "Windows networking/physics regression checks failed (exit $LASTEXITCODE)" }
+          $env:CZ_XPLAT_SCANS = '1'
+          .\cpu-tests\run_tests.exe --jobs 1 -v onemap/xplat-fingerprint
+          if ($LASTEXITCODE -ne 0) { throw "Windows builds another big map than Linux (onemap/xplat-fingerprint: the WORLDPRINT lines say which part)" }
           foreach ($attempt in 1..5) {
             .\cpu-tests\run_tests.exe --jobs 1 engine/thread-cache vtools/go net/state
             if ($LASTEXITCODE -ne 0) { throw "Windows thread-exit stress failed (attempt $attempt, exit $LASTEXITCODE)" }
@@ -148,7 +187,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
-        with: { path: .ccache, key: ccache-mac-${{ github.sha }}, restore-keys: ccache-mac- }
+        with:
+          path: .ccache
+          key: ccache-mac-${{ github.sha }}
+          restore-keys: ccache-mac-
       - name: ccache
         run: brew install ccache
       - name: SDL2 framework (official universal build)
@@ -167,12 +209,14 @@ jobs:
           mkdir -p out && cp build/mac/CrumpleZone-mac.zip "out/CrumpleZone-${V}-mac.zip"
           cp build/mac/CrumpleZone-mac.dmg "out/CrumpleZone-${V}-mac.dmg"
       - name: Native macOS regression checks
+        if: ${{ inputs.mac_regression != false }}
         run: |
           # macOS only answers on 127.0.0.1; net/sec-flood binds its fake clients to 127.0.0.2, .0.3 and 127.0.1.1-40.
           for a in 127.0.0.2 127.0.0.3 $(seq -f '127.0.1.%g' 1 40); do sudo ifconfig lo0 alias "$a" up; done
           make -j4 build/mac/bench_sim build/mac/run_tests build/mac/test_audio build/mac/test_render build/mac/test_visibility
           ./build/mac/test_visibility
           ./build/mac/run_tests --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/ update/
+          CZ_XPLAT_SCANS=1 ./build/mac/run_tests --jobs 1 -v onemap/xplat-fingerprint
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/mac/test_audio
           python3 -u - <<'PY'
           import subprocess
@@ -195,23 +239,42 @@ jobs:
           PY
       - name: Packaged app smoke test
         # The hosted Mac draws in software: its first frame takes over a minute, past the scripted-run hang limit (60 s).
-        env: { CZ_WATCHDOG_STALL: "900" }
+        # CZ_STAGE_LOG: each startup step with its time, so a slow or hung launch shows where it was (a hang adds every thread's stack).
+        env: { CZ_WATCHDOG_STALL: "900", CZ_STAGE_LOG: "1", SMOKE_RUNS: "${{ inputs.smoke_runs || 1 }}", SMOKE_FLAGS: "${{ inputs.smoke_flags }}" }
         run: |
           python3 - <<'PY'
-          import pathlib, subprocess, tempfile
+          import os, pathlib, shlex, subprocess, sys, tempfile, time
           app = pathlib.Path('build/mac/CrumpleZone.app/Contents/MacOS/crumplezone').resolve()
           prefix = pathlib.Path('out-shot').resolve()
-          # Launch away from the repository so packaged framework and asset lookup are tested.
-          with tempfile.TemporaryDirectory() as cwd, open('shot.log', 'w') as log:
-              subprocess.run([str(app), '--no-audio', '--no-pad', '--quality', '0', '--ground', '1', '--props', '0', '--size', '96x64',
-                              '--shot-prefix', str(prefix), '--shot-frames', '0'], cwd=cwd,
-                             stdout=log, stderr=subprocess.STDOUT, check=True, timeout=2400)
-          if not pathlib.Path(str(prefix) + '_0000.ppm').is_file():
-              raise SystemExit('Packaged Mac app did not render its screenshot')
-          output = pathlib.Path('shot.log').read_text()
-          print(output)
-          if 'ground textures:' in output:
-              raise SystemExit('Packaged Mac ground assets failed to load')
+          runs = max(1, int(float(os.environ.get('SMOKE_RUNS') or 1)))
+          # (SMOKE_FLAGS: launches separated by ';', each its own flags after the usual ones, e.g. "--ground 0;--ground 1")
+          variants = [v.strip() for v in (os.environ.get('SMOKE_FLAGS') or '').split(';')] or ['']
+          failed = []
+          n = 0
+          for run in range(runs):
+              for extra in variants:
+                  n += 1
+                  shot = pathlib.Path(str(prefix) + '_0000.ppm')
+                  shot.unlink(missing_ok=True)
+                  name = 'shot.log' if n == 1 else f'shot{n}.log'
+                  t0 = time.time()
+                  # Launch away from the repository so packaged framework and asset lookup are tested.
+                  # (NAME=value words in a set go to the launch's environment, the rest are flags)
+                  words = shlex.split(extra)
+                  env = dict(os.environ, **dict(w.split('=', 1) for w in words if '=' in w and not w.startswith('-')))
+                  flags = [w for w in words if not ('=' in w and not w.startswith('-'))]
+                  with tempfile.TemporaryDirectory() as cwd, open(name, 'w') as log:
+                      rc = subprocess.run([str(app), '--no-audio', '--no-pad', '--quality', '0', '--ground', '1', '--props', '0', '--size', '96x64',
+                                           '--shot-prefix', str(prefix), '--shot-frames', '0'] + flags, cwd=cwd, env=env,
+                                          stdout=log, stderr=subprocess.STDOUT, timeout=2400).returncode
+                  output = pathlib.Path(name).read_text()
+                  print(f'--- launch {n} [{extra}]: exit {rc} after {time.time() - t0:.0f} s')
+                  print(output, flush=True)
+                  if rc != 0: failed.append(f'launch {n} [{extra}] exited with {rc}')
+                  elif not shot.is_file(): failed.append(f'launch {n} [{extra}] did not render its screenshot')
+                  elif 'ground textures:' in output: failed.append(f'launch {n} [{extra}]: ground assets failed to load')
+          if failed:
+              raise SystemExit('Packaged Mac app: ' + '; '.join(failed))
           PY
       - name: Verify the mounted DMG
         run: |
@@ -226,7 +289,7 @@ jobs:
         with: { name: mac, path: out/* }
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: mac-smoke, path: "out-shot*\nshot.log", if-no-files-found: ignore }
+        with: { name: mac-smoke, path: "out-shot*\nshot*.log", if-no-files-found: ignore }
 
   publish:
     # mac may be skipped (see above); a failed or cancelled job still blocks the release.
@@ -238,30 +301,43 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { path: dist, merge-multiple: true }
       - name: Sign the update manifest
-        # The self-updater's manifest (src/updatecore.h): version, and each platform's file (relative URL v<version>/<name> on the
-        # owner's server, size, SHA-256), signed with the secret's Ed25519 key. The key only ever lives in this step's environment;
-        # build/cz-update reads it from there and never prints or writes it. --require-builtin: the key must match the public key
-        # compiled into the game (src/updatekeys.h), or the games would refuse it. A failure here doesn't stop the release.
+        # The self-updater's manifest (src/updatecore.h): the version, and each platform's file (its absolute URL on this tag's GitHub
+        # release, size, SHA-256), signed with the secret's Ed25519 key. The games fetch it from
+        # .../releases/latest/download/update-manifest.txt (src/updatekeys.h, docs/server-updates-setup.md). The key only ever lives
+        # in this step's environment; build/cz-update reads it from there and never prints or writes it. --require-builtin: the key
+        # must match the public key compiled into the game (src/updatekeys.h), or every game would refuse the manifest.
+        # No secret, or any failure here: a warning, and the release goes out as before, without a manifest (no game is offered it).
         continue-on-error: true
         env:
           CZ_UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
         run: |
           V="${VERSION#[vV]}"
+          rm -f dist/update-manifest.txt
           if [ -z "$CZ_UPDATE_SIGNING_KEY" ]; then
-            echo "::warning::No UPDATE_SIGNING_KEY secret: this release has no update manifest, so no game will be offered it (docs/update-signing-keys.md)"
+            echo "::warning title=No update manifest::The UPDATE_SIGNING_KEY secret is not set, so this release gets no signed update-manifest.txt and no game will offer it as an update. Add the secret (docs/update-signing-keys.md) and re-run the publish job."
             exit 0
           fi
           make -j"$(nproc)" build/cz-update
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
           args=()
+          # The zips the game installs itself, and the .deb (only linked: a .deb install says where to get it).
           for p in windows:windows.zip linux:linux.zip mac:mac.zip deb:linux.deb; do
             f="CrumpleZone-${V}-${p#*:}"
-            if [ -s "dist/$f" ]; then args+=(--file "${p%%:*}" "v${V}/$f" "dist/$f"); fi
+            if [ -s "dist/$f" ]; then args+=(--file "${p%%:*}" "$base/$f" "dist/$f"); fi
           done
-          build/cz-update --sign dist/update-manifest.txt --version "$V" --date "$(date -u +%F)" \
-            --notes "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" --require-builtin "${args[@]}" \
-            || { echo "::error::The update manifest was not signed (see above): the release goes out without it"; rm -f dist/update-manifest.txt; exit 1; }
-          build/cz-update --verify dist/update-manifest.txt --files dist || { echo "::error::The signed manifest didn't check out: the release goes out without it"; rm -f dist/update-manifest.txt; exit 1; }
+          if ! build/cz-update --sign dist/update-manifest.txt --version "$V" --date "$(date -u +%F)" \
+               --notes "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" --require-builtin "${args[@]}"; then
+            echo "::warning title=No update manifest::The update manifest was not signed (see above): the release goes out without it"
+            rm -f dist/update-manifest.txt
+          elif ! build/cz-update --verify dist/update-manifest.txt --files dist; then
+            echo "::warning title=No update manifest::The signed manifest didn't check out: the release goes out without it"
+            rm -f dist/update-manifest.txt
+          fi
       - name: Publish the release
+        # Creates this tag's release with every file, or (the owner may have made it already, with his own .deb and installer from
+        # `gh release create`) adds to it: the updater's files (the zips and update-manifest.txt, which must be exactly the files the
+        # manifest signed) are uploaded with --clobber; anything else (.deb, setup .exe, .dmg, SHA256SUMS) only when the release
+        # doesn't have that file yet, so his are never replaced. Nothing is ever deleted.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -270,25 +346,36 @@ jobs:
           # Always the .exe and .deb; the Mac files only when the mac job built them (both or neither).
           names=("CrumpleZone-${V}-windows-setup.exe" "CrumpleZone-${V}-linux.deb")
           if [ -e "dist/CrumpleZone-${V}-mac.dmg" ] || [ -e "dist/CrumpleZone-${V}-mac.zip" ]; then
-            names+=("CrumpleZone-${V}-mac.dmg" "CrumpleZone-${V}-mac.zip")
+            names+=("CrumpleZone-${V}-mac.dmg")
           fi
-          # The self-updater's files: the Windows and Linux zips, and the signed manifest when the step above made one.
-          for name in "CrumpleZone-${V}-windows.zip" "CrumpleZone-${V}-linux.zip" update-manifest.txt; do
-            if [ -s "dist/$name" ]; then names+=("$name"); fi
-          done
           for name in "${names[@]}"; do test -s "dist/$name"; done
-          (cd dist && sha256sum "${names[@]}" > SHA256SUMS)
-          files=()
-          for name in "${names[@]}"; do files+=("dist/$name"); done
-          files+=("dist/SHA256SUMS")
+          # The self-updater's files: the zips (Mac's too), and the signed manifest when the step above made one.
+          updater=()
+          for name in "CrumpleZone-${V}-windows.zip" "CrumpleZone-${V}-linux.zip" "CrumpleZone-${V}-mac.zip" update-manifest.txt; do
+            if [ -s "dist/$name" ]; then updater+=("$name"); fi
+          done
+          (cd dist && sha256sum "${names[@]}" "${updater[@]}" > SHA256SUMS)
+          names+=(SHA256SUMS)
           notes=(--generate-notes)
           if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then notes=(--notes-file "docs/releases/${GITHUB_REF_NAME}.md"); fi
-          # (A release made by hand on the website for this tag just gets the files attached.)
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+            have=$(gh release view "$GITHUB_REF_NAME" --json assets -q '.assets[].name')
+            add=()
+            for name in "${names[@]}"; do
+              if grep -qxF "$name" <<<"$have"; then echo "keeping the release's own $name"; else add+=("dist/$name"); fi
+            done
+            for name in "${updater[@]}"; do add+=("dist/$name"); done
+            if [ ${#add[@]} -gt 0 ]; then gh release upload "$GITHUB_REF_NAME" "${add[@]}" --clobber; fi
             if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then
               gh release edit "$GITHUB_REF_NAME" --title "Crumple Zone ${V}" --notes-file "docs/releases/${GITHUB_REF_NAME}.md" --draft=false --prerelease=false --latest
             fi
           else
+            files=()
+            for name in "${names[@]}" "${updater[@]}"; do files+=("dist/$name"); done
             gh release create "$GITHUB_REF_NAME" --verify-tag --title "Crumple Zone ${V}" "${notes[@]}" "${files[@]}"
+          fi
+          if [ -s dist/update-manifest.txt ]; then
+            echo "Update manifest published: https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/update-manifest.txt"
+          else
+            echo "::warning title=No update manifest::This release has no update-manifest.txt: games won't be offered it (the newest release with one is what /latest/ must point at)."
           fi

@@ -148,7 +148,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     glassBursts.clear();
     extForce.clear();
     gearboxOut = -1;
-    color = col;
+    if (!paint.bodySet) baseColor = col;
+    color = paint.bodySet ? V3(paint.body[0] / 255.0, paint.body[1] / 255.0, paint.body[2] / 255.0) : col;
     spawnPos = pos;
     spawnYaw = yaw;
     throttle = brake = handbrake = steerInput = steer = rackSteer = brakePressure = 0;
@@ -170,6 +171,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     tcCut = 1;
     engineHealth = 1;
     engineDead = false;
+    battery = 1, engineOff = false, crank = 0, cranking = false, soak = 0;
     hydrolocked = false;
     floodedHealth = -1;
     gate = Gate();  // (new panels: shut)
@@ -2053,7 +2055,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     c2 *= c2;
                     bool spring = e.type == BEAM_SPRING || e.type == BEAM_BUMPSTOP;
                     K += c2 * e.k * (e.type == BEAM_BUMPSTOP ? 125 : spring ? 26 : 1);
-                    C += c2 * e.c * (spring ? 1.35 : 1);
+                    C += c2 * e.c * (e.type == BEAM_SPRING ? Damper::kMaxSlope : 1);
                 }
                 worst = std::max(worst, h * h * (K + pk) + 2 * h * (C + pc));
             }

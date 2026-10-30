@@ -1,7 +1,8 @@
 #!/bin/bash
 # Copies the newest Crumple Zone release that carries a signed update manifest from GitHub to the update server's folder, checks
 # everything with cz-update (the public key compiled in), and only then makes it the version the games are offered.
-# docs/server-updates-setup.md explains the setup (a systemd timer runs this). No secrets: the server only ever has public data.
+# docs/server-updates-setup.md explains the setup (optional: by default the games read GitHub Releases directly; a systemd timer
+# runs this). No secrets: the server only ever has public data.
 #
 #   tools/update_mirror.sh             fetch the latest release if it is new (safe to run often; does nothing when up to date)
 #   tools/update_mirror.sh --use V     offer version V again (rollback: it must still be in the folder), and HOLD there: later runs
@@ -13,14 +14,14 @@
 #   CZ_UPDATES_ROOT   the served folder (default /srv/crumplezone-updates): manifest.txt and v<version>/ beside it
 #   CZ_UPDATE_TOOL    cz-update built from this repository (default ~/crumplezone-src/build/cz-update)
 #   CZ_UPDATE_PUBKEY  optional: check against this public key (64 hex) instead of the one compiled into the tool
-#   CZ_REPO           GitHub owner/name (default Benbone21/crumplezone)
+#   CZ_REPO           GitHub owner/name (default Benbone21/CrumpleZone)
 #   CZ_KEEP           versions kept on disk (default 3; the offered one is always kept)
 #   CZ_API, CZ_DOWNLOAD_BASE   (tests: where "latest release" and its files come from)
 set -euo pipefail
 
 ROOT=${CZ_UPDATES_ROOT:-/srv/crumplezone-updates}
 TOOL=${CZ_UPDATE_TOOL:-$HOME/crumplezone-src/build/cz-update}
-REPO=${CZ_REPO:-Benbone21/crumplezone}
+REPO=${CZ_REPO:-Benbone21/CrumpleZone}
 API=${CZ_API:-https://api.github.com/repos/$REPO/releases/latest}
 KEEP=${CZ_KEEP:-3}
 
@@ -83,9 +84,15 @@ fi
 verify "$work/update-manifest.txt" > "$work/.verify" || { cat "$work/.verify" >&2 || true; die "the manifest of $tag does NOT verify: not using it"; }
 mv=$(awk '$1=="version"{print $2; exit}' "$work/update-manifest.txt")
 [ "$mv" = "$v" ] || die "the manifest says $mv but the tag is $tag: not using it"
+# CI writes absolute URLs into the release's own download folder (the games use GitHub directly by default); an older manifest
+# has v<version>/<name>. Either way the file is copied here too, so --use can check a kept version. (The signed URLs can't be
+# changed, so with absolute ones the games still download the files from GitHub: this server then decides which release is offered.)
 awk '$1=="file"{print $3}' "$work/update-manifest.txt" | while read -r url; do
-    case "$url" in "v$v/"*) ;; *) die "file URL '$url' is not under v$v/ (CI set absolute URLs?): not using it";; esac
-    name=${url#"v$v/"}
+    case "$url" in
+        "v$v/"*) name=${url#"v$v/"} ;;
+        https://github.com/*/releases/download/"$tag"/*) name=${url##*/} ;;
+        *) die "file URL '$url' is neither under v$v/ nor in release $tag: not using it" ;;
+    esac
     case "$name" in */*|.*|"") die "odd file name '$name'";; esac
     log "downloading $name"
     curl -fsSL --retry 3 --max-time 1800 -o "$work/$name" "$DL/$name" || die "can't download $name"

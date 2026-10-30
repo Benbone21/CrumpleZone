@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <thread>
 
 #include "../src/ed25519.h"
@@ -148,7 +149,14 @@ struct HttpServer {
     std::atomic<bool> stop{false};
     std::thread th;
     std::map<std::string, std::string> files;  // path -> body
+    std::map<std::string, std::string> redirects;  // path -> Location (302), like GitHub's /releases/latest/download/ and its asset links
+                                                   // ("abs:/x": the absolute http://127.0.0.1:port/x, like GitHub's to its file host)
     bool shortBody = false;                     // send fewer bytes than Content-Length says
+    std::mutex m;                               // (files and redirects once it runs: set())
+    void set(const std::string& path, const std::string& body) {
+        std::lock_guard<std::mutex> g(m);
+        files[path] = body;
+    }
 #ifdef _WIN32
     SOCKET ls = INVALID_SOCKET;
 #else
@@ -188,10 +196,15 @@ struct HttpServer {
                 req.append(buf, n);
             }
             const size_t sp = req.find(' '), sp2 = req.find(' ', sp + 1);
-            const std::string path = sp == std::string::npos ? "" : req.substr(sp + 1, sp2 - sp - 1);
+            std::string path = sp == std::string::npos ? "" : req.substr(sp + 1, sp2 - sp - 1);
+            path = path.substr(0, path.find('?'));  // (a signed file-host link's query)
             std::string resp;
+            std::lock_guard<std::mutex> g(m);
             auto it = files.find(path);
-            if (it == files.end()) resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nnot found";
+            auto re = redirects.find(path);
+            if (re != redirects.end())
+                resp = "HTTP/1.1 302 Found\r\nLocation: " + (re->second.compare(0, 4, "abs:") == 0 ? url(re->second.substr(4)) : re->second) + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            else if (it == files.end()) resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nnot found";
             else {
                 const std::string& body = it->second;
                 resp = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" +
@@ -394,6 +407,22 @@ SCENARIO(updUrls, "update/urls", "only https (or the tests' loopback http); file
     ctx.check("absolute http: refused", resolveUrl(mu, "http://cdn.example.org/a.zip").empty());
     ctx.check("climbing out: refused", resolveUrl(mu, "../a.zip").empty() && resolveUrl(mu, "v1/../../a.zip").empty() && resolveUrl(mu, "/etc/a.zip").empty());
     ctx.check("odd characters: refused", resolveUrl(mu, "a zip").empty() && resolveUrl(mu, "a?b").empty() && resolveUrl(mu, "a\\b").empty());
+    // GitHub Releases: the manifest is fetched through /latest/, its relative names belong to the release it names.
+    const std::string gh = "https://github.com/Benbone21/CrumpleZone/releases/latest/download/update-manifest.txt";
+    ctx.check("github: /latest/ means the manifest's release", releaseManifestUrl(gh, "0.4.9") ==
+                                                                "https://github.com/Benbone21/CrumpleZone/releases/download/v0.4.9/update-manifest.txt");
+    Manifest gm;
+    gm.version = "0.4.9";
+    ctx.check("github: a relative name resolves in that release's folder",
+              fileUrl(gh, gm, {"linux", "CrumpleZone-0.4.9-linux.zip", 1, ""}) == "https://github.com/Benbone21/CrumpleZone/releases/download/v0.4.9/CrumpleZone-0.4.9-linux.zip");
+    ctx.check("github: an absolute URL stays as it is",
+              fileUrl(gh, gm, {"linux", "https://github.com/Benbone21/CrumpleZone/releases/download/v0.4.9/a.zip", 1, ""}) ==
+                  "https://github.com/Benbone21/CrumpleZone/releases/download/v0.4.9/a.zip");
+    ctx.check("github: still can't climb out", fileUrl(gh, gm, {"linux", "../../v0.0.1/a.zip", 1, ""}).empty());
+    ctx.check("another server's folder is its own", releaseManifestUrl(mu, "0.4.9") == mu && fileUrl(mu, gm, {"linux", "v0.4.9/a.zip", 1, ""}) ==
+                                                                                               "https://updates.example.net/crumplezone/v0.4.9/a.zip");
+    ctx.check("/latest/ only in the query: not rewritten", releaseManifestUrl("https://x.example/m.txt?r=/releases/latest/download/", "1.0.0") ==
+                                                              "https://x.example/m.txt?r=/releases/latest/download/");
     ctx.check("allowed", allowedUrl(mu) && allowedUrl("http://127.0.0.1:8080/m.txt") && allowedUrl("http://localhost/m.txt") && allowedUrl("http://[::1]:9/m"));
     ctx.check("not allowed", !allowedUrl("http://example.net/m.txt") && !allowedUrl("ftp://x/y") && !allowedUrl("https://") && !allowedUrl("https://u@evil/x") &&
                                  !allowedUrl("http://127.0.0.1.evil.net/m") && !allowedUrl("file:///etc/passwd"));
@@ -592,6 +621,10 @@ SCENARIO(updHttp, "update/http", "downloads from a local HTTP server through eve
     for (int i = 0; i < 300000; i++) big += (char)('a' + (i * 7) % 26);
     srv.files["/m.txt"] = "crumplezone-update 1\nversion 0.4.1\n";
     srv.files["/big.zip"] = big;
+    srv.redirects["/latest/m.txt"] = "/m.txt";
+    srv.redirects["/latest/big.zip"] = "/v1/big.zip";
+    srv.redirects["/loop"] = "/loop";
+    srv.redirects["/v1/big.zip"] = "abs:/big.zip";  // (an absolute Location, like GitHub's to objects.githubusercontent.com)
     if (!ctx.check("the server starts", srv.start())) return;
     TempDir t("http");
     int tried = 0;
@@ -610,6 +643,9 @@ SCENARIO(updHttp, "update/http", "downloads from a local HTTP server through eve
         srv.shortBody = true;
         ctx.check(tag + "a cut-short body fails and leaves no file", !http::download(srv.url("/big.zip"), path, &p, why, b) && !fs::exists(path), why);
         srv.shortBody = false;
+        ctx.check(tag + "follows redirects (fetch)", http::fetch(srv.url("/latest/m.txt"), 4096, body, why, b) && body == srv.files["/m.txt"], why);
+        ctx.check(tag + "follows two redirects (download)", http::download(srv.url("/latest/big.zip"), path, &p, why, b) && sha2::sha256File(path) == sha2::sha256Hex(big), why);
+        ctx.check(tag + "a redirect loop gives up in words", !http::fetch(srv.url("/loop"), 4096, body, why, b) && !why.empty(), why);
         ctx.check(tag + "plain http elsewhere is refused", !http::fetch("http://example.invalid/m.txt", 4096, body, why, b) && why.find("PROTOCOL") != std::string::npos, why);
         ctx.note(tag + "used");
     }
@@ -736,5 +772,108 @@ SCENARIO(updFlow, "update/flow", "the whole thing against a local server: check,
     ctx.check("the launch check offers it too", waitFor({Phase::Offer}, 15) == Phase::Offer);
     update::later();
     ctx.check("LATER hides it", update::status().phase == Phase::Idle);
+    update::testSetup("", "", {});
+}
+
+SCENARIO(updGithub, "update/github", "GitHub Releases' layout on a local server: /releases/latest/download/update-manifest.txt redirects to the newest release, its files (absolute or relative names) to a file host; the game finds, checks and installs them") {
+    TempDir t("github");
+#ifdef _WIN32
+    const Layout l = Layout::Windows;
+    const std::string live = t.path + "/Crumple Zone", exeDir = live, inner = "", exe = "crumplezone.exe";
+#elif defined(__APPLE__)
+    const Layout l = Layout::Mac;
+    const std::string live = t.path + "/CrumpleZone.app", exeDir = live + "/Contents/MacOS", inner = "Contents/", exe = "MacOS/crumplezone";
+#else
+    const Layout l = Layout::LinuxUser;
+    const std::string live = t.path + "/app", exeDir = live, inner = "", exe = "crumplezone";
+#endif
+    const std::string markerRel = l == Layout::Mac ? "Contents/Resources/cz-install.txt" : "cz-install.txt";
+    const std::string marker = std::string("layout ") + layoutName(l) + "\n";
+    const std::string top = zipTopFolder(l);
+    const std::string zip = makeZip({{top + "/" + inner + exe, "new program", 0100755}, {top + "/" + markerRel, marker}, {top + "/version.txt", "new"}});
+    const std::string name = std::string("CrumpleZone-9.9.9-") + layoutName(l) + ".zip";
+    uint8_t seed[32];
+    testSeed(seed);
+    const std::string repo = "/Benbone21/CrumpleZone/releases";
+    HttpServer srv;
+    auto signedFor = [&](const std::string& fileUrl) {
+        Manifest m;
+        m.version = "9.9.9";
+        m.net = 99;
+        m.notes = "https://github.com/Benbone21/CrumpleZone/releases/tag/v9.9.9";
+        m.files = {{layoutName(l), fileUrl, (uint64_t)zip.size(), sha2::sha256Hex(zip)}, {"deb", "CrumpleZone-9.9.9-linux.deb", 1, std::string(64, 'c')}};
+        return signManifest(m, seed);
+    };
+    // Two "repositories" on the one server: one whose manifest names its files relatively, one with absolute URLs (what CI writes).
+    for (const char* kind : {"rel", "abs"}) {
+        const std::string base = std::string("/") + kind + repo;
+        srv.redirects[base + "/latest/download/update-manifest.txt"] = base + "/download/v9.9.9/update-manifest.txt";
+        srv.redirects[base + "/download/v9.9.9/update-manifest.txt"] = std::string("abs:/objects/") + kind + "/manifest?sig=x&exp=1";
+        srv.redirects[base + "/download/v9.9.9/" + name] = std::string("abs:/objects/") + kind + "/zip?sig=y";
+        srv.files[std::string("/objects/") + kind + "/zip"] = zip;
+    }
+    srv.files["/objects/rel/manifest"] = signedFor(name);
+    // (the absolute one needs the port: set below, before the first request)
+    // A release whose /latest/ has no manifest yet (the release is up, CI hasn't attached it): a quiet notice, nothing else.
+    if (!ctx.check("the server starts", srv.start())) return;
+    srv.set("/objects/abs/manifest", signedFor(srv.url("/abs" + repo + "/download/v9.9.9/" + name)));
+    const std::string cfg = t.path + "/config";
+    for (const char* kind : {"rel", "abs"}) {
+        const std::string tag = std::string(kind) + ": ";
+        removeTree(live), removeTree(cfg), removeTree(installAt(l, live).previous);
+        put(live + "/" + markerRel, marker);
+        put(live + "/" + inner + exe, "old program");
+        put(live + "/version.txt", "old");
+        update::testSetup(cfg, exeDir, {pubOf(seed)});
+        std::string a0 = "crumplezone", a1 = "--update-url", a2 = srv.url(std::string("/") + kind + repo + "/latest/download/update-manifest.txt");
+        char* argv[] = {&a0[0], &a1[0], &a2[0]};
+        update::init(3, argv, 8);
+        update::checkOnLaunch();
+        ctx.check(tag + "the launch check follows /latest/ and offers 9.9.9", waitFor({Phase::Offer, Phase::Info}, 15) == Phase::Offer,
+                  update::status().title + " / " + update::status().message + " / " + update::takeNotice());
+        update::accept();
+        ctx.check(tag + "the release's file found, checked and installed", waitFor({Phase::Restarting, Phase::Info}, 30) == Phase::Restarting, update::status().message);
+#ifdef _WIN32
+        ctx.check(tag + "windows: waiting in the staging folder", get(installAt(l, live).staging + "/" + top + "/version.txt") == "new");
+        removeTree(installAt(l, live).staging);
+#else
+        ctx.check(tag + "the new version is live", get(live + "/version.txt") == "new" && get(installAt(l, live).previous + "/version.txt") == "old");
+#endif
+    }
+    // The .deb's card on the same release: the two ways, never a swap.
+    {
+        TempDir d("github-deb");
+        put(d.path + "/cz-install.txt", "layout deb\n");
+        update::testSetup(cfg + "-deb", d.path, {pubOf(seed)});
+        std::string a0 = "crumplezone", a1 = "--update-url", a2 = srv.url("/rel" + repo + "/latest/download/update-manifest.txt");
+        char* argv[] = {&a0[0], &a1[0], &a2[0]};
+        update::init(3, argv, 8);
+        update::checkOnLaunch();
+        waitFor({Phase::Info, Phase::Offer}, 15);
+        const update::Status st = update::status();
+        ctx.check(".deb: an Info card, not UPDATE NOW", st.phase == Phase::Info, st.title + " / " + st.message);
+        ctx.check(".deb: says download the new .deb or switch to the per-user install",
+                  st.message.find("INSTALLED FROM THE .DEB") != std::string::npos && st.message.find("PER-USER INSTALL") != std::string::npos &&
+                      st.message.find("INSTALL.SH") != std::string::npos, st.message);
+        ctx.check(".deb: the link is that release's .deb", st.link == srv.url("/rel" + repo + "/download/v9.9.9/CrumpleZone-9.9.9-linux.deb"), st.link);
+        ctx.check(".deb: its folder untouched", get(d.path + "/cz-install.txt") == "layout deb\n" && !fs::exists(d.path + ".previous"));
+        update::dismiss();
+        update::testSetup(cfg + "-deb", d.path, {pubOf(seed)});
+        update::init(3, argv, 8);
+        update::checkOnLaunch();
+        waitFor({Phase::Info, Phase::Offer}, 2);
+        ctx.check(".deb: once OK'd, the next launch doesn't show it again", update::status().phase == Phase::Idle, update::status().message);
+        update::checkFor(99);
+        ctx.check(".deb: an explicit check still does", waitFor({Phase::Info, Phase::Offer}, 15) == Phase::Info, update::status().message);
+        update::dismiss();
+    }
+    // The release is up but CI hasn't attached the manifest yet: a quiet notice on launch.
+    update::testSetup(cfg, exeDir, {pubOf(seed)});
+    std::string a0 = "crumplezone", a1 = "--update-url", a2 = srv.url("/none" + repo + "/latest/download/update-manifest.txt");
+    char* argv[] = {&a0[0], &a1[0], &a2[0]};
+    update::init(3, argv, 8);
+    update::checkOnLaunch();
+    const std::string n = waitNotice(15);
+    ctx.check("no manifest on the newest release yet: a quiet notice, no card", n.find("COULDN'T CHECK") != std::string::npos && update::status().phase == Phase::Idle, n);
     update::testSetup("", "", {});
 }

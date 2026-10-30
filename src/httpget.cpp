@@ -327,10 +327,10 @@ bool winhttpGet(const std::string& url, std::FILE* f, Progress* p, std::string& 
     URL_COMPONENTS uc;
     std::memset(&uc, 0, sizeof uc);
     uc.dwStructSize = sizeof uc;
-    wchar_t host[256], path[4096], extra[2048];
+    static thread_local wchar_t host[256], path[4096], extra[8192];
     uc.lpszHostName = host, uc.dwHostNameLength = 256;
     uc.lpszUrlPath = path, uc.dwUrlPathLength = 4096;
-    uc.lpszExtraInfo = extra, uc.dwExtraInfoLength = 2048;
+    uc.lpszExtraInfo = extra, uc.dwExtraInfoLength = 8192;
     if (!WinHttpCrackUrl(w.c_str(), 0, 0, &uc)) {
         why = "THE UPDATE ADDRESS IS NOT VALID";
         return false;
@@ -350,6 +350,14 @@ bool winhttpGet(const std::string& url, std::FILE* f, Progress* p, std::string& 
     WinHttpSetTimeouts(s, 20000, 20000, 60000, 60000);
     HINTERNET c = WinHttpConnect(s, std::wstring(host, uc.dwHostNameLength).c_str(), uc.nPort, 0);
     HINTERNET r = c ? WinHttpOpenRequest(c, L"GET", object.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, https ? WINHTTP_FLAG_SECURE : 0) : nullptr;
+    if (r) {
+        // Redirects (GitHub: .../releases/latest/download/x -> .../releases/download/vX/x -> a signed objects.githubusercontent.com
+        // URL): followed by WinHTTP itself, at most 5, never from https down to http (the starting URL is https except the tests'
+        // loopback server).
+        DWORD policy = WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP, most = 5;
+        WinHttpSetOption(r, WINHTTP_OPTION_REDIRECT_POLICY, &policy, sizeof policy);
+        WinHttpSetOption(r, WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS, &most, sizeof most);
+    }
     bool ok = false;
     DWORD status = 0;
     DWORD err = 0;

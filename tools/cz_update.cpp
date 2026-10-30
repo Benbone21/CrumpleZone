@@ -6,9 +6,10 @@
 //                                              writes the signed manifest; size and SHA-256 are taken from each LOCALFILE. The key
 //                                              comes from the environment variable CZ_UPDATE_SIGNING_KEY (hex; CI's secret) or
 //                                              --key-file FILE. --require-builtin: fail unless the key matches one compiled in.
-//   build/cz-update --verify FILE|URL [--key HEX] [--files DIR]
+//   build/cz-update --verify FILE|URL [--key HEX] [--files DIR] [--fetch]
 //                                              checks the signature (keys compiled in, or --key), prints the manifest; with --files
-//                                              also checks each file (by its name) in DIR. Exit status 0 only when all is good.
+//                                              also checks each file (by its name) in DIR; with --fetch (a URL) downloads each file from
+//                                              where the game would and checks it. Exit status 0 only when all is good.
 //   build/cz-update --hash FILE                size and SHA-256
 // See docs/update-signing-keys.md and docs/server-updates-setup.md.
 #include <cstdio>
@@ -41,7 +42,7 @@ int usage() {
                  "usage: cz-update --keygen FILE | --pubkey FILE | --hash FILE\n"
                  "       cz-update --sign OUT --version V [--net N] [--date D] [--notes URL] [--require-builtin] [--key-file FILE]\n"
                  "                 --file PLATFORM URL LOCALFILE [--file ...]     (key: $CZ_UPDATE_SIGNING_KEY, hex)\n"
-                 "       cz-update --verify FILE|URL [--key HEX] [--files DIR]\n");
+                 "       cz-update --verify FILE|URL [--key HEX] [--files DIR] [--fetch]\n");
     return 2;
 }
 
@@ -207,12 +208,14 @@ int signCmd(int argc, char** argv) {
 
 int verifyCmd(int argc, char** argv) {
     std::string src, keyHex, dir;
+    bool fetchAll = false;
     for (int i = 1; i < argc; i++) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
         if (a == "--verify") src = next();
         else if (a == "--key") keyHex = next();
         else if (a == "--files") dir = next();
+        else if (a == "--fetch") fetchAll = true;
         else return usage();
     }
     if (src.empty()) return usage();
@@ -245,11 +248,21 @@ int verifyCmd(int argc, char** argv) {
     std::printf("OK signature good: version %s, net %d, date %s\n", m.version.c_str(), m.net, m.date.c_str());
     bool all = true;
     for (const FileEntry& f : m.files) {
-        const std::string full = resolveUrl(isUrl ? src : "https://example.invalid/manifest.txt", f.url);
+        const std::string full = fileUrl(isUrl ? src : "https://example.invalid/manifest.txt", m, f);
         std::printf("  %-8s %12llu %s  %s\n", f.platform.c_str(), (unsigned long long)f.size, f.sha256.c_str(), isUrl ? full.c_str() : f.url.c_str());
         if (full.empty()) {
             std::printf("  FAIL %s: not an allowed URL\n", f.url.c_str());
             all = false;
+        }
+        if (fetchAll && !full.empty()) {  // (a published release: download each file where the game would, following redirects)
+            const std::string tmp = (fs::temp_directory_path() / ("cz-update-check-" + f.platform)).string();
+            std::string werr;
+            const bool got = http::download(full, tmp, nullptr, werr);
+            std::error_code ec;
+            const bool good = got && fs::file_size(tmp, ec) == f.size && !ec && sha2::sha256File(tmp) == f.sha256;
+            std::printf("  %s download %s\n", good ? "OK  " : "FAIL", got ? (good ? "matches" : "doesn't match the signed size/SHA-256") : werr.c_str());
+            fs::remove(tmp, ec);
+            all = all && good;
         }
         if (!dir.empty()) {
             const std::string local = dir + "/" + fs::path(f.url).filename().string();

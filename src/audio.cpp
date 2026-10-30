@@ -6,6 +6,7 @@
 #include <functional>
 #include <cstdio>
 
+#include "platform.h"
 #include "sdl_min.h"
 #include "softbody.h"
 
@@ -35,7 +36,7 @@ void Audio::setNearbyEngines(const Sim& sim, const V3& listener, const V3& right
         Source& out = frame.engines[slot];
         const VehicleSpec& v = *c.spec;
         out.id = c.netId ? c.netId : 0x80000000u | (uint32_t)(i + 1);
-        out.engine = EngineInput{(float)(c.engineDead || sim.paused ? 0 : c.rpm) * timeScale,
+        out.engine = EngineInput{(float)(c.engineDead || c.engineOff || sim.paused ? 0 : c.rpm) * timeScale,
             (float)clampd(c.throttle * c.tcCut, 0, 1), (float)c.boost,
             v.cylinders, (int)v.induction, (float)v.displacement, (float)v.redline, v.flatPlane,
             (uint8_t)engineSamples::forVehicle(v), voiceFor(v)};
@@ -127,7 +128,7 @@ int Audio::loadAmbience(const std::string& directory) {
 
 namespace {
 constexpr size_t kHornLoopStart = 3000, kHornLoopEnd = 13846;
-constexpr size_t kClickSlot = 3360, kWrenchSlot = 7680;  // (the banks' slots, samples: tools/sfx_prepare.py)
+constexpr size_t kClickSlot = 3360, kWrenchSlot = 7680, kStepSlot = 14400;  // (the banks' slots, samples: tools/sfx_prepare.py)
 }
 
 int Audio::loadSfx(const std::string& directory) {
@@ -137,7 +138,8 @@ int Audio::loadSfx(const std::string& directory) {
     struct { const char* file; Sfx what; } one[] = {
         {"door_open.wav", SFX_DOOR_OPEN}, {"door_shut.wav", SFX_DOOR_SHUT}, {"clunk.wav", SFX_CLUNK}, {"toolbox_rummage.wav", SFX_TOOLBOX_OPEN},
         {"toolbox_shut.wav", SFX_TOOLBOX_SHUT}, {"wrench_ratchet.wav", SFX_WRENCH}, {"air_hiss.wav", SFX_AIR_BURST}, {"horn.wav", SFX_HORN},
-        {"winch_click.wav", SFX_WINCH_CLICK}, {"ui_click.wav", SFX_UI_CLICK}};
+        {"winch_click.wav", SFX_WINCH_CLICK}, {"ui_click.wav", SFX_UI_CLICK}, {"steps_paved.wav", SFX_STEP_PAVED},
+        {"steps_gravel.wav", SFX_STEP_GRAVEL}, {"steps_sand.wav", SFX_STEP_SAND}};
     for (auto& e : one) n += readMono16(directory + "/" + e.file, sfx_[e.what]);
     if (!sfx_[SFX_UI_CLICK].empty()) {  // the hover tick: the same click, pitched up (resampled 1.15x)
         const std::vector<float>& c = sfx_[SFX_UI_CLICK];
@@ -336,6 +338,45 @@ void Audio::synthesizeTools() {
             return v + 0.12f * rnd() * std::exp(-t * 2);
         });
     }
+    // A spring clamp snapping onto a terminal: a sharp metal click and a short ring.
+    {
+        float lp = 0;
+        make(SFX_CLAMP, 0.25f, [&](float t, int) {
+            lp += (rnd() - lp) * 0.4f;
+            const float b = t - 0.045f;
+            return 0.7f * lp * std::exp(-t * 800) + 0.5f * ring(t, 2600, 90) + (b > 0 ? 0.6f * lp * std::exp(-b * 700) + 0.4f * ring(b, 1900, 60) + 0.25f * ring(b, 3700, 110) : 0.0f);
+        });
+    }
+    // A spark: a crackle of a few snaps and a thin high zap.
+    {
+        make(SFX_SPARK, 0.3f, [&](float t, int) {
+            float v = 0;
+            for (int k = 0; k < 4; k++) {
+                const float a = t - 0.012f * k * (1 + k);
+                if (a > 0) v += (rnd() * 2 - 1) * std::exp(-a * 900) * (1.0f - 0.2f * k);
+            }
+            return 0.8f * v + 0.25f * std::sin(tau * (5200 - 3000 * t) * t) * std::exp(-t * 40);
+        });
+    }
+    // The starter turning the engine over: a rough, lumpy whirr, one compression stroke after another.
+    {
+        float ph = 0, lp = 0;
+        make(SFX_STARTER, 0.3f, [&](float t, int) {
+            lp += (rnd() - lp) * 0.2f;
+            const float lump = 0.55f + 0.45f * std::sin(tau * 11 * t);
+            ph += tau * (150 + 40 * lump) / sr;
+            const float env = std::min(1.0f, t / 0.02f) * std::min(1.0f, (0.3f - t) / 0.05f);
+            return env * lump * (0.5f * std::sin(ph) + 0.25f * std::sin(2.01f * ph) + 0.35f * lp);
+        });
+    }
+    // The solenoid clicking with too little behind it.
+    {
+        float lp = 0;
+        make(SFX_CLICK, 0.2f, [&](float t, int) {
+            lp += (rnd() - lp) * 0.3f;
+            return 0.6f * lp * std::exp(-t * 600) + 0.7f * ring(t, 900, 70) + 0.4f * ring(t, 2100, 120);
+        });
+    }
 }
 
 WinchSound WinchSound::at(float lineSpeed, float load) {
@@ -500,8 +541,8 @@ void Audio::startSfx(Sfx what, float gain, float pan, uint32_t wait, float pitch
     }
     const std::vector<float>& d = sfx_[what];
     size_t from = 0, to = d.size();
-    if (what == SFX_WINCH_CLICK || what == SFX_WRENCH) {  // a bank: one slot, a touch louder or softer each time
-        const size_t slot = what == SFX_WINCH_CLICK ? kClickSlot : kWrenchSlot, slots = std::max<size_t>(1, d.size() / slot);
+    if (what == SFX_WINCH_CLICK || what == SFX_WRENCH || (what >= SFX_STEP_PAVED && what <= SFX_STEP_SAND)) {  // a bank: one slot, a touch louder or softer each time
+        const size_t slot = what == SFX_WINCH_CLICK ? kClickSlot : what == SFX_WRENCH ? kWrenchSlot : kStepSlot, slots = std::max<size_t>(1, d.size() / slot);
         const size_t k = (size_t)((noise() * 0.5f + 0.5f) * slots) % slots;
         from = k * slot, to = std::min(d.size(), from + slot);
         gain *= 0.85f + 0.15f * noise();
@@ -512,9 +553,9 @@ void Audio::startSfx(Sfx what, float gain, float pan, uint32_t wait, float pitch
 
 bool Audio::start() {
     if (device_) return true;
-    if (!ambienceLoaded_) std::printf("Ambience recordings: %d of 6 loaded; missing ones stay synthesized\n", loadAmbience("assets/audio/ambience"));
-    if (!sfxLoaded_) std::printf("Sound effects: %d of 13 loaded; missing ones stay silent\n", loadSfx("assets/audio/sfx"));
-    const int banks = recordingsReady_ ? recordingCount_ : loadEngineRecordings("assets/audio/engines");
+    if (!ambienceLoaded_) std::printf("Ambience recordings: %d of %d loaded; missing ones stay synthesized\n", loadAmbience(findAssetDir("assets/audio/ambience")), kAmbienceFiles);
+    if (!sfxLoaded_) std::printf("Sound effects: %d of %d loaded; missing ones stay silent\n", loadSfx(findAssetDir("assets/audio/sfx")), kSfxFiles);
+    const int banks = recordingsReady_ ? recordingCount_ : loadEngineRecordings(findAssetDir("assets/audio/engines"));
     std::printf("Engine recordings: %d banks loaded; missing banks use procedural audio\n", banks);
     SDL_AudioSpec want{}, have{};
     want.freq = 48000;
@@ -561,6 +602,7 @@ void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
         pendingTail_.store(tail + 1, std::memory_order_release);
     }
     const float smooth = 1.0f - std::exp(-dt * 12.0f);
+    const float vehicle = std::isfinite(vehicleVol_) ? std::clamp(vehicleVol_.load(), 0.0f, 1.0f) : 1.0f, vehicleA = 1 - std::exp(-dt / 0.025f);
     WinchSound ws[kWinches];
     float target[kWinches];
     const bool motor = winchMotor_.size() > 2;
@@ -580,7 +622,9 @@ void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
     const int air = airingDir_;
     const float airTarget[2] = {air > 0 && !compressor_.empty() ? 0.28f : 0.0f, air < 0 && !airBlow_.empty() ? 0.30f : 0.0f};
     for (int i = 0; i < frames; i++) {
-        float l = 0, r = 0, ul = 0, ur = 0;
+        float l = 0, r = 0, ul = 0, ur = 0, vl = 0, vr = 0;  // (vl/vr: the vehicle bus)
+        sVehicleFx_ += (vehicle - sVehicleFx_) * vehicleA;
+        if (vehicle == 0 && sVehicleFx_ < 1e-5f) sVehicleFx_ = 0;
         for (int k = 0; k < kWinches; k++) {
             WinchState& st = winchState_[k];
             st.gain += (target[k] - st.gain) * smooth;
@@ -596,7 +640,7 @@ void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
                 const float f = (float)(st.pos - a), m = winchMotor_[a] * (1 - f) + winchMotor_[b] * f;
                 const float drive = 1 + 4 * st.strain;
                 const float s = std::tanh(m * drive) / std::sqrt(drive) * st.gain;  // (a load drives it harder: rougher, fuller)
-                l += s * std::sqrt(0.5f * (1 - st.pan)), r += s * std::sqrt(0.5f * (1 + st.pan));
+                vl += s * std::sqrt(0.5f * (1 - st.pan)), vr += s * std::sqrt(0.5f * (1 + st.pan));
             }
             st.clickAcc += ws[k].clicksPerSecond * dt;
             if (st.clickAcc >= 1) {  // a pawl tooth: the click rate follows the line, either way
@@ -616,7 +660,7 @@ void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
                 const std::vector<float>& d = sfx_[SFX_HORN];
                 const size_t a = (size_t)st.pos;
                 const float s = (d[a] + (d[a + 1] - d[a]) * (float)(st.pos - (double)a)) * st.env * st.gain * 0.8f;
-                l += s * std::sqrt(0.5f * (1 - st.pan)), r += s * std::sqrt(0.5f * (1 + st.pan));
+                vl += s * std::sqrt(0.5f * (1 - st.pan)), vr += s * std::sqrt(0.5f * (1 + st.pan));
                 if ((st.pos += st.pitch) >= (double)kHornLoopEnd) st.pos -= (double)(kHornLoopEnd - kHornLoopStart);
             }
         }
@@ -636,9 +680,11 @@ void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
             const size_t a = (size_t)v.pos, b = std::min(a + 1, v.end - 1);
             const float s = d[a] + (d[b] - d[a]) * (float)(v.pos - (double)a);
             if (v.what == SFX_UI_CLICK || v.what == SFX_UI_HOVER) ul += s * v.left, ur += s * v.right;  // (menu sounds aren't ducked with the scene)
+            else if (v.what == SFX_HORN || v.what == SFX_WINCH_CLICK || v.what == SFX_DOOR_OPEN || v.what == SFX_DOOR_SHUT || v.what == SFX_STARTER) vl += s * v.left, vr += s * v.right;
             else l += s * v.left, r += s * v.right;
             if ((v.pos += v.rate) >= (double)v.end - 1) v.what = SFX_COUNT;
         }
+        l += vl * sVehicleFx_, r += vr * sVehicleFx_;
         out[2 * i] += l * sceneGain + ul, out[2 * i + 1] += r * sceneGain + ur;
     }
 }
@@ -672,13 +718,14 @@ void Audio::render(float* out, int frames) {
     const float hissSmooth = 1.0f - std::exp(-dt * 100.0f);
     const float hissLowA = 1.0f - std::exp(-2 * (float)M_PI * std::min(1500.0f, 0.10f / dt) * dt);
     const float hissHighA = 1.0f - std::exp(-2 * (float)M_PI * std::min(3200.0f, 0.20f / dt) * dt);
-    const EngineTone voice{vExhaust_, vMuffler_, vLope_, vIntake_, vMech_, vRasp_, vCrackle_, vSeed_, vRumble_, vRoar_};
+    const EngineTone voice{vExhaust_, vMuffler_, vLope_, vIntake_, vMech_, vRasp_, vCrackle_, vSeed_, vRumble_, vRoar_, (uint8_t)std::clamp((int)vKind_, 0, EK_KINDS - 1), vVtec_};
     const EngineInput engineInput{tRpm, tLoad, tBoost, (int)cyl_, (int)induction_, (float)liters_, (float)redline_, (bool)flatPlane_,
                                  (uint8_t)std::clamp((int)recording_, 0, engineSamples::kBanks - 1), voice};
     const auto* localBank = recordings_.bank(engineInput.recording);
     updateRemoteVoices();
     const float smooth = 1.0f - std::exp(-dt * 30.0f);
     const float cabinA = 1 - std::exp(-2 * (float)M_PI * 1100 * dt);
+    const float vehicle = std::isfinite(vehicleVol_) ? std::clamp(vehicleVol_.load(), 0.0f, 1.0f) : 1.0f, vehicleA = 1 - std::exp(-dt / 0.025f);
     for (int i = 0; i < frames; i++) {
         sSlip_ += (tSlip - sSlip_) * smooth * 0.5f;
         sSpeed_ += (tSpeed - sSpeed_) * smooth;
@@ -742,7 +789,9 @@ void Audio::render(float* out, int frames) {
             hissSnd = (hissBp_ - hissBp2_) * hissEnv_ * 1.2f;
         }
 
-        float mix = engine + (squeal + wind) * sLocalGain_ + crunch * 0.9f + thump * 0.8f + glassSnd + popSnd + hissSnd;
+        sVehicle_ += (vehicle - sVehicle_) * vehicleA;
+        if (vehicle == 0 && sVehicle_ < 1e-5f) sVehicle_ = 0;
+        float mix = (engine + (squeal + wind) * sLocalGain_ + crunch * 0.9f + thump * 0.8f + glassSnd + popSnd) * sVehicle_ + hissSnd;
         float nearbyLeft = 0, nearbyRight = 0;
         for (auto& voice : nearby_) {
             if (!voice.id) continue;
@@ -751,8 +800,8 @@ void Audio::render(float* out, int frames) {
             voice.right += (voice.targetRight - voice.right) * smooth;
             if (voice.gain < 1e-6f && voice.targetGain == 0) { voice.id = 0; continue; }
             const float sound = voice.synth.sample(voice.input, dt, recordings_.bank(voice.input.recording)) * voice.gain;
-            nearbyLeft += sound * voice.left;
-            nearbyRight += sound * voice.right;
+            nearbyLeft += sound * voice.left * sVehicle_;
+            nearbyRight += sound * voice.right * sVehicle_;
         }
         const float left = std::tanh((mix + nearbyLeft) * 1.2f);
         const float right = std::tanh((mix + nearbyRight) * 1.2f);

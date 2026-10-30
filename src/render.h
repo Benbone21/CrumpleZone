@@ -6,10 +6,12 @@
 #include <unordered_map>
 #include <vector>
 
+#include "bgwork.h"
 #include "daylight.h"
 #include "frameprof.h"
 #include "gl.h"
 #include "treedraw.h"
+#include "farforest.h"
 #include "visibility.h"
 #include "occlusion.h"
 #include "groundtex.h"
@@ -91,11 +93,16 @@ public:
     // water from the world; beginUpload/pumpUpload put them on the GPU a few ms a frame into spare buffers; adoptWorld swaps them
     // in (with the first stage of the scenery), and stepWorld does one more stage of it per call until it returns true.
     struct Prepared;
-    static std::shared_ptr<Prepared> prepareWorld(const World& world, const ScanCover& cover = ScanCover());  // (cover: what the scans draw, see scanCover())
+    static std::shared_ptr<Prepared> prepareWorld(const World& world, const ScanCover& cover = ScanCover(), const V3* focus = nullptr);  // (cover: what the scans draw, see scanCover(); focus: where the camera will be, else the spawn)
     ScanCover scanCover() const { return scanCover_; }
     void beginUpload(std::shared_ptr<Prepared> p);
     bool pumpUpload(double budgetMs);  // true once everything is uploaded
     void adoptWorld(const World& world);
+    // A procedural window (procstream.h), after pumpUpload: its scenery onto the GPU a piece a frame, apart from what's drawn; true
+    // once it's all there (adoptWorld then swaps it in at no cost). budgetMs: about what to spend a frame.
+    bool stageWorld(double budgetMs);
+    // The scans laid out for a world ahead of its swap (any thread; procworld's worker): into what prepareObjects made.
+    void prepareProps(const World& world, Prepared& p) const;
     bool stepWorld(const World& world);  // true once the scenery is built
     // People on foot this frame (you, your buddies): drawn as simple figures.
     struct Figure {
@@ -174,6 +181,8 @@ public:
         unsigned carRebuilds = 0;      // skins and merged parts built again this frame (the rest drew what they had)
         unsigned carKindTris[6] = {};  // main pass: skin, glass, bound parts, running gear, wheels, parts models
         unsigned modelVertices = 0, shadowModelVertices = 0, modelDraws = 0, shadowModelDraws = 0;  // (of those: the code-made models, boxes and figures)
+        unsigned shadowTerrainTriangles = 0;  // the ground's triangles in both shadow passes (its slopes turned from the sun)
+        unsigned horizonRows = 0;             // rows of the long-shadow map worked out this frame (updateHorizon)
     };
     const GeometryStats& geometryStats() const { return geometryStats_; }
     double grassGpuMs() const { return grassGpuMs_; }  // (CZ_BENCH: the grass pass on the GPU, a few frames late)
@@ -181,7 +190,12 @@ public:
     // Frame timing (frameprof.h): the stage `p` starts now, on the CPU (frameProfile()) and, with gpuTiming, on the GPU
     // (a timestamp query). gpuFrameBegin() at the top of each frame reads back a frame from a few frames ago.
     bool gpuTiming = false;
+    // The trees past their meshes' reach as pictures, and the procedural world's far forest (treedraw.h, farforest.h): off, the
+    // meshes go out to their old reach and the far land is bare (tests and comparisons; also CZ_NO_IMPOSTORS, CZ_NO_FARFOREST).
+    bool treePictures = true, farForestOn = true;
+    int farForestTiles() const { return farForest_.tilesDrawn; }
     bool syncTiming = false;  // (--bench-sync: wait for the GPU at each mark, so the CPU times are each stage's whole cost)
+    bool stageMarks = false;  // (the first frame: each stage is the main thread's loadprof phase, so a hang report names it)
     void passMark(FramePass p);
     void preload(const World& world);  // (after init and settings: loads what the first frame would)
     void gpuFrameBegin();
@@ -199,6 +213,7 @@ private:
         const void* builtTpl = nullptr;  // what the cached meshes were built for
         std::vector<float> snap;     // the watched nodes, in the car's frame, when they were built
         int shattered = -1, debug = -1;
+        uint32_t paintKey = 0;       // the colour and finish it was built in (a repaint rebuilds the parts)
         float lampKey[5] = {-1, -1, -1, -1, -1};
         int builds = 0;              // (tests and the bench: how many times it's been rebuilt)
         GLuint modelsVao = 0, modelsVbo = 0, modelsIdx = 0;  // the merged parts (CarModels), their part numbers
@@ -222,7 +237,9 @@ private:
     };
 
     static const int kBloomLevels = 6;
-    GLuint progLit = 0, progDepth = 0, progLine = 0, progSky = 0, progHud = 0, progFx = 0, progCar = 0;
+    GLuint progLit = 0, progDepth = 0, progLine = 0, progSky = 0, progHud = 0, progFx = 0, progCar = 0, progGlow = 0;
+    static const int kCarShells = 7;        // body shells (bodyshell.cpp: 0 the lattice body, 1..6 sculpted)
+    GLuint progCarShell[kCarShells] = {};   // the car body shader built for each (progCar: the lattice body's)
     GLuint progTerrain = 0;                 // the ground shader in use this frame
     GLuint noiseTex = 0;                    // the cheap ground tiers' noise
     GLuint progTerrainTier[4] = {0, 0, 0, 0};  // per tier (groundTier)
@@ -287,9 +304,54 @@ private:
     // The rest of the map comes from a coarse texture, a texel per 4 cells.
     int terrainWinI_ = 0, terrainWinJ_ = 0, terrainWinW_ = 0, terrainCoarseN_ = 1;
     GLuint terrainCoarseTex = 0;
+    // The big map's regions' ground look (onemap.h groundLookAt: meadow, bare rock from, snow from), a texel per 64 m, blended
+    // across their seams by the texture's filtering; off on every other map (the uniforms' own look).
+    GLuint lookTex_ = 0;
+    bool lookOn_ = false;
+    float lookBox_[4] = {0, 0, 64, 1};
+    void updateLook(const World& world);
     void uploadTerrainCells(const World& world, int i0, int j0, int i1, int j1);  // (cells; what's outside the window is left)
     void uploadTerrainCoarse(const World& world, int i0, int j0, int i1, int j1);
     void streamTerrain(const World& world, const V3& eye);
+    // The ground in the shadow maps (drawScene's shadow passes): the loaded chunks inside a cascade's light box, depth only, their
+    // faces turned from the light (the lit ones culled: no acne on the sunny ground, and what stands on a lee slope is in its shade).
+    void drawTerrainCasters(const M4& lightVP, int cascade);
+    // The land's long shadows, past the shadow maps' few hundred metres: a map round the camera (kHorizonTexels a side, kHorizonTexel
+    // m a texel) holding, per texel, the height below which the key light is behind the land toward it (a march over the coarse
+    // terrain texture, on the GPU). Every lit shader reads it (kCommonFS horizonShadow): the ground, cars, trees, props, grass. Worked
+    // out again when the light turns, the camera moves a step (kHorizonSnap) or the land changes: into the spare texture a slice a
+    // frame, then swapped in (all at once when there is none yet). Off below HIGH shadows.
+    struct Horizon {
+        GLuint tex[2] = {}, fbo[2] = {}, sampler = 0, prog = 0;
+        int live = -1, back = -1, rowsDone = 0;  // the texture in use (-1: none), the one being made and how far it is
+        float x0[2] = {}, z0[2] = {};            // each one's corner (world x, z)
+        V3 sun[2];
+        uint64_t gen[2] = {};
+        float maxH = 0, minH = 0;  // the land's (and backdrop's) highest and lowest point
+        bool on = false;           // this frame's lit shaders read it
+    } horizon_;
+    uint64_t horizonGen_ = 1;  // bumped when the land under the coarse texture changes (a slice rebuild); live = -1 when it's a new land
+    void horizonLandChanged(bool newLand);
+    void updateHorizon(const V3& eye, const V3& keyDir, int shadowQuality);
+    // The streaming's CPU work runs on bg_ (bgwork.h), never in the frame: the next strip of the texture's window
+    // (texJob_: computed there, uploaded and the window stepped onto it once it's done) and the meshes of the chunks
+    // coming into range (chunkJob_: built there, put in their slots a few a frame). streamGen_ changes when the land
+    // does (an edit, a new world): a job begun before that is dropped.
+    struct TexJob;
+    struct ChunkJob;
+    std::shared_ptr<TexJob> texJob_;
+    std::shared_ptr<ChunkJob> chunkJob_;
+    std::vector<char> chunkQueued_;  // per chunk: its mesh is being built (chunkJob_)
+    bool texMoving_ = false;         // the window is on its way to the camera, a step at a time
+    uint64_t streamGen_ = 0;
+    void dropStreamJobs();
+    BgWork bg_{true};
+public:
+    // Waits for the streaming's background work and drops it, and for any other that reads the world (the autopilot's replans,
+    // bgwork.h waitWorldReaders): before the world is replaced.
+    void waitStreaming();
+    // (tests) The streaming's background work is all done and taken in (the window where the camera wants it, no chunk queued).
+    bool streamingSettled() const { return !texJob_ && !chunkJob_ && !texMoving_; }
 public:
     struct Prepared {
         double spacing = 1;
@@ -311,14 +373,56 @@ public:
         int coarseN = 1;
         GLuint ctex = 0;
         std::vector<Vtx> water;
+        std::shared_ptr<FarForestGrid> farForest;  // (the procedural world: the far forest's field, farforest.h)
+        // The procedural world's next window (procstream.h): the buffers it replaces are kept for the one after (the same sizes), so a
+        // slide allocates nothing; and its scenery is made here too (prepareObjects), so the swap frame only uploads.
+        bool keepSpare = false;
+        size_t bytes[4] = {};  // (the sizes of vbo, ibo, cvbo, cibo below)
+        uint64_t idxHash = 0;  // (keepSpare: of lodIdx and coarseIdx)
+        struct PreObjects;
+        std::shared_ptr<PreObjects> objs;
         // The upload: spare buffers filled a slice at a time.
         GLuint vbo = 0, ibo = 0, tex = 0, cvbo = 0, cibo = 0;
         size_t vDone = 0, iDone = 0, cvDone = 0, ciDone = 0;
         int rowsDone = 0;
+        bool coarseLater = false;  // (a procedural window: its coarse texture goes up in slices in stage 3)
+        int coarseRows = 0;
         int stage = 0;
     };
+    // (Any thread, after prepareWorld: the scenery's meshes for `world` as it will be drawn once it has been moved to `asAt`, with
+    // props quality pq and the scans covering `cover`.)
+    static void prepareObjects(const World& world, Prepared& p, const void* asAt, int pq, const ScanCover& cover);
+    int objectsQuality() const { return propsOk ? std::min(std::max(settings.props, 0), 3) : 0; }
+
 private:
     std::shared_ptr<Prepared> pending_;
+    // The buffers and textures a procedural window's swap left (Prepared::keepSpare), for the next one to fill.
+    struct Spare {
+        GLuint vbo = 0, ibo = 0, cvbo = 0, cibo = 0, tex = 0, ctex = 0;
+        size_t vBytes = 0, iBytes = 0, cvBytes = 0, ciBytes = 0;
+        int texW = 0, coarseN = 0;
+        uint64_t idxHash = 0;  // what its index buffers hold (Prepared::idxHash; 0: nothing yet)
+    } spare_;
+    void dropSpare();
+    void ensureSpare();
+    // The shaders' patterns (kCommonFS uNoiseOff): on the procedural world they're anchored to the world at a point, and offset by
+    // where the window's origin is from it, so they don't move as the window slides. A new anchor (one pattern change) every 12 km.
+    bool noiseAnchored_ = false;
+    uint64_t noiseSeed_ = 0;
+    int64_t noiseAnchor_[2] = {0, 0};
+    float noiseOff_[2] = {0, 0};
+    void anchorNoise(const World& world);
+    uint64_t terrainIdxHash_ = 0;
+    size_t terrainBytes_[4] = {};  // the sizes of terrainVbo, terrainIbo, coarseVbo, coarseIbo
+    GLuint unpackPbo_ = 0;         // (a procedural window's terrain texels go up through this)
+    std::shared_ptr<Prepared::PreObjects> preObjs_;  // (adoptWorld: the scenery made on the worker, for the object stages)
+    struct Staged {  // (stageWorld: the next window's scenery, on the GPU apart from what's drawn; after a swap, the last one's, to reuse)
+        int step = 0;
+        bool ready = false;
+        size_t done = 0;
+        GLuint waterVao = 0, waterVbo = 0, boxVao = 0, boxVbo = 0, bushVao = 0, bushVbo = 0, sceneryVao = 0, sceneryVbo = 0;
+        TreeDraw trees, bushes;
+    } staged_;
     int objStage_ = 0, stagePq_ = 0;
     void updateObjectsStage(const World& world, int stage);
     static void prepareTerrain(const World& world, Prepared& p);
@@ -360,15 +464,19 @@ private:
     float farZ_ = 6000;  // this frame's far plane (a draw distance brings it in)
     int gpuMarkFrame_ = 0;
     void uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);
+    static void binBatches(std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);  // (into 64 m bins; any thread)
     void drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow);
     void drawBushes(const M4& vp, const V3& eye, bool shadow, VegStats::Pass& stats);  // (the reed and log batches within sight: small things, not drawn far off)
     void drawTerrain(const M4& vp, const View& view, const std::function<void(GLuint, bool)>& setup = nullptr, GLuint noProcProg = 0, GLuint procProg = 0, GLuint farProg = 0);
     GLuint boxVao = 0, boxVbo = 0;
     int boxVertexCount = 0;
     TreeDraw trees_, bushes_;       // the forest and the bushes, instanced (treedraw.h)
+    FarForest farForest_;           // (the procedural world: trees past the window, farforest.h)
+    ImpostorAtlas impAtlas_;        // (the trees' pictures past their meshes: trees_ and the staged window's share it)
     // How far the vegetation's detail reaches (its LOD distances and reaches), by the scenery quality.
     double vegDetail() const { static const double k[4] = {0.6, 0.7, 1.0, 1.3}; return k[std::min(std::max(settings.props, 0), 3)]; }
     GLuint progTree = 0, progTreeDepth = 0;
+    GLuint progTreePre = 0, progFarForest = 0, progImpostor = 0, progImpostorDepth = 0, progImpCapture = 0;  // (trees as pictures past their meshes: treedraw.h)
     int treeVertexCount = 0;
     ScanCover scanCover_;           // what the scanned props draw instead of the code-made meshes
     std::vector<float> treeFade_;   // per tree (World::trees): how much of it the camera hides now (treefade.h)
@@ -405,11 +513,12 @@ public:
 private:
     std::vector<CarLamps> carLampState;  // per car this frame (prepareCars)
     // The headlamps lit as spot lights this frame (the nearest cars'), for the shaders.
-    static const int kMaxLamps = 16;
+    static const int kMaxLamps = 20;
     int lampCount = 0;
     float lampPos[kMaxLamps * 4], lampDir[kMaxLamps * 4], lampUp[kMaxLamps * 4];
     std::vector<std::pair<const void*, GLuint>> templateVbos;
-    std::vector<Vtx> partVerts, lineVerts, fxVerts;
+    std::vector<Vtx> partVerts, lineVerts, fxVerts, glowVerts;
+    void buildLampGlow(const Sim& sim, const V3& eye, std::vector<Vtx>& out);  // the lamps' glow sprites (lights.h)
     std::vector<float> hudVerts;
     struct IconDraw {
         std::string key;
@@ -438,7 +547,7 @@ private:
     int skinLod(const CarSlot& slot) const;  // 0 the skin, 1-2 its far copies (built on demand)
     void buildChains();
     void buildFont();
-    static void buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx);
+    static void buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx, FarForestGrid* farForest = nullptr);
     void ensureShadows(int size);
     void ensureGround(int quality);
     int groundTier(int gq) const;
@@ -446,7 +555,9 @@ private:
     void ensureTargets(int w, int h, int samples);
     void postProcess(const View& view, const M4& proj);
     void prepareCars(const Sim& sim, DebugView debug, const V3& eye);
-    void drawCarBodies(const Sim& sim, GLuint prog, bool glassPass);
+    // prog: progDepth (shadows), or progCar for the main and glass passes: each car then draws with its shell's
+    // program, which `use` makes current (and lights) when it changes.
+    void drawCarBodies(const Sim& sim, GLuint prog, bool glassPass, const std::function<void(GLuint)>& use = nullptr);
     void drawWheels(const Sim& sim, GLuint prog);
     void drawCarParts(const Sim& sim, GLuint prog);
     void prepareCarModels();

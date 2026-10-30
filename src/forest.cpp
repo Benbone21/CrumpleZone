@@ -1,4 +1,6 @@
 #include "forest.h"
+#include "detmath.h"
+#include "detsort.h"
 
 #include "biome.h"
 #include "plants.h"
@@ -88,13 +90,13 @@ Profile measure(const mk::Mesh& m) {
         double r = pr.r.empty() ? 0.2 : pr.r.back();
         if (!cut.empty()) {
             // (the middle: of the points nearest the axis line, so a branch off to one side doesn't drag it)
-            std::sort(cut.begin(), cut.end(), [](const V3& a, const V3& b) { return a.x * a.x + a.z * a.z < b.x * b.x + b.z * b.z; });
+            dm::sort(cut.begin(), cut.end(), [](const V3& a, const V3& b) { return a.x * a.x + a.z * a.z < b.x * b.x + b.z * b.z; });  // (ties: libstdc++'s order everywhere)
             const size_t n = std::max<size_t>(3, cut.size() * 2 / 3);
             V3 c;
             for (size_t k = 0; k < std::min(n, cut.size()); k++) c = c + cut[k];
             c = c / (double)std::min(n, cut.size());
             std::vector<double> d;
-            for (const V3& q : cut) d.push_back(std::hypot(q.x - c.x, q.z - c.z));
+            for (const V3& q : cut) d.push_back(dm::hypot(q.x - c.x, q.z - c.z));
             std::nth_element(d.begin(), d.begin() + d.size() / 2, d.end());
             r = d[d.size() / 2];
         }
@@ -187,13 +189,22 @@ mk::Mesh simplify(const mk::Mesh& m, double cell) {
 
 constexpr double kFarCell = 0.9;  // (model units: a tree is 10 tall)
 
+// The procedural world's windows (procworld.h): a tree's or a bush's look from where it is in the world, not from where it falls in
+// this window's list, so the next window draws it the same.
+int worldSeed(const World& w, double x, double z) {
+    const uint64_t a = (uint64_t)(int64_t)std::llround((x + (double)w.proc.ox) * 8), b = (uint64_t)(int64_t)std::llround((z + (double)w.proc.oz) * 8);
+    uint64_t h = a * 0x9E3779B97F4A7C15ull ^ (b + 0x632BE59BD9B4E019ull) * 0xC2B2AE3D27D4EB4Full;
+    h ^= h >> 31, h *= 0x7FB5D329728EA185ull, h ^= h >> 27;
+    return 1 + (int)((h >> 20) & 0x3FFFFFFF);
+}
+
 void build(const World& w, bool skipPines, bool skipSnags, Set& out) {
     out = Set();
     for (int l = 0; l < kLods; l++) out.lodAt[l] = (float)lodReach(l);
     std::map<std::tuple<int, int, int, int>, int> index;
     for (size_t i = 0; i < w.trees.size(); i++) {
         const Tree& t = w.trees[i];
-        const int seed = (int)i + 1;  // (as the baked forest had it: a tree keeps its look)
+        const int seed = w.map == MAP_PROCEDURAL ? worldSeed(w, t.base.x, t.base.z) : (int)i + 1;  // (as the baked forest had it: a tree keeps its look)
         if (t.kind < 0 || t.kind > 2 || (t.kind == 0 && skipPines) || (t.kind == 2 && skipSnags)) continue;
         Look lk;
         lk.kind = t.kind;
@@ -231,6 +242,7 @@ void buildBushes(const World& w, Set& out) {
     for (size_t i = 0; i < w.bushes.size(); i++) {
         const Bush& b = w.bushes[i];
         seed++;  // (as the baked bushes had it: a bush keeps its look)
+        if (w.map == MAP_PROCEDURAL) seed = worldSeed(w, b.p.x, b.p.z);
         const int kind = plantKindOf(b.kind), sd = 1 + seed % 6, dry = seed % 7 == 0 ? 1 : 0;
         const auto key = std::make_tuple(kind, sd, dry);
         auto it = index.find(key);
@@ -254,6 +266,7 @@ void buildBushes(const World& w, Set& out) {
         in.warm = 0;
         // Out to where it's a few pixels across: further for a big one.
         in.reach = (float)(100 + 80 * b.r);
+        out.maxReach = std::max(out.maxReach, in.reach);
         in.shape = it->second, in.tree = (int)i;
         out.inst.push_back(in);
     }
@@ -316,14 +329,18 @@ void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& b
     }
     // (nearest cells first, and the near LODs drawn first: what's in front fills the depth first, so less is shaded behind it)
     order_.clear();
+    // (Nothing past where the pictures take over is a mesh: those cells aren't looked through at all.)
+    double cut = v.maxDist > 0 ? v.maxDist : 1e30;
+    if (v.impostorFrom > 0) cut = std::min(cut, v.impostorFrom * v.detail);
+    if (s.maxReach > 0) cut = std::min(cut, (double)s.maxReach * v.detail * v.reach);  // (the bushes: past the biggest one's reach, none)
     for (const Block& bl : blocks_) {
         RenderBounds bb;
         bb.lo = bl.lo, bb.hi = bl.hi;
-        if ((v.maxDist > 0 && bb.distance(v.eye) > v.maxDist) || !bb.visible(v.vp)) continue;  // (then so is every cell in it)
+        if (bb.distance(v.eye) > cut || !bb.visible(v.vp)) continue;  // (then so is every cell in it)
         for (int k : bl.cells) {
             RenderBounds b;
             b.lo = cells_[k].lo, b.hi = cells_[k].hi;
-            if (v.maxDist > 0 && b.distance(v.eye) > v.maxDist) continue;
+            if (b.distance(v.eye) > cut) continue;
             if (!b.visible(v.vp)) continue;
             // (A big map: the horizon test only from 200 to 600 m. Nearer, a cell is next to never behind a hill; further, it holds
             // few trees after the thinning. Either way the test costs more than drawing what it would save.)
@@ -336,7 +353,7 @@ void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& b
     for (const auto& ok : order_)
         for (int i : cells_[ok.second].inst) {
             const Inst& in = s.inst[i];
-            const double d = std::hypot(in.x - v.eye.x, in.z - v.eye.z);
+            const double d = dm::hypot(in.x - v.eye.x, in.z - v.eye.z);
             float fade = 1;
             if (v.maxDist > 0) {
                 if (d >= v.maxDist) continue;
@@ -345,6 +362,11 @@ void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& b
                 // reads as a stand; the instance's own hash picks which stay, so the same ones do as you move.)
                 const uint32_t hsh = (uint32_t)i * 2654435761u;
                 if ((hsh >> 8) * (1.0 / 16777216.0) > 1 - 0.75 * smoothstep(0.33 * v.maxDist, v.maxDist, d)) continue;
+            }
+            if (v.impostorFrom > 0) {
+                const double F = v.impostorFrom * v.detail;
+                if (d >= F) continue;
+                if (!v.shadow) fade = std::min(fade, (float)std::min(1.0, (F - d) / (v.impostorBand * v.detail)));
             }
             if (in.reach > 0) {
                 const double R = in.reach * v.detail * v.reach;
@@ -368,6 +390,26 @@ void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& b
             while (lod > 0 && sh.lod[lod].v.empty()) lod--;
             buckets[in.shape * kLods + lod].push_back({i, fade});
         }
+}
+
+void Picker::visibleCells(const View& v, double dmin, double dmax, std::vector<int>& out) const {
+    out.clear();
+    for (const Block& bl : blocks_) {
+        RenderBounds bb;
+        bb.lo = bl.lo, bb.hi = bl.hi;
+        if (bb.distance(v.eye) >= dmax || !bb.visible(v.vp)) continue;
+        for (int k : bl.cells) {
+            RenderBounds b;
+            b.lo = cells_[k].lo, b.hi = cells_[k].hi;
+            const double dist = b.distance(v.eye);
+            if (dist >= dmax || !b.visible(v.vp)) continue;
+            // (all of it nearer than dmin: the farthest corner)
+            const double fx = std::max(std::fabs(b.lo.x - v.eye.x), std::fabs(b.hi.x - v.eye.x)), fz = std::max(std::fabs(b.lo.z - v.eye.z), std::fabs(b.hi.z - v.eye.z));
+            if (dm::hypot(fx, fz) < dmin) continue;
+            if (v.hidden && dist > 200 && dist < 600 && v.hidden->occluded(b)) continue;
+            out.push_back(k);
+        }
+    }
 }
 
 void logMesh(const World& w, const Log& g, uint32_t seed, mk::Mesh& out) {
@@ -409,11 +451,11 @@ void logMesh(const World& w, const Log& g, uint32_t seed, mk::Mesh& out) {
     std::vector<V3> pos((segs + 1) * sides), nrm((segs + 1) * sides);
     for (int i = 0; i <= segs; i++) {
         const double t = (double)i / segs;
-        const double ri = r * (0.95 - 0.07 * t) * (0.97 + 0.03 * std::sin(t * 9.0 + h01(1) * 6.0));
-        const V3 c = g.a + ax * (L * t) + vv * (0.04 * r * std::sin(t * 3.1 + h01(2) * 6.0));  // (a little bent)
+        const double ri = r * (0.95 - 0.07 * t) * (0.97 + 0.03 * dm::sin(t * 9.0 + h01(1) * 6.0));
+        const V3 c = g.a + ax * (L * t) + vv * (0.04 * r * dm::sin(t * 3.1 + h01(2) * 6.0));  // (a little bent)
         for (int j = 0; j < sides; j++) {
             const double a = 2 * M_PI * j / sides + h01(3);
-            const V3 d = u * std::cos(a) + vv * std::sin(a);
+            const V3 d = u * dm::cos(a) + vv * dm::sin(a);
             const double ridge = (j & 1) ? 1.0 : 0.93 - 0.04 * h01(i * 17 + j);
             pos[i * sides + j] = c + d * (ri * ridge);
             nrm[i * sides + j] = d;
@@ -469,7 +511,7 @@ void logMesh(const World& w, const Log& g, uint32_t seed, mk::Mesh& out) {
         const double t = 0.2 + 0.6 * h01(41 + s), a = (h01(44 + s) < 0.5 ? -1 : 1) * (0.55 + 0.6 * h01(45 + s));  // (round from straight up, to one side)
         V3 up = V3(0, 1, 0) - ax * ax.y;
         up = len(up) > 1e-6 ? norm(up) : vv;
-        const V3 side = cross(ax, up), dir = norm(up * std::cos(a) + side * std::sin(a) + ax * (0.35 * (h01(47 + s) - 0.3)));
+        const V3 side = cross(ax, up), dir = norm(up * dm::cos(a) + side * dm::sin(a) + ax * (0.35 * (h01(47 + s) - 0.3)));
         const V3 o = g.a + ax * (L * t) + dir * (r * 0.6);
         const double sl = r * (0.8 + 1.1 * h01(50 + s)), sr = r * (0.24 + 0.12 * h01(53 + s));
         const V3 tip = o + dir * sl;
@@ -477,7 +519,7 @@ void logMesh(const World& w, const Log& g, uint32_t seed, mk::Mesh& out) {
         const int n = 5;
         for (int j = 0; j < n; j++) {
             const double a0 = 2 * M_PI * j / n, a1 = 2 * M_PI * (j + 1) / n;
-            const V3 d0 = su * std::cos(a0) + sv * std::sin(a0), d1 = su * std::cos(a1) + sv * std::sin(a1);
+            const V3 d0 = su * dm::cos(a0) + sv * dm::sin(a0), d1 = su * dm::cos(a1) + sv * dm::sin(a1);
             const V3 q0 = o + d0 * sr, q1 = o + d1 * sr;
             const V3 t0 = tip + d0 * (sr * 0.6) + dir * (sr * (h01(60 + s * 7 + j) - 0.5)), t1 = tip + d1 * (sr * 0.6) + dir * (sr * (h01(60 + s * 7 + (j + 1) % n) - 0.5));
             const V3 col = cover(barkCol(d0, 70 + s * 7 + j), o, d0);

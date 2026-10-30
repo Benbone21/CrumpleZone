@@ -121,6 +121,7 @@ void carLamps(const Car& car, const VisualTemplate& t, int beam, CarLamps& out) 
             out.headPos[k] = p + toWorld(L.rest[k] - car.restLocal[n]);
             out.head[k] = ok;
         } else {
+            out.tailPos[k - 2] = p + toWorld(L.rest[k] - car.restLocal[n]);
             out.tail[k - 2] = ok;
         }
     }

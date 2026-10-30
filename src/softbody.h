@@ -13,6 +13,7 @@
 
 #include "autopilot.h"
 #include "mathx.h"
+#include "paint.h"
 #include "rope.h"
 #include "tires.h"
 #include "vehicles.h"
@@ -40,6 +41,33 @@ enum BeamType : uint8_t {
     BEAM_PANEL,    // outer sheet-metal panel (hood, door, bumper...): thin, dents easily
     BEAM_BUMPSTOP, // jounce bumper from the frame onto a live axle's tube: pushes only once the axle rises onto it
     BEAM_TYPE_COUNT
+};
+
+// The shock absorber in every coil-over (and leaf spring's shock), one valving for all of them.
+// `c` is the beam's damping rate, set per vehicle (and per garage suspension kit) from its
+// damping ratio; this is the shape of the curve around it, as a real twin-tube or monotube shock:
+//   - Rebound (extending) is about 2.5-3x as firm as bump (compressing): the bump stroke lets the
+//     wheel ride up over a hit, the rebound stroke stops the body springing back up after it.
+//   - Digressive: firm at low shaft speeds (body roll, pitch and heave, ~0.05-0.3 m/s), then the
+//     valves open and it climbs more slowly on sharp hits, so rough ground doesn't turn harsh.
+//     (The old curve blew off in bump at 0.25 m/s to 30%: a landing or a pothole met almost no
+//     bump damping, ran into the stops, and the rebound threw the body back up.)
+// Rubber bump stops (and live axles' jounce bumpers) give back only part of what squashes them
+// (rubber's hysteresis): a hard landing doesn't bounce off them.
+struct Damper {
+    static constexpr double kRebound = 1.6, kReboundKnee = 0.35, kReboundHigh = 0.85;  // x c up to the knee (m/s), then x kRebound*kReboundHigh
+    static constexpr double kBump = 0.65, kBumpKnee = 0.30, kBumpHigh = 0.70;
+    static constexpr double kStopReturn = 0.5;  // share of a bump stop's push lost while it unloads
+    static constexpr double kMaxSlope = kRebound;  // steepest dF/dv over c (the step's stability check)
+    // Damper force along the beam (+ pulls the ends together) at closing speed vrel (+ extending).
+    static double force(double c, double vrel) {
+        if (vrel > 0) return c * kRebound * (vrel < kReboundKnee ? vrel : kReboundKnee + kReboundHigh * (vrel - kReboundKnee));
+        const double sv = -vrel;
+        return -c * kBump * (sv < kBumpKnee ? sv : kBumpKnee + kBumpHigh * (sv - kBumpKnee));
+    }
+    // A rubber stop's push Fs (< 0) while it's squashed (vrel < 0) or let off (vrel > 0); eased in
+    // over 5 cm/s so a stop that's resting doesn't chatter.
+    static double stop(double Fs, double vrel) { return vrel > 0 ? Fs * (1 - kStopReturn * std::min(1.0, vrel / 0.05)) : Fs; }
 };
 
 struct Beam {
@@ -381,7 +409,15 @@ public:
     std::vector<double> aeroShare;  // per body node: its share of the downforce (empty = none)
     double aeroSpeed = 0;           // airspeed along the car (m/s), as the aero last saw it
 
-    V3 color;
+    V3 color;      // what the body shader paints (the paint's body colour, else the factory's)
+    V3 baseColor;  // the factory's (the car's own livery or the palette's)
+    bool paintKept = false;  // taken over from someone: it keeps the paint it came in (not my garage's)
+    CarPaint paint;   // the owner's: body, accent, finish (paint.h); stays through rebuilds
+    void setPaint(const CarPaint& p) {
+        if (!paint.bodySet) baseColor = color;
+        paint = p;
+        color = p.bodySet ? V3(p.body[0] / 255.0, p.body[1] / 255.0, p.body[2] / 255.0) : baseColor;
+    }
     V3 spawnPos;
     double spawnYaw = 0;
 
@@ -422,6 +458,15 @@ public:
     bool hydrolocked = false;   // sucked water into the intake (dead until repaired)
     double floodedHealth = -1;  // engineHealth before the water got in (-1: unknown): what a proper repair of the flooded engine gives back
     void clearHydrolock();      // the water's out, new plugs: it runs again, as healthy as before the flood (unknown: 85%); a wrecked one stays dead
+    // The battery (battery.h): charge 0..1. The engine is off (engineOff) from when you leave the vehicle until the starter
+    // turns it over (on getting in), which a weak battery does slowly and a flat one not at all. Lights, the winch
+    // and cranking draw it down with the engine off; running, the alternator fills it. A jump pack or jumper cables
+    // from a running vehicle give it what it needs to start.
+    double battery = 1;
+    bool engineOff = false;     // key off: the engine isn't turning (unlike engineDead, nothing's broken)
+    double crank = 0;           // how far the starter has got turning it over (0..1)
+    bool cranking = false;      // the starter is being worked right now (sounds, the dash)
+    double soak = 0;            // s the battery has spent under water
     // Trail setup.
     double tirePsi = 32;        // tire pressure (starts at the spec's; air down for rock)
     // The air around it (C): the tires cool toward it. Sim::updateTrail sets it from the
@@ -529,6 +574,8 @@ public:
     // it; here it only pushes back). netId is the same on every machine.
     bool remote = false;
     uint32_t netId = 0;
+    // A career world's car (careersession.h): its profile vehicle (0 and up), the world's left vehicle k as -2 - k, or -1 (none).
+    int careerSlot = -1;
     bool occupied = false;  // someone's in the driver's seat (mine: the game says; a remote one: its states)
     bool blowoutsOn = false;  // speed-rating blowouts: off for now (the owner's call, 2026-10-22); blowout/* tests turn them on
     uint64_t blowSeed = 1;  // seeds its tires' blowout dice (with the wheel's index): the same seed, the same blowouts
@@ -542,6 +589,8 @@ public:
     // Handed back, it's eased onto its states: shoveP / shoveV are added to where they put it
     // until they catch up (the network playback calls settleShove).
     double heldHere = 0;     // s left on our physics
+    double heldFor = 0;      // s on it since it was taken on
+    static constexpr double kMaxHold = 0.6;  // s: the most, at a stretch
     bool handBack = false;   // just let go: the playback works out the ease from here
     V3 shoveV, shoveP;
     V3 shoveNetVel;
@@ -598,6 +647,14 @@ public:
     bool sleptPark = false;  // the parking brake when it fell asleep
     double sleptControls[4] = {};  // throttle, brake, handbrake and steer when it fell asleep
     V3 bbMin, bbMax;
+    // Bits of it left lying far off (a bumper torn off at the wall, the car driven away; a shard of
+    // body flung clear): per node, 1 = more than kStrayReach outside the box of the structure still
+    // holding together, and then left out of bbMin/bbMax and the contact grids. Counted in it, a bumper
+    // a kilometre back stretched the box over the map: every parked car and prop paired with it and
+    // woke, and the pole and grid queries swept the whole box, frame after frame (updateBounds).
+    static constexpr double kStrayReach = 3.0;
+    std::vector<uint8_t> stray;
+    int strays = 0;
     double impactEnergy = 0;  // joules absorbed by deformation since last read
     double damage = 0;        // 0..1
     int brokenBeams = 0;
@@ -762,6 +819,19 @@ public:
 
     // Winch lines and tow straps (recovery.cpp).
     std::vector<Rope> ropes;
+    // Jumper cables (battery.h): clamped to two vehicles' batteries (indices into cars), or, with `handCable`, clamped to one and
+    // the other end in your hand. `owner`: -1 made here, else the player (net id) who clamped them, as told (repairsync.h).
+    struct JumperCable {
+        int a = -1, b = -1;
+        int owner = -1;
+        double heard = 0;
+    };
+    std::vector<JumperCable> cables;
+    struct HandCable {
+        int car = -1;  // the first clamp is on this vehicle's battery (-1: nothing in your hands)
+        V3 hand;       // where the free end is held (set each frame by the game)
+        bool on() const { return car >= 0; }
+    } handCable;
     bool realRecovery = true;          // damage stays until a repair station fixes it
     bool steeringAssist = true;        // limit steering angle at high speeds (false = simulation mode)
     std::vector<std::string> events;   // things the HUD should announce (it clears them)
@@ -835,18 +905,34 @@ public:
     // in the Civic: what the tests expect). The game sets listedVehicles().
     std::vector<int> lineup;
     void setupEmpty();  // just the world (for tests)
+    // A new world is going in (a map, a level, the editor, the menu's camp): everything the last one left lying about goes, so
+    // nothing of it carries over and the vehicle cap counts only this world's. Every car but `keep` (-1: all of them; with
+    // keepRemotes, other players' too: a session's are its own), loose wheels, dropped parts, lines, cables and set stakes.
+    // You are back in your seat. setup() does it all (and puts the new world's lineup out).
+    void clearWorldLeftovers(int keep, bool keepRemotes = false);
     // Runs every AI driver (and the player's autopilot) for one frame.
     void updateAI(double dt);
     // Advances the simulation by realDt * timeScale; returns substeps taken.
-    int advance(double realDt, int maxSubsteps);
+    // Runs whole physics steps for realDt (and what's left over from before), at most maxSubsteps.
+    // Capped, what's still owed is let go (the game slows rather than spiral), all but keepOwed s
+    // of it: multiplayer keeps up to that much, to run in the next frames (frameprof.h simNetSteps).
+    int advance(double realDt, int maxSubsteps, double keepOwed = 0);
+    double owed() const { return accum; }  // real time not yet run (s): under a step, or what advance kept
     void substep();
     void drive(bool up, bool down, bool left, bool right, bool handbrake, double dt);
     void pilotStep(int car, double dt);  // one frame of a car's autopilot
     void respawnPlayer();
     void recoverPlayer();   // rebuilt like new where it stands (arcade)
     void rightPlayer();     // put back on its wheels where it is, damage and all
+    // How far (level) the car, as it stands, must be moved to have no tree trunk or pole inside its
+    // outline and a way out, ahead or back, free of trunks and solids too tall to roll over: the
+    // nearest such spot, at most 12 m away (zero if it's fine where it is). With `turn`, it may also
+    // be turned up to 30 degrees (left positive, the game's yaw) to get one. R and T set a car down
+    // where it was, and after a hard hit on a tree that's around the trunk, maybe with another behind.
+    V3 poleFreeShift(const Car& c, double* turn = nullptr) const;
     void towPlayerHome();   // carried back to its spawn point, damage and all
     void teleportPlayer(double x, double z, double yaw);  // set down upright at x, z facing yaw (the dev menu), damage and all
+    void teleportCar(int car, double x, double z, double yaw);  // ...any of my vehicles (the dev free cam sets carried ones down with it)
     // Replaces the player's car with another vehicle type, in place.
     void swapPlayerVehicle(const VehicleSpec& vs);
     // Adds a parked vehicle a few meters ahead of the player; returns false when full.

@@ -4,8 +4,10 @@
 #include "thread_cache.h"
 // Multiplayer session: see net.h.
 #include "net.h"
+#include "procworld.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cerrno>
 #include <cmath>
@@ -13,71 +15,16 @@
 #include <cstring>
 
 #include "mods.h"
+#include "nettunnel.h"
+#include "rendezvous.h"
+#include "realterrain.h"
+#include "world.h"
 
-// ---- Sockets: POSIX here, Winsock on Windows --------------------------------------
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#if !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600
-#undef _WIN32_WINNT
-#define _WIN32_WINNT 0x0600  // (Vista and later: the adapters' prefix lengths)
-#endif
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <iphlpapi.h>
-typedef int socklen_t;
-#ifndef MSG_NOSIGNAL
-#define MSG_NOSIGNAL 0
-#endif
-static void closeSock(int fd) { closesocket((SOCKET)fd); }
-static bool wouldBlock() {
-    const int e = WSAGetLastError();
-    return e == WSAEWOULDBLOCK || e == WSAEINPROGRESS;
-}
-static bool addrInUse() { return WSAGetLastError() == WSAEADDRINUSE; }
-static void nonBlocking(int fd) {
-    u_long one = 1;
-    ioctlsocket((SOCKET)fd, FIONBIO, &one);
-}
-static int pollFds(pollfd* p, int n, int ms) { return WSAPoll(p, (ULONG)n, ms); }
-static void netInit() {
-    static bool done = false;
-    if (done) return;
-    WSADATA d;
-    WSAStartup(MAKEWORD(2, 2), &d);
-    done = true;
-}
-static int newSocket(int type) { return (int)socket(AF_INET, type, 0); }
-#else
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <ifaddrs.h>
-#include <net/if.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#ifndef MSG_NOSIGNAL
-#define MSG_NOSIGNAL 0  // macOS uses the per-socket SO_NOSIGPIPE option instead.
-#endif
-static void closeSock(int fd) { ::close(fd); }
-static bool addrInUse() { return errno == EADDRINUSE; }
-static bool wouldBlock() { return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS; }
-static void nonBlocking(int fd) {
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
-#ifdef SO_NOSIGPIPE
-    // A disconnected peer must return an error, including in tools without main's signal handler.
-    const int one = 1;
-    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
-#endif
-}
-static int pollFds(pollfd* p, int n, int ms) { return poll(p, (nfds_t)n, ms); }
-static void netInit() {}
-static int newSocket(int type) { return socket(AF_INET, type, 0); }
-#endif
+#include "netsock.h"
+
+using net::clockNow;
+using net::randomBytes;
+using net::sameBytes;
 
 namespace {
 
@@ -86,8 +33,8 @@ namespace {
 // Datagrams: u16 magic, u8 type, u8 player, u32 netId, u32 seq, u8 frag, u8 frags, payload.
 
 enum MsgType : uint8_t {
-    MSG_HELLO = 1,    // client -> host: version, name
-    MSG_WELCOME,      // host -> client: your id, the map
+    MSG_HELLO = 1,    // client -> host: version, name, build (8)
+    MSG_WELCOME,      // host -> client: your id, the map, (8) the host's build
     MSG_REJECT,       // host -> client: why not
     MSG_PLAYER,       // id, name: someone is in the session
     MSG_LEFT,         // id
@@ -108,8 +55,9 @@ enum MsgType : uint8_t {
     MSG_TAKE,         // taker -> host: may I have it; host -> its owner: they ask
     MSG_GIVE,         // owner -> host: it's theirs now; host -> everyone: it changed hands
     MSG_REFUSE,       // owner -> host -> taker: no (+ str why)
+    MSG_SECTIONS,     // host -> client, in the welcome: u8 index, u8 count, u8 SectionType, u16 part, u16 parts, bytes: the park's edited sections (.czs text)
 };
-// (WELCOME: u8 id, u8 map, u64 the guest's datagram secret.)
+// (WELCOME: u8 id, u8 map, u64 the guest's datagram secret, str the host's build.)
 enum DgramType : uint8_t { DG_SNAP = 1, DG_HELLO = 2, DG_ACK = 3 };  // (an ack: u32 netId, u32 seq, ...: states we have, to tell the next against)
 constexpr uint16_t kMagic = 0xC27A;
 // ... and the u64 secret of whoever the datagram is for (told in the welcome): anyone else's is dropped.
@@ -126,6 +74,11 @@ struct Writer {
     template <class T> void put(T v) {
         const uint8_t* p = reinterpret_cast<const uint8_t*>(&v);
         b.insert(b.end(), p, p + sizeof(T));
+    }
+    void paint(const CarPaint& p) {
+        uint8_t b[kPaintWire];
+        paintToWire(p, b);
+        for (uint8_t v : b) put<uint8_t>(v);
     }
     void str(const std::string& s) {
         put<uint8_t>((uint8_t)std::min<size_t>(s.size(), 255));
@@ -157,6 +110,13 @@ struct Reader {
         at += len;
         return s;
     }
+    // CarPaint (paint.h) if it's there: an older peer's message ends before it (factory colours).
+    bool paint(CarPaint& out) {
+        if (at + kPaintWire > n) return false;
+        uint8_t b[kPaintWire];
+        for (int k = 0; k < kPaintWire; k++) b[k] = get<uint8_t>();
+        return paintFromWire(b, out);
+    }
     V3 v3() {
         float x = get<float>(), y = get<float>(), z = get<float>();
         return V3(x, y, z);
@@ -168,42 +128,9 @@ struct Reader {
 bool okNum(double v, double lim) { return std::isfinite(v) && std::fabs(v) <= lim; }
 bool okPos(const V3& p) { return okNum(p.x, kPosLimit) && okNum(p.y, kPosLimit) && okNum(p.z, kPosLimit); }
 
-double clockNow() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
-
-void randomBytes(uint8_t* out, size_t n) {
-    size_t got = 0;
-#ifdef _WIN32
-    while (got < n) {
-        unsigned int v = 0;
-        if (rand_s(&v) != 0) break;
-        for (int k = 0; k < 4 && got < n; k++) out[got++] = (uint8_t)(v >> (8 * k));
-    }
-#else
-    if (FILE* f = std::fopen("/dev/urandom", "rb")) {
-        got = std::fread(out, 1, n, f);
-        std::fclose(f);
-    }
-#endif
-    for (uint64_t mix = (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count(); got < n; got++, mix = mix * 6364136223846793005ull + 1442695040888963407ull)
-        out[got] = (uint8_t)(mix >> 33);  // (no system generator: better than nothing)
-}
-
-bool sameBytes(const uint8_t* a, const uint8_t* b, size_t n) {  // (in constant time)
-    uint8_t d = 0;
-    for (size_t i = 0; i < n; i++) d |= a[i] ^ b[i];
-    return d == 0;
-}
-
-sockaddr_in udpAddress(uint32_t ip, uint16_t port) {
-    sockaddr_in a{};
-    a.sin_family = AF_INET;
-    a.sin_addr.s_addr = htonl(ip);
-    a.sin_port = htons(port);
-    return a;
-}
 
 // Race chatter only the host may say: a guest sending these is lying about who's in charge.
-bool hostOnlyChatter(const std::string& t) { return t.rfind("job", 0) == 0 || t.rfind("restart", 0) == 0; }
+bool hostOnlyChatter(const std::string& t) { return t.rfind("job", 0) == 0 || t.rfind("restart", 0) == 0 || t.rfind("procshift", 0) == 0; }
 
 std::vector<uint8_t> frame(MsgType t, const Writer& w) {
     std::vector<uint8_t> m;
@@ -282,128 +209,7 @@ void eraseCar(Sim& sim, int i) {
 
 }  // namespace
 
-// ---- Text and proofs from the network -----------------------------------------------
-
 namespace net {
-
-int parsePort(const std::string& s, int minPort) {
-    if (s.empty() || s.size() > 5) return -1;
-    int v = 0;
-    for (char ch : s) {
-        if (ch < '0' || ch > '9') return -1;
-        v = v * 10 + (ch - '0');
-    }
-    return v >= std::max(minPort, 1) && v <= kMaxPort ? v : -1;
-}
-
-bool parseAddress(const std::string& address, std::string& host, int& port, std::string* why) {
-    auto no = [&](const std::string& m) {
-        if (why) *why = m;
-        return false;
-    };
-    size_t a = address.find_first_not_of(" \t"), b = address.find_last_not_of(" \t");
-    const std::string s = a == std::string::npos ? "" : address.substr(a, b - a + 1);
-    if (s.empty()) return no("no address");
-    const size_t colon = s.find(':');
-    if (colon != std::string::npos && s.find(':', colon + 1) != std::string::npos) return no("one ':' only: IPv6 isn't supported (use IP:PORT) in " + s);
-    host = colon == std::string::npos ? s : s.substr(0, colon);
-    port = kDefaultPort;
-    if (colon != std::string::npos) {
-        port = parsePort(s.substr(colon + 1));
-        if (port < 0) return no("no good port in " + s + " (1 to 65535)");
-    }
-    if (host.empty()) return no("no address");
-    return true;
-}
-
-std::string sanitize(const std::string& s, size_t maxLen) {
-    std::string o;
-    for (unsigned char ch : s)
-        if (ch >= 32 && ch <= 126) o += (char)ch;  // (the HUD font has nothing else: controls and bytes above ASCII go)
-    const size_t a = o.find_first_not_of(' ');
-    if (a == std::string::npos) return "";
-    o.erase(0, a);
-    o.resize(std::min(o.size(), maxLen));
-    o.erase(o.find_last_not_of(' ') + 1);
-    return o;
-}
-
-namespace {
-struct Sha256 {
-    uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
-    uint8_t buf[64];
-    size_t fill = 0;
-    uint64_t total = 0;
-    static uint32_t rotr(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
-    void block(const uint8_t* p) {
-        static const uint32_t K[64] = {
-            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be,
-            0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa,
-            0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85,
-            0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
-            0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f,
-            0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
-        uint32_t w[64];
-        for (int i = 0; i < 16; i++) w[i] = (uint32_t)p[i * 4] << 24 | (uint32_t)p[i * 4 + 1] << 16 | (uint32_t)p[i * 4 + 2] << 8 | p[i * 4 + 3];
-        for (int i = 16; i < 64; i++) {
-            const uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
-            const uint32_t s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
-        }
-        uint32_t v[8];
-        std::memcpy(v, h, sizeof v);
-        for (int i = 0; i < 64; i++) {
-            const uint32_t t1 = v[7] + (rotr(v[4], 6) ^ rotr(v[4], 11) ^ rotr(v[4], 25)) + ((v[4] & v[5]) ^ (~v[4] & v[6])) + K[i] + w[i];
-            const uint32_t t2 = (rotr(v[0], 2) ^ rotr(v[0], 13) ^ rotr(v[0], 22)) + ((v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]));
-            std::memmove(v + 1, v, 7 * sizeof(uint32_t));
-            v[4] += t1;
-            v[0] = t1 + t2;
-        }
-        for (int i = 0; i < 8; i++) h[i] += v[i];
-    }
-    void add(const uint8_t* p, size_t n) {
-        total += n;
-        while (n) {
-            const size_t k = std::min(n, sizeof buf - fill);
-            std::memcpy(buf + fill, p, k);
-            fill += k, p += k, n -= k;
-            if (fill == sizeof buf) block(buf), fill = 0;
-        }
-    }
-    std::vector<uint8_t> finish() {
-        const uint64_t bits = total * 8;
-        const uint8_t one = 0x80, zero = 0;
-        add(&one, 1);
-        while (fill != 56) add(&zero, 1);
-        uint8_t len[8];
-        for (int i = 0; i < 8; i++) len[i] = (uint8_t)(bits >> (56 - 8 * i));
-        add(len, 8);
-        std::vector<uint8_t> out(32);
-        for (int i = 0; i < 32; i++) out[i] = (uint8_t)(h[i / 4] >> (24 - 8 * (i % 4)));
-        return out;
-    }
-};
-}  // namespace
-
-std::vector<uint8_t> hmacSha256(const std::string& key, const std::vector<uint8_t>& data) {
-    std::vector<uint8_t> k(key.begin(), key.end());
-    if (k.size() > 64) {
-        Sha256 h;
-        h.add(k.data(), k.size());
-        k = h.finish();
-    }
-    k.resize(64, 0);
-    uint8_t ipad[64], opad[64];
-    for (int i = 0; i < 64; i++) ipad[i] = k[i] ^ 0x36, opad[i] = k[i] ^ 0x5c;
-    Sha256 in;
-    in.add(ipad, 64);
-    in.add(data.data(), data.size());
-    const std::vector<uint8_t> inner = in.finish();
-    Sha256 out;
-    out.add(opad, 64);
-    out.add(inner.data(), inner.size());
-    return out.finish();
-}
 
 // ---- The shared clock ----------------------------------------------------------------
 
@@ -490,6 +296,9 @@ struct NetSession::Remote {
     std::deque<std::pair<uint32_t, std::vector<int16_t>>> got;  // the dents of the last states taken (seq): what the sender tells the next against
     // Easing out a coast that guessed wrong: what's added to where the states say it is.
     V3 ease, lastShown, lastVel;
+    Quat easeRot, lastRot;  // (and the turn: shown now, each state corrects the guess at it too)
+    bool wasHeld = false;   // (in a crash with one of ours last frame)
+    double heldAt = 0;      // when it was taken onto our physics (vehicle time)
     bool shown = false;
     double coastedTo = -1;  // the newest state's time while coasting past it last frame (-1: wasn't)
     struct Assembly {
@@ -499,6 +308,24 @@ struct NetSession::Remote {
         int count = 0;
     };
     std::array<Assembly, 3> assemblies;  // A newer partial packet must not discard an older complete one.
+};
+
+namespace {
+constexpr uint16_t kTunMagic = 0xC27B;
+constexpr size_t kTunHeader = 2 + 1 + 4 + 8;  // magic, type, pair, the pair's secret
+enum TunType : uint8_t { T_PUNCH = 1, T_PUNCH_ACK, T_DATA, T_ACK, T_CLOSE };
+constexpr double kTunnelDead = 15;  // s without a word: the tunnel is gone
+constexpr double kDirectQuiet = 4;  // s without a word on a punched path: the guest tries the relay
+}  // namespace
+
+struct NetSession::Tunnel {
+    uint32_t pair = 0;
+    uint64_t secret = 0, relayKey = 0;
+    uint32_t ip = 0;  // the punched path (unused while relayed)
+    uint16_t port = 0;
+    bool relayed = false, closed = false;
+    double born = 0;
+    net::ReliableStream stream;
 };
 
 NetSession::NetSession() {}
@@ -516,6 +343,27 @@ std::string NetSession::ownerName(uint32_t netId) const {
 }
 
 void NetSession::close() {
+    // Saying goodbye: the guests hear the host is gone (not 15 or 30 s of silence later), the
+    // host hears a guest left, and the backend lets the code go.
+    if (role == HOST) {
+        Writer w;
+        w.str("the host closed the game");
+        const auto bye = frame(MSG_REJECT, w);
+        for (Conn* c : conns)
+            if (c->hello && !c->kill) sendTo(*c, bye);
+        serviceTunnels(clockNow());
+    }
+    for (Conn* c : conns)
+        if (c->tun && !c->tun->closed) {
+            const uint8_t why = 0;
+            tunPacket(*c->tun, 5, &why, 1);
+            tunPacket(*c->tun, 5, &why, 1);
+        }
+    if (rvKey && udpFd >= 0) {
+        rv::Msg m;
+        m.type = rv::RV_CLOSE, m.code = joinCode.empty() ? codeWanted : joinCode, m.key = rvKey;
+        sendBackend(rv::encode(m));
+    }
     for (Conn* c : conns) {
         if (c->fd >= 0) closeSock(c->fd);
         delete c;
@@ -544,6 +392,7 @@ void NetSession::close() {
     sessionStart = -1;
     clock = net::ClockSync();
     view = net::Timeline();
+    vehicleAt = -1, lastPlayNow = -1e18, vehicleLeadNow = 0;
     nextSync = 0;
     dayBase = daySentAt = -1;
     dayHours = -1, dayRate = 0, dayFresh = false;
@@ -555,6 +404,20 @@ void NetSession::close() {
     homeOf.clear();
     for (uint32_t& r : ridingOf) r = 0;
     upAcks.clear();
+    intros.clear();
+    codeIntro = Intro();
+    codeState = CODE_OFF;
+    joinCode.clear();
+    rvKey = rvNonce = rvCookie = 0;
+    rvRetired = false;
+    rvTries = 0;
+    directFound = false;
+    directIp = 0, directPort = 0;
+    udpHeld.clear();
+    sections.clear();
+    sectionsIn.clear();
+    sectionsNext = 0;
+    sectionsPending = false;
 }
 
 bool NetSession::host(int port, const std::string& name, int m, int maxP, const std::string& session) {
@@ -626,15 +489,18 @@ bool NetSession::join(const std::string& address, const std::string& name, doubl
         if (st > 0) return true;
         if (st < 0) return false;
         pollfd rp{};
-        rp.fd = conns.empty() ? connectFd : conns[0]->fd;
-        rp.events = conns.empty() ? POLLOUT : POLLIN;
-        if (rp.fd >= 0) pollFds(&rp, 1, 20);
+        const bool udp = joinStage >= 10 || (!conns.empty() && conns[0]->tun);
+        rp.fd = udp ? udpFd : conns.empty() ? connectFd : conns[0]->fd;
+        rp.events = conns.empty() && !udp ? POLLOUT : POLLIN;
+        if (rp.fd >= 0) pollFds(&rp, 1, udp ? 5 : 20);
     }
 }
 
 bool NetSession::beginJoin(const std::string& address, const std::string& name, double timeout) {
     close();
     passwordIssue = PW_OK;
+    joinFail = JF_NONE;
+    lostWhy.clear();
     netInit();
     std::string hostName, why;
     int port = 0;
@@ -703,18 +569,32 @@ int NetSession::pollJoin() {
         Writer w;
         w.put<uint16_t>(net::kVersion);
         w.str(joinName);
+        w.str(build);
         sendTo(*c, frame(MSG_HELLO, w));
         joinStage = 2;
         joinT0 = now;
     }
+    if (joinStage >= 10 && joinStage <= 11) {
+        const int st = pollCodeJoin(now);
+        if (st < 0) return fail(error);
+        if (joinStage != 2) return 0;
+    }
     if (joinStage == 2) {  // waiting to be let in
-        if (role != CLIENT || conns.empty() || conns[0]->fd < 0) return fail(error.empty() ? "connection closed" : error);
+        if (role != CLIENT || conns.empty() || !live(*conns[0])) return fail(error.empty() ? "connection closed" : error);
         Conn& c = *conns[0];
+        if (c.tun) pumpUdp(now), serviceTunnels(now);
         flush(c);
         readTcp(c);  // handles WELCOME / REJECT (other messages wait for adopt())
-        if (role != CLIENT || (self < 0 && c.fd < 0)) return fail(error.empty() ? "connection closed" : error);
+        if (c.tun) serviceTunnels(now);
+        if (role != CLIENT || (self < 0 && !live(c))) return fail(error.empty() ? "connection closed" : error);
         if (self < 0) {
-            if (now - joinT0 > joinTimeout) return fail("the host didn't let us in");
+            if (now - joinT0 > joinTimeout) {
+                if (c.tun && c.tun->stream.lastHeard <= c.tun->born) {  // (by code, and never a word back: no way through)
+                    joinFail = JF_NO_PATH;
+                    return fail("couldn't connect to your friend's game");
+                }
+                return fail("the host didn't let us in");
+            }
             return 0;
         }
         joinStage = 3;
@@ -723,11 +603,13 @@ int NetSession::pollJoin() {
     if (joinStage == 3) {
         // The host sends its vehicles right behind the welcome: take them in now (they wait
         // in `pending` for adopt()), so we park clear of them rather than on one.
-        if (role != CLIENT || conns.empty() || conns[0]->fd < 0) return fail(error.empty() ? "connection closed" : error);
+        if (role != CLIENT || conns.empty() || !live(*conns[0])) return fail(error.empty() ? "connection closed" : error);
         const size_t before = pending.size();
+        if (conns[0]->tun) pumpUdp(now), serviceTunnels(now);
         readTcp(*conns[0]);
-        if (role != CLIENT || conns[0]->fd < 0) return fail(error.empty() ? "connection closed" : error);
+        if (role != CLIENT || !live(*conns[0])) return fail(error.empty() ? "connection closed" : error);
         if (pending.size() != before) joinQuiet = now;
+        if (sectionsPending && now - joinT0 < joinTimeout) return 0;  // (the world can't be built without them)
         if (now - joinT0 < 0.5 && now - joinQuiet < 0.12) return 0;
         joinStage = 0;
         players[self].active = true;
@@ -740,7 +622,7 @@ int NetSession::pollJoin() {
 // ---- Reliable messages ------------------------------------------------------------
 
 void NetSession::sendTo(Conn& c, const std::vector<uint8_t>& msg) {
-    if (c.out.size() + msg.size() > kMaxOut) {  // not reading what we send: that's enough of them
+    if (c.out.size() + (c.tun ? c.tun->stream.queued() : 0) + msg.size() > kMaxOut) {  // not reading what we send: that's enough of them
         if (role == HOST) violation(&c, "not reading");
         return;
     }
@@ -754,6 +636,11 @@ void NetSession::broadcast(const std::vector<uint8_t>& msg, Conn* except) {
 }
 
 void NetSession::flush(Conn& c) {
+    if (c.tun) {  // (into the tunnel's stream: serviceTunnels sends it as the window allows)
+        if (!c.out.empty() && c.tun->stream.write(c.out.data(), c.out.size())) bytesOut += c.out.size();
+        c.out.clear();
+        return;
+    }
     while (!c.out.empty() && c.fd >= 0) {
         const int n = (int)::send(c.fd, (const char*)c.out.data(), (int)c.out.size(), MSG_NOSIGNAL);
         if (n <= 0) break;
@@ -782,6 +669,17 @@ void NetSession::readTcp(Conn& c) {
     uint8_t buf[16384];
     // (At most this much a call: what's left waits for the next frame.)
     size_t budget = role == HOST ? 131072 : 4u << 20;
+    if (c.tun) {  // (what the tunnel's stream has put together, in order)
+        std::vector<uint8_t>& rx = c.tun->stream.rx;
+        const size_t k = std::min(budget, rx.size());
+        if (k) {
+            bytesIn += k;
+            if (!c.kill) c.in.insert(c.in.end(), rx.begin(), rx.begin() + (long)k);
+            rx.erase(rx.begin(), rx.begin() + (long)k);
+            c.lastRx = clockNow();
+        }
+        budget = 0;
+    }
     while (budget > 0 && c.fd >= 0) {
         const int n = (int)recv(c.fd, (char*)buf, (int)std::min(sizeof buf, budget), 0);
         if (n > 0) {
@@ -858,6 +756,10 @@ void NetSession::admit(Conn& c, const std::string& name) {
     w.str(unique);
     broadcast(frame(MSG_PLAYER, w), &c);
     events.push_back(unique + " JOINED");
+    if (!build.empty() && !c.build.empty() && c.build != build) {  // (the same protocol, but maybe not the same trucks)
+        events.push_back(unique + " RUNS BUILD " + c.build + ", THIS GAME " + build + ": HANDLING MAY DIFFER");
+        note(unique + " IS ON BUILD " + c.build + " (THIS IS " + build + ")");
+    }
 }
 
 void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
@@ -875,6 +777,7 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             if (from->hello || from->challenged) return violation(from, "a second hello");
             const uint16_t ver = r.get<uint16_t>();
             const std::string name = net::sanitize(r.str(), net::kMaxNameLen);
+            if (r.ok && r.at < r.n) from->build = net::sanitize(r.str(), 16);  // (8: the build it is, if it says)
             if (!r.ok) return violation(from, "a bad hello");
             if (ver != net::kVersion) {  // (an older game can't follow this one's clock: say so plainly, not a session that drifts)
                 Writer w;
@@ -933,9 +836,11 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
                 if (!std::isfinite(rtt)) rtt = 0;
                 rtt = clampd(rtt, 0, 10);
                 players[from->peer].ping = rtt;
+                players[from->peer].link = !from->tun ? LINK_ADDRESS : from->tun->relayed ? LINK_RELAYED : LINK_DIRECT;
                 Writer w;
                 w.put<uint8_t>((uint8_t)from->peer);
                 w.put<float>((float)rtt);
+                w.put<uint8_t>((uint8_t)players[from->peer].link);
                 broadcast(frame(MSG_RTT, w));
                 return;
             }
@@ -1032,19 +937,55 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             if (role != CLIENT || self >= 0) return;
             const int id = r.get<uint8_t>(), m = r.get<uint8_t>();
             const uint64_t token = r.get<uint64_t>();
+            const std::string hostBuild = r.ok && r.at < r.n ? net::sanitize(r.str(), 16) : std::string();
             if (!r.ok || id < 1 || id >= net::kMaxPeers || m >= MAP_COUNT) {
                 error = "the host's welcome made no sense";
                 role = OFF;
                 return;
             }
+            if (m == MAP_PROCEDURAL) {  // the host's endless world: its generator, seed and window
+                proc.gen = r.get<uint16_t>(), proc.seed = r.get<uint64_t>(), proc.ox = r.get<int64_t>(), proc.oz = r.get<int64_t>();
+                proc.sliding = r.get<uint8_t>() != 0, proc.tx = r.get<int64_t>(), proc.tz = r.get<int64_t>(), proc.due = r.get<double>();
+                proc.on = r.ok;
+                proc.sliding = proc.sliding && proc.on;
+                if (!r.ok || proc.gen != proc::genStamp()) {
+                    error = r.ok ? ((proc.gen | proc::genStamp()) & 0x8000 ? std::string("the host's procedural world rules (assets/procworld/rules.txt) aren't this game's: use the same file")
+                                                                          : "the host's world generator is v" + std::to_string(proc.gen) + ", this game's v" + std::to_string(proc::kGenVersion) + ": update to the same build")
+                                 : "the host's world made no sense";
+                    role = OFF;
+                    return;
+                }
+            }
+            // (A real terrain (MAP_REAL, realterrain.h): the host says which file; this side needs the same one in its maps/.)
+            if (m == MAP_REAL) {
+                const uint64_t realHash = r.ok && r.at + 8 <= r.n ? r.get<uint64_t>() : 0;
+                const std::string realName = r.ok && r.at < r.n ? net::sanitize(r.str(), 24) : std::string();
+                if (!realHash || !realterrain::selectByHash(realHash, realName)) {
+                    char hx[24];
+                    std::snprintf(hx, sizeof hx, "%016llx", (unsigned long long)realHash);
+                    error = "the host plays real terrain " + (realName.empty() ? std::string("?") : realName) + " (" + hx +
+                            "): put the same DEM and terrain.txt in maps/" + realName + "/";
+                    role = OFF;
+                    return;
+                }
+            }
             self = id;
             map = m;
             udpToken = token;
+            if (!build.empty() && !hostBuild.empty() && hostBuild != build) events.push_back("THE HOST RUNS BUILD " + hostBuild + ", YOURS " + build + ": HANDLING MAY DIFFER");
             return;
         }
         case MSG_REJECT: {
-            if (role != CLIENT || self >= 0) return;
+            if (role != CLIENT) return;
             const std::string why = net::sanitize(r.str(), 60);
+            if (self >= 0) {  // (in the game: kicked, or the host is closing it)
+                std::string up = why;
+                for (char& ch : up) ch = (char)std::toupper((unsigned char)ch);
+                lostWhy = up.empty() ? "THE HOST CLOSED THE GAME" : up;
+                if (from && from->fd >= 0) closeSock(from->fd), from->fd = -1;
+                if (from && from->tun) from->tun->closed = true;
+                return;
+            }
             error = "rejected: " + why;
             if (why == "wrong password") passwordIssue = PW_WRONG;
             role = OFF;
@@ -1055,6 +996,32 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             Writer w;
             w.put<double>(r.get<double>());
             sendTo(*from, frame(MSG_PONG, w));
+            return;
+        }
+        case MSG_SECTIONS: {
+            if (role != CLIENT) return;
+            const int index = r.get<uint8_t>(), count = r.get<uint8_t>(), type = r.get<uint8_t>();
+            const int part = r.get<uint16_t>(), parts = r.get<uint16_t>();
+            if (!r.ok || count < 1 || count > 16 || index >= count || type >= 64 || parts < 1 || parts > 200 || part >= parts) return;
+            if (index == 0 && part == 0) sectionsIn.clear(), sectionsNext = 0, sectionsPending = true;
+            if (sectionsNext != (index << 16 | part)) {  // (out of order: lost the thread, wait for the next whole set)
+                sectionsNext = -1, sectionsPending = false, sectionsIn.clear();
+                return;
+            }
+            if (part == 0) sectionsIn.push_back({type, std::string()});
+            size_t total = 0;
+            for (const auto& x : sectionsIn) total += x.second.size();
+            if (total + (r.n - r.at) > net::kMaxLevelBytes) {
+                sectionsNext = -1, sectionsPending = false, sectionsIn.clear();
+                return;
+            }
+            sectionsIn.back().second.append((const char*)r.p + r.at, r.n - r.at);
+            sectionsNext = part + 1 < parts ? (index << 16 | (part + 1)) : ((index + 1) << 16);
+            if (part + 1 == parts && index + 1 == count) {
+                sections = sectionsIn;
+                sectionsIn.clear();
+                sectionsPending = false;
+            }
             return;
         }
         case MSG_LEVEL: {
@@ -1149,11 +1116,38 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
     }
 }
 
+void NetSession::sendSections(Conn& to) {
+    const size_t count = std::min<size_t>(sections.size(), 16);
+    size_t total = 0;
+    for (size_t i = 0; i < count; i++) total += sections[i].second.size();
+    if (!count || total > net::kMaxLevelBytes) return;  // (more than a level's worth: they build the generator's)
+    constexpr size_t kPart = 60000;
+    for (size_t i = 0; i < count; i++) {
+        const std::string& t = sections[i].second;
+        const size_t parts = std::max<size_t>(1, (t.size() + kPart - 1) / kPart);
+        for (size_t p = 0; p < parts; p++) {
+            Writer w;
+            w.put<uint8_t>((uint8_t)i), w.put<uint8_t>((uint8_t)count), w.put<uint8_t>((uint8_t)sections[i].first);
+            w.put<uint16_t>((uint16_t)p), w.put<uint16_t>((uint16_t)parts);
+            const size_t a = p * kPart, b = std::min(t.size(), a + kPart);
+            w.b.insert(w.b.end(), t.begin() + (long)a, t.begin() + (long)b);
+            sendTo(to, frame(MSG_SECTIONS, w));
+        }
+    }
+}
+
 void NetSession::welcome(Sim& sim, Conn& c) {
     Writer w;
     w.put<uint8_t>((uint8_t)c.peer);
     w.put<uint8_t>((uint8_t)map);
     w.put<uint64_t>(c.token);
+    w.str(build);
+    if (map == MAP_PROCEDURAL) {  // (procworld.h; and a slide on its way, which the guest must make too)
+        w.put<uint16_t>(proc.gen), w.put<uint64_t>(proc.seed), w.put<int64_t>(proc.ox), w.put<int64_t>(proc.oz);
+        w.put<uint8_t>(shiftOn ? 1 : 0), w.put<int64_t>(proc.ox - (int64_t)std::llround(pendingShift.d.x)), w.put<int64_t>(proc.oz - (int64_t)std::llround(pendingShift.d.z));
+        w.put<double>(pendingShift.t);
+    }
+    if (map == MAP_REAL) w.put<uint64_t>(realterrain::activeHash()), w.str(realterrain::activeName());  // (which real terrain: a guest needs the same file)
     sendTo(c, frame(MSG_WELCOME, w));
     for (int k = 0; k < net::kMaxPeers; k++)
         if (players[k].active && k != c.peer) {
@@ -1162,6 +1156,7 @@ void NetSession::welcome(Sim& sim, Conn& c) {
             p.str(players[k].name);
             sendTo(c, frame(MSG_PLAYER, p));
         }
+    sendSections(c);
     if (!levelText.empty()) sendLevel(&c);
     if (dayHours >= 0) sendClock(&c);
     for (const Car& car : sim.cars)
@@ -1187,6 +1182,7 @@ std::vector<uint8_t> NetSession::spawnMsg(const Car& c) const {
     w.put<float>((float)yaw);
     w.put<uint8_t>(c.lampMode);
     w.put<uint32_t>((uint32_t)c.buildCount);
+    w.paint(c.paint);  // (after everything an older peer reads: it ignores the rest and shows the factory colour)
     return frame(MSG_SPAWN, w);
 }
 
@@ -1194,6 +1190,7 @@ std::vector<uint8_t> NetSession::lampMsg(const Car& c) const {
     Writer w;
     w.put<uint32_t>(c.netId);
     w.put<uint8_t>(c.lampMode);
+    w.paint(c.paint);  // (a repaint rides the lamps' message, which older peers read as far as the mode)
     return frame(MSG_LAMPS, w);
 }
 
@@ -1245,6 +1242,10 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
             const float p = r.get<float>();
             if (!r.ok || id < 0 || id >= net::kMaxPeers || id == self || !std::isfinite(p)) return false;
             players[id].ping = clampd(p, 0, 10);
+            if (r.at < r.n) {
+                const int link = r.get<uint8_t>();
+                players[id].link = link >= 0 && link <= LINK_RELAYED ? link : 0;
+            }
             return true;
         }
         case MSG_SPAWN: {
@@ -1258,6 +1259,8 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
             const double yaw = r.get<float>();
             const uint8_t lamps = r.get<uint8_t>();
             const uint32_t build = r.get<uint32_t>();
+            CarPaint paint;
+            r.paint(paint);
             if (!r.ok || !ownerOk(netId) || !okPos(pos) || !okNum(yaw, 1e4) || !okNum(color.x, 1e3) || !okNum(color.y, 1e3) || !okNum(color.z, 1e3))
                 return false;
             const VehicleSpec* spec = specFrom(id);
@@ -1274,11 +1277,13 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
                 i = (int)sim.cars.size() - 1;
             } else {
                 sim.dropRopes(i);
+                sim.cars[i].paint = CarPaint();  // (the colour here is the truth: the paint comes after)
                 sim.cars[i].build(*spec, pos, yaw, color);
             }
             Car& c = sim.cars[i];
             c.remote = true;
             c.netId = netId;
+            c.setPaint(paint);
             c.handbrake = 0, c.parkBrake = false;
             c.lampMode = std::min<uint8_t>(lamps, 3);
             c.buildCount = (int)build;
@@ -1286,7 +1291,7 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
                 rm->buf.clear();
                 rm->newestT = -1;
                 rm->shown = false;
-                rm->ease = V3();
+                rm->ease = V3(), rm->easeRot = Quat();
                 rm->coastedTo = -1;
                 for (auto& assembly : rm->assemblies) assembly.active = false;
             }
@@ -1295,9 +1300,12 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
         case MSG_LAMPS: {
             const uint32_t id = r.get<uint32_t>();
             const uint8_t mode = r.get<uint8_t>();
+            CarPaint paint;
+            const bool hasPaint = r.paint(paint);
             const int i = findCar(sim, id);
             if (!r.ok || !ownerOk(id) || mode >= 4 || i < 0 || !sim.cars[i].remote) return false;
             sim.cars[i].lampMode = mode;
+            if (hasPaint && paint != sim.cars[i].paint) sim.cars[i].setPaint(paint);
             return true;
         }
         case MSG_DESPAWN: {
@@ -1338,7 +1346,11 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
             float v[6];
             for (float& x : v) x = r.get<float>();
             rp.length = v[0], rp.maxLen = v[1], rp.k = v[2], rp.c = v[3], rp.breakN = v[4], rp.stallN = v[5];
-            r.get<double>();  // (when: handle() holds it till then)
+            {  // (when: handle() holds it till then; its fixed ends were where the sender's procedural window had them)
+                const V3 fix = frameFix(r.get<double>());
+                for (RopeEnd* e : {&rp.a, &rp.b})
+                    if (e->kind != ANCHOR_CAR) e->p += fix;
+            }
             // (A line's numbers all have a sane range; the winch's maths divides by some of them.)
             ok &= okNum(v[0], 200) && v[0] >= 0 && okNum(v[1], 200) && v[1] >= 0.5 && okNum(v[2], 2e6) && v[2] >= 0 && okNum(v[3], 2e5) && v[3] >= 0 &&
                   okNum(v[4], 2e6) && v[4] >= 1 && okNum(v[5], 1e6) && v[5] >= (rp.kind == ROPE_WINCH ? 1 : 0);  // (a strap has no stall)
@@ -1479,7 +1491,8 @@ bool NetSession::rekey(Sim& sim, uint32_t oldId, uint32_t newId, bool asked) {
         c.occupied = false;
         c.throttle = c.brake = 0;
         c.handbrake = 1, c.parkBrake = true;  // (it was empty: it stays put)
-        knownCars.push_back({newId, c.spec, c.buildCount, c.lampMode});  // (everyone has it already: no spawn)
+        c.paintKept = true;  // (it keeps the colours everyone has seen on it)
+        knownCars.push_back({newId, c.spec, c.buildCount, c.lampMode, c.paint});  // (everyone has it already: no spawn)
         e.kind = CarEvent::GOT;
     } else if (ri < remotes.size()) {  // someone else's: its states come from them now, told afresh
         Remote* rm = remotes[ri];
@@ -1663,6 +1676,11 @@ void NetSession::dropConn(size_t i) {
     Conn* c = conns[i];
     conns.erase(conns.begin() + i);
     if (c->fd >= 0) closeSock(c->fd);
+    if (c->tun && !c->tun->closed) {  // (the other end hears it now, not 15 s on)
+        const uint8_t why = c->kill ? 1 : 0;
+        tunPacket(*c->tun, 5, &why, 1);
+        tunPacket(*c->tun, 5, &why, 1);
+    }
     const int peer = c->peer;
     const bool wasIn = c->hello;
     delete c;
@@ -1676,7 +1694,7 @@ void NetSession::dropConn(size_t i) {
         broadcast(frame(MSG_LEFT, w));
     }
     if (role == CLIENT) {
-        events.push_back("LOST THE CONNECTION TO THE HOST");
+        events.push_back(lostWhy.empty() ? "LOST THE CONNECTION TO THE HOST" : lostWhy);
         if (lastSim) {
             for (int k = 0; k < net::kMaxPeers; k++)
                 if (k != self) removeCars(*lastSim, k);
@@ -1810,12 +1828,12 @@ NetSession::Snap NetSession::makeSnap(const Sim& sim, const Car& c, double now) 
     const Frame fr = c.frame();
     s.t = sharedTime(now);
     s.build = (uint32_t)c.buildCount;
-    s.rot = c.chassis.nodes.empty() ? Quat::axisAngle(V3(0, 1, 0), std::atan2(-fr.fwd.z, fr.fwd.x)) : c.chassis.rot;
-    s.com = fr.com, s.vel = fr.vel;
+    net::dentPose(c, s.com, s.rot);
+    s.vel = fr.vel;
     s.steer = (float)c.steer;
     s.brake = (float)clampd(std::max(c.brake, c.handbrake * 0.6), 0, 1);
     s.damage = (float)c.damage;
-    s.status = (uint8_t)(c.engineDead | (c.hydrolocked << 1) | (c.occupied << 2));
+    s.status = (uint8_t)(c.engineDead | (c.hydrolocked << 1) | (c.occupied << 2) | (c.engineOff << 3) | ((c.battery < 0.2) << 4));  // (bits 3, 4: ignition off, flat battery; older builds mask them)
     s.rpm = (float)c.rpm;
     s.load = (float)clampd(c.throttle * c.tcCut, 0, 1);
     s.boost = (float)c.boost;
@@ -1826,17 +1844,43 @@ NetSession::Snap NetSession::makeSnap(const Sim& sim, const Car& c, double now) 
         s.wheelOmega.push_back((float)wh.omega);
         s.wheelFlags.push_back((uint8_t)(wh.popped | (wh.detached << 1) | (wh.shaftBroken << 2) | (!wh.mounted << 3)));  // (a wheel off its hub for a repair: others see the bare hub)
     }
-    const V3 rc = restCom(c);
-    s.q.resize(c.nodes.size() * 3);
-    for (size_t i = 0; i < c.nodes.size(); i++) {
-        const V3 d = s.rot.unrotate(c.nodes[i].p - fr.com) + rc - c.restLocal[i];
-        s.q[i * 3] = quant<int16_t>(d.x, 1000, -32.7, 32.7), s.q[i * 3 + 1] = quant<int16_t>(d.y, 1000, -32.7, 32.7), s.q[i * 3 + 2] = quant<int16_t>(d.z, 1000, -32.7, 32.7);
-    }
+    s.q = net::carDents(c);
     // The winch lines this vehicle works: how much line is out.
     for (const Rope& r : sim.ropes)
         if (r.netId && r.kind == ROPE_WINCH && r.a.kind == ANCHOR_CAR && &sim.cars[r.a.car] == &c && s.ropeLen.size() < 8) s.ropeLen.push_back({r.netId, (float)r.length});
     return s;
 }
+
+namespace net {
+
+void dentPose(const Car& c, V3& com, Quat& rot) {
+    const Frame fr = c.frame();
+    rot = c.chassis.nodes.empty() ? Quat::axisAngle(V3(0, 1, 0), std::atan2(-fr.fwd.z, fr.fwd.x)) : c.chassis.rot;
+    com = fr.com;
+}
+
+std::vector<int16_t> carDents(const Car& c) {
+    V3 com;
+    Quat rot;
+    dentPose(c, com, rot);
+    const V3 rc = restCom(c);
+    std::vector<int16_t> q(c.nodes.size() * 3);
+    for (size_t i = 0; i < c.nodes.size(); i++) {
+        const V3 d = rot.unrotate(c.nodes[i].p - com) + rc - c.restLocal[i];
+        q[i * 3] = quant<int16_t>(d.x, 1000, -32.7, 32.7), q[i * 3 + 1] = quant<int16_t>(d.y, 1000, -32.7, 32.7), q[i * 3 + 2] = quant<int16_t>(d.z, 1000, -32.7, 32.7);
+    }
+    return q;
+}
+
+bool applyCarDents(Car& c, const V3& com, const Quat& rot, const std::vector<int16_t>& dents) {
+    if (dents.size() != c.nodes.size() * 3 || c.restLocal.size() != c.nodes.size()) return false;
+    const V3 rc = restCom(c);
+    for (size_t i = 0; i < c.nodes.size(); i++)
+        c.nodes[i].p = com + rot.rotate(c.restLocal[i] - rc + V3(dents[i * 3], dents[i * 3 + 1], dents[i * 3 + 2]) * 0.001);
+    return true;
+}
+
+}  // namespace net
 
 std::vector<uint8_t> NetSession::encodeState(const Snap& s, const Stream::Sent* base, std::vector<int16_t>& sentQ) {
     Writer w;
@@ -1927,11 +1971,7 @@ void NetSession::sendDatagrams(Conn* to, uint32_t netId, const std::vector<uint8
     const size_t total = data.size(), frags = (total + kChunk - 1) / kChunk;
     if (frags > (size_t)kMaxFragments) return;
     const uint64_t token = to ? to->token : udpToken;
-    sockaddr_in addr = to ? udpAddress(to->udpIp, to->udpPort) : sockaddr_in{};
-    if (!to) {
-        if (!hostUdp) return;
-        addr = *(const sockaddr_in*)hostUdp;
-    }
+    if (!to && !hostUdp) return;
     for (size_t f = 0; f < frags; f++) {
         Writer d;
         d.b.reserve(32 + std::min(total, (f + 1) * kChunk) - f * kChunk);
@@ -1945,8 +1985,7 @@ void NetSession::sendDatagrams(Conn* to, uint32_t netId, const std::vector<uint8
         d.put<uint64_t>(token);
         const size_t a = f * kChunk, b = std::min(total, a + kChunk);
         d.b.insert(d.b.end(), data.begin() + a, data.begin() + b);
-        const int n = (int)sendto(udpFd, (const char*)d.b.data(), (int)d.b.size(), 0, (const sockaddr*)&addr, sizeof addr);
-        if (n > 0) bytesOut += n;
+        sendDgram(to, d.b.data(), d.b.size());
     }
 }
 
@@ -2006,7 +2045,7 @@ void NetSession::sendSnapshot(Sim& sim, const Car& c, double now) {
 
 // "We have these": u32 netId, u32 seq, as many as fit, to whoever sent them.
 void NetSession::sendAcks() {
-    auto out = [&](std::vector<std::pair<uint32_t, uint32_t>>& acks, uint64_t token, const sockaddr_in& to) {
+    auto out = [&](std::vector<std::pair<uint32_t, uint32_t>>& acks, uint64_t token, Conn* to) {
         while (!acks.empty()) {
             Writer d;
             d.put<uint16_t>(kMagic);
@@ -2017,17 +2056,16 @@ void NetSession::sendAcks() {
             const size_t n = std::min<size_t>(acks.size(), kChunk / 8);
             for (size_t k = 0; k < n; k++) d.put<uint32_t>(acks[k].first), d.put<uint32_t>(acks[k].second);
             acks.erase(acks.begin(), acks.begin() + n);
-            const int sent = (int)sendto(udpFd, (const char*)d.b.data(), (int)d.b.size(), 0, (const sockaddr*)&to, sizeof to);
-            if (sent > 0) bytesOut += sent;
+            sendDgram(to, d.b.data(), d.b.size());
         }
     };
     if (role == CLIENT) {
-        if (hostUdp && udpToken) out(upAcks, udpToken, *(const sockaddr_in*)hostUdp);
+        if (hostUdp && udpToken) out(upAcks, udpToken, nullptr);
         upAcks.clear();
         return;
     }
     for (Conn* c : conns) {
-        if (c->udpKnown && c->hello && !c->kill) out(c->acks, c->token, udpAddress(c->udpIp, c->udpPort));
+        if (c->udpKnown && c->hello && !c->kill) out(c->acks, c->token, c);
         c->acks.clear();
     }
 }
@@ -2047,21 +2085,24 @@ void NetSession::takeAcks(std::vector<Stream>& v, const uint8_t* p, size_t n) {
 }
 
 void NetSession::readUdp(Sim& sim, double now) {
-    uint8_t buf[2048];
-    for (int k = 0; k < 1024; k++) {  // (a frame's worth; the rest waits, or the kernel drops it)
-        sockaddr_in from{};
-        socklen_t fl = sizeof from;
-        const int n = (int)recvfrom(udpFd, (char*)buf, sizeof buf, 0, (sockaddr*)&from, &fl);
-        if (n <= 0) return;
-        bytesIn += n;
-        onDatagram(sim, buf, (size_t)n, ntohl(from.sin_addr.s_addr), ntohs(from.sin_port), now);
+    pumpUdp(clockNow());
+    std::vector<HeldDgram> held;
+    held.swap(udpHeld);
+    for (const HeldDgram& h : held) {
+        Tunnel* via = nullptr;
+        if (h.viaPair) {
+            Conn* c = tunnelConn(h.viaPair);
+            if (!c) continue;
+            via = c->tun;
+        }
+        onDatagram(&sim, h.b.data(), h.b.size(), h.ip, h.port, now, via);
     }
 }
 
 // One datagram, from ip:port (host byte order). It must carry the secret of whoever it's for:
 // the host told each guest theirs in the welcome, so a stranger's packet (a scan, a forged
 // state, a forged address for a guest) is dropped here, unanswered.
-void NetSession::onDatagram(Sim& sim, const uint8_t* buf, size_t n, uint32_t ip, uint16_t port, double now) {
+void NetSession::onDatagram(Sim* simp, const uint8_t* buf, size_t n, uint32_t ip, uint16_t port, double now, Tunnel* via) {
     if (n < kDgramHeader || n > kDgramHeader + kChunk) return;
     Reader h{buf, n};
     if (h.get<uint16_t>() != kMagic) return;
@@ -2081,11 +2122,11 @@ void NetSession::onDatagram(Sim& sim, const uint8_t* buf, size_t n, uint32_t ip,
         for (Conn* c : conns)
             if (c->hello && !c->kill && c->peer == peer) guest = c;
         if (!guest || peer == 0 || !sameBytes((const uint8_t*)&token, (const uint8_t*)&guest->token, sizeof token)) return;
+        if (via && guest->tun != via) return;  // (relayed: only for the guest whose pair it came by)
         if (type == DG_HELLO) {  // the guest's UDP address (what a NAT made of it): say we heard, with just the header
-            guest->udpIp = ip, guest->udpPort = port;
+            if (!via) guest->udpIp = ip, guest->udpPort = port;  // (a guest by code: its tunnel's path, whichever it is)
             guest->udpKnown = true;
-            const sockaddr_in to = udpAddress(guest->udpIp, guest->udpPort);
-            sendto(udpFd, (const char*)buf, (int)kDgramHeader, 0, (const sockaddr*)&to, sizeof to);
+            sendDgram(guest, buf, kDgramHeader);
             return;
         }
         const double t = clockNow();
@@ -2094,7 +2135,8 @@ void NetSession::onDatagram(Sim& sim, const uint8_t* buf, size_t n, uint32_t ip,
             if (size % 8 == 0) takeAcks(guest->streams, buf + kDgramHeader, size);
             return;
         }
-        if (!piece()) return;
+        if (!piece() || !simp) return;
+        Sim& sim = *simp;
         const int ci = findCar(sim, netId);
         if (!adopted || ci < 0 || !sim.cars[ci].remote) return;
         takeFragment(sim, netId, sq, frag, frags, buf + kDgramHeader, size, now);  // (whole, it goes on to the others it matters to: takeSnapshot)
@@ -2111,8 +2153,8 @@ void NetSession::onDatagram(Sim& sim, const uint8_t* buf, size_t n, uint32_t ip,
     }
     if (!piece() || peer == self) return;
     udpReady = true;
-    if (!adopted) return;
-    takeFragment(sim, netId, sq, frag, frags, buf + kDgramHeader, size, now);
+    if (!adopted || !simp) return;
+    takeFragment(*simp, netId, sq, frag, frags, buf + kDgramHeader, size, now);
 }
 
 void NetSession::takeFragment(Sim& sim, uint32_t netId, uint32_t sequence, uint8_t fragment, uint8_t fragments,
@@ -2168,7 +2210,7 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
     s.steer = r.get<int16_t>() / 16000.0f;
     s.brake = r.get<uint8_t>() / 255.0f;
     s.damage = r.get<uint16_t>() / 65535.0f;
-    s.status = r.get<uint8_t>() & 7;
+    s.status = r.get<uint8_t>() & 31;
     s.rpm = r.get<uint16_t>() / 3.0f;
     s.load = r.get<uint16_t>() / 65535.0f;
     s.boost = r.get<uint16_t>() / 6000.0f;
@@ -2224,6 +2266,9 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
     s.boost = clampd(s.boost, 0, 10);
     s.gear = (int8_t)std::min(std::max((int)s.gear, -1), (int)car.spec->gears.size());  // (it indexes the gear table)
     for (float& o : s.wheelOmega) o = (float)clampd(o, -3000, 3000);
+    // (The procedural world's window slid between when it was sent and now, here or there: into this machine's frame. Relayed as sent.)
+    const V3 fix = frameFix(s.t);
+    s.com += fix;
     // Stamped with the shared clock: how late it is says how far behind the others must be shown.
     const double shared = sharedTime(now);
     if (clockSynced()) {
@@ -2239,7 +2284,7 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
             // a car through everything between the old and new positions.
             rm->buf.clear();
             rm->shown = false;
-            rm->ease = V3();
+            rm->ease = V3(), rm->easeRot = Quat();
             rm->coastedTo = -1;
         }
     }
@@ -2253,7 +2298,13 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
             for (Conn* c : conns)
                 if (c->peer == ownerOf(netId) && c->hello && c->acks.size() < 256) c->acks.push_back({netId, sequence});
     }
-    if (role == HOST && ownerOf(netId) != self) relayState(sim, netId, s);  // (on to the other guests, each told against what they have)
+    if (role == HOST && ownerOf(netId) != self) {  // (on to the other guests, each told against what they have)
+        if (fix.x != 0 || fix.z != 0) {
+            Snap sent = s;
+            sent.com -= fix;
+            relayState(sim, netId, sent);
+        } else relayState(sim, netId, s);
+    }
     rm->buf.push_back(std::move(s));
     while (rm->buf.size() > 30) rm->buf.pop_front();
 }
@@ -2271,7 +2322,20 @@ void NetSession::applyRemotes(Sim& sim, double now) {
     const bool had = view.started();
     const double before = view.render;
     view.step(shared, need);
-    const double t = view.render, dt = had ? std::max(0.0, t - before) : 0;
+    // The vehicles themselves are shown now, not then (docs/plans/net-collisions.md): each one
+    // run on from its newest state on its own speed and turn, so a truck is where its owner has
+    // it (to a few tens of cm) and a crash happens at the same place on both machines. (Shown
+    // `kPlaybackDelay` and more behind, a truck at 65 km/h was 2.5 to 5 m back of where it
+    // really was: each player hit the other's past.) Chatter, lines and the sky keep the view.
+    // (Less the frame about to be run: its states are stamped after their physics, these are
+    // placed before ours, which then carries them on for the frame.)
+    const double frame = clampd(now - lastPlayNow, 0, 0.05);
+    lastPlayNow = now;
+    const double t = predict ? std::max(shared - frame, view.render) : view.render;
+    const double coastMax = predict ? net::kMaxLead : net::kMaxCoast;
+    const double dt = predict ? (vehicleAt >= 0 ? std::max(0.0, t - vehicleAt) : 0) : (had ? std::max(0.0, t - before) : 0);
+    vehicleAt = t;
+    vehicleLeadNow = 0;
     for (Remote* rm : remotes) {
         const int ci = findCar(sim, rm->netId);
         if (ci < 0 || rm->buf.empty()) continue;
@@ -2290,11 +2354,33 @@ void NetSession::applyRemotes(Sim& sim, double now) {
             alpha = n.t > a.t ? clampd((at - a.t) / (n.t - a.t), 0, 1) : 0;
             com = a.com + (n.com - a.com) * alpha;
             vel = a.vel + (n.vel - a.vel) * alpha;
-            if (&n == &a) {
-                com += a.vel * clampd(at - a.t, 0, net::kMaxCoast);  // nothing newer (lost, or late): coast briefly
-                if (at > a.t + net::kMaxCoast) vel = V3();
-            }
             rot = nlerp(a.rot, n.rot, alpha);
+            if (&n == &a) {  // nothing newer (late, lost, or shown now): run on from it, a while
+                const double ahead = clampd(at - a.t, 0, coastMax);
+                com += a.vel * ahead;
+                if (at > a.t + coastMax) vel = V3();
+                else if (predict && idx > 0 && ahead > 0) {  // (turning: on at the rate it was turning)
+                    const Snap& p = b[idx - 1];
+                    const double span = a.t - p.t;
+                    if (span > 1e-3 && span < 0.3) {
+                        // On the arc it was on, too: its way of going turns (seen from above) at the rate it turned
+                        // between the last two states. (Faster than a car can corner is a knock: straight on.)
+                        const double h0 = std::atan2(p.vel.z, p.vel.x), h1 = std::atan2(a.vel.z, a.vel.x);
+                        const double w = std::remainder(h1 - h0, 2 * M_PI) / span, sp = std::hypot(a.vel.x, a.vel.z);
+                        if (std::hypot(p.vel.x, p.vel.z) > 2 && sp > 2 && std::fabs(w) < 1.5 && std::fabs(w) * ahead > 1e-6) {
+                            const double half = w * ahead / 2, chord = std::sin(half) / half * ahead;
+                            const double ch = std::cos(h1 + half), sh = std::sin(h1 + half);
+                            com += V3(ch * sp * chord, 0, sh * sp * chord) - V3(a.vel.x, 0, a.vel.z) * ahead;
+                            vel = V3(std::cos(h1 + 2 * half) * sp, a.vel.y, std::sin(h1 + 2 * half) * sp);
+                        }
+                        Quat d = a.rot * Quat{p.rot.w, -p.rot.x, -p.rot.y, -p.rot.z};
+                        if (d.w < 0) d = Quat{-d.w, -d.x, -d.y, -d.z};
+                        const double sn = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+                        const double ang = 2 * std::atan2(sn, d.w);
+                        if (sn > 1e-9 && ang / span < 6) rot = Quat::axisAngle(V3(d.x, d.y, d.z) / sn, ang / span * ahead) * a.rot, rot.normalize();
+                    }
+                }
+            }
             out.resize(c.nodes.size());
             for (size_t i = 0; i < c.nodes.size(); i++)
                 out[i] = com + rot.rotate(c.restLocal[i] - rc + a.local[i] + (n.local[i] - a.local[i]) * alpha);
@@ -2309,29 +2395,64 @@ void NetSession::applyRemotes(Sim& sim, double now) {
         pose(t, now0, vel, rot, idx, alpha);
         // A jump (put back on its wheels, towed home) is a teleport, not a speed.
         const bool jumped = len((now0[0] - prev[0]) / 0.05 - vel) > 25;
-        const bool stopped = t >= rm->buf.back().t + net::kMaxCoast;
+        const bool stopped = t >= rm->buf.back().t + coastMax;
         // States that come in after a coast put it somewhere else: ease into that over a
         // moment rather than snapping (a real jump, a recovery, still snaps: takeSnapshot).
+        // (Shown now, it's always run on from the newest: each state that comes in corrects it.)
         const double newest = rm->buf.back().t;
+        if (shared - rm->newestArrival < 3) vehicleLeadNow = std::max(vehicleLeadNow, clampd(t - newest, 0, coastMax));
         if (rm->shown && rm->coastedTo >= 0 && newest > rm->coastedTo && !jumped) {
             rm->ease = rm->lastShown + rm->lastVel * dt - com;
-            if (len(rm->ease) > 3) rm->ease = V3();
+            rm->easeRot = rm->lastRot * Quat{rot.w, -rot.x, -rot.y, -rot.z};
+            if (rm->easeRot.w < 0) rm->easeRot = Quat{-rm->easeRot.w, -rm->easeRot.x, -rm->easeRot.y, -rm->easeRot.z};
+            if (len(rm->ease) > 3) rm->ease = V3(), rm->easeRot = Quat();
         }
-        rm->ease = jumped ? V3() : rm->ease * std::exp(-dt / 0.15);
+        const double keep = std::exp(-dt / 0.15);
+        rm->ease = jumped ? V3() : rm->ease * keep;
+        rm->easeRot = jumped ? Quat() : nlerp(Quat(), rm->easeRot, keep);
         if (len(rm->ease) < 1e-4) rm->ease = V3();
         rm->coastedTo = t > newest ? newest : -1;
         rm->lastShown = com + rm->ease, rm->lastVel = vel, rm->shown = true;
+        rm->lastRot = rm->easeRot * rot;
+        rm->lastRot.normalize();
+        const bool turned = rm->easeRot.w < 1 - 1e-12;
         // (One of ours is in a crash with it: it's on our physics till they part, then eased back.)
         const bool held = c.heldHere > 0 && !jumped;
         if (jumped) c.heldHere = 0, c.handBack = false, c.shoveV = c.shoveP = V3();
+        if (turned)
+            for (size_t i = 0; i < now0.size(); i++) now0[i] = com + rm->easeRot.rotate(now0[i] - com), prev[i] = com + rm->easeRot.rotate(prev[i] - com);
+        // Held, it runs on our physics from where it was guessed to be, at the speed it was
+        // guessed to have: off by what its driver did in the last latency (braking, it came in
+        // a metre or two a second too fast, and kept that, pushed along metres from where its
+        // owner had it). Once its owner's states have the crash in them too, and a moment past it
+        // (both machines have it at the same moment; the knock itself stays ours alone, or the
+        // damage comes out different), it's steered gently onto them: its speed toward theirs,
+        // with what closes the gap in place, over 0.15 s or so.
+        if (held && !rm->wasHeld) rm->heldAt = t;
+        rm->wasHeld = held;
+        if (held && predict && newest >= rm->heldAt + 0.15 && dt > 0) {
+            V3 p, v;
+            double M = 0;
+            for (const Node& n : c.nodes) p += n.p * n.m, v += n.v * n.m, M += n.m;
+            if (M > 0) {
+                p = p / M, v = v / M;
+                V3 want = vel + (com + rm->ease - p) / 0.3;
+                if (len(want - v) > 8) want = v + norm(want - v) * 8;  // (a wild guess isn't followed far)
+                const V3 dv = (want - v) * (1 - std::exp(-dt / 0.15));
+                for (Node& n : c.nodes) n.v += dv;
+            }
+        }
         if (c.handBack) c.handBackTo(now0, vel);
         c.settleShove(vel, frameDt);
         for (size_t i = 0; i < c.nodes.size() && !held; i++) {
             c.nodes[i].p = now0[i] + rm->ease + c.shoveP;
-            c.nodes[i].v = (jumped || stopped ? vel : (now0[i] - prev[i]) / 0.05) + c.shoveV;
+            // (One node that jumped between two states, a part torn loose and flung, a dent put back by a repair,
+            // is a teleport too, not a speed: as the whole body's, above.)
+            const V3 nodeVel = (now0[i] - prev[i]) / 0.05;
+            c.nodes[i].v = (jumped || stopped || len(nodeVel - vel) > 25 ? vel : nodeVel) + c.shoveV;
             c.nodes[i].f = V3();
         }
-        if (!held && !c.chassis.nodes.empty()) c.chassis.rot = rot;
+        if (!held && !c.chassis.nodes.empty()) c.chassis.rot = rm->lastRot;
         const Snap& s = rm->buf[std::min(idx + (alpha > 0.5), rm->buf.size() - 1)];
         const Snap& a = rm->buf[idx];
         const Snap& b = rm->buf[std::min(idx + 1, rm->buf.size() - 1)];
@@ -2359,6 +2480,8 @@ void NetSession::applyRemotes(Sim& sim, double now) {
         c.engineDead = s.status & 1;
         c.hydrolocked = (s.status >> 1) & 1;
         c.occupied = (s.status >> 2) & 1;
+        c.engineOff = (s.status >> 3) & 1;
+        c.battery = (s.status >> 4) & 1 ? 0.05 : std::max(c.battery, 0.8);  // (their charge isn't sent: only whether it's flat)
         c.sleeping = false;
         c.updateBounds();
         for (const auto& rl : s.ropeLen)  // (only the winch lines this vehicle works)
@@ -2376,6 +2499,7 @@ void NetSession::receive(Sim& sim, double now) {
     curNow = now;
     const double wall = clockNow();
     if (role == HOST) accept();
+    pumpUdp(wall);  // (a tunnel's bytes come over UDP: in before the connections are read)
     for (size_t i = 0; i < conns.size();) {
         Conn& c = *conns[i];
         if (role == HOST && !c.kill) {  // nobody sits on a slot saying nothing
@@ -2385,7 +2509,7 @@ void NetSession::receive(Sim& sim, double now) {
         readTcp(c);
         if (role == OFF) return;
         if (c.kill) flush(c);
-        if (c.fd < 0 || (c.kill && wall - c.killT > 0.5)) {  // (a refused guest gets half a second to read why)
+        if (!live(c) || (c.kill && wall - c.killT > 0.5)) {  // (a refused guest gets half a second to read why)
             dropConn(i);
             if (role == OFF) return;
         } else {
@@ -2405,7 +2529,7 @@ void NetSession::receive(Sim& sim, double now) {
         d.put<uint8_t>((uint8_t)self);
         d.put<uint32_t>(0), d.put<uint32_t>(0), d.put<uint8_t>(0), d.put<uint8_t>(1);
         d.put<uint64_t>(udpToken);
-        sendto(udpFd, (const char*)d.b.data(), (int)d.b.size(), 0, (sockaddr*)hostUdp, sizeof(sockaddr_in));
+        sendDgram(nullptr, d.b.data(), d.b.size());
     }
     if (role == HOST && now >= nextPing) {  // (the pings everyone sees on the player list)
         nextPing = now + 1.0;
@@ -2432,6 +2556,8 @@ void NetSession::receive(Sim& sim, double now) {
     expireTakes(now);
     release(&sim);
     sendAcks();
+    serviceRendezvous(wall);
+    serviceTunnels(wall);
 }
 
 void NetSession::sendClock(Conn* to) {
@@ -2475,7 +2601,7 @@ void NetSession::hold(Sim* sim, std::deque<Held>& q, double due, std::vector<uin
 }
 
 void NetSession::deliver(Sim* sim, Held& h, bool world) {
-    if (!world) gameIn.push_back({h.player, h.text});
+    if (!world) gameIn.push_back({h.player, h.text, h.due});
     else if (sim) apply(*sim, h.msg, -1);
 }
 
@@ -2504,15 +2630,17 @@ void NetSession::send(Sim& sim, double now) {
         seen.push_back(c.netId);
         auto k = std::find_if(knownCars.begin(), knownCars.end(), [&](const Known& kc) { return kc.netId == c.netId; });
         if (k == knownCars.end()) {
-            knownCars.push_back({c.netId, c.spec, c.buildCount, c.lampMode});
+            knownCars.push_back({c.netId, c.spec, c.buildCount, c.lampMode, c.paint});
             broadcast(spawnMsg(c));
         } else if (k->spec != c.spec || k->builds != c.buildCount) {
             k->spec = c.spec;
             k->builds = c.buildCount;
             k->lamps = c.lampMode;
+            k->paint = c.paint;
             broadcast(spawnMsg(c));
-        } else if (k->lamps != c.lampMode) {
+        } else if (k->lamps != c.lampMode || k->paint != c.paint) {
             k->lamps = c.lampMode;
+            k->paint = c.paint;
             broadcast(lampMsg(c));
         }
     }
@@ -2592,6 +2720,28 @@ void NetSession::setLevel(const std::string& text) {
     levelText = text;
     levelSerial++;
     sendLevel(nullptr);
+}
+
+void NetSession::scheduleShift(double t, const V3& d) {
+    pendingShift.t = t, pendingShift.d = d;
+    shiftOn = true;
+}
+
+void NetSession::shiftNow() {
+    if (!shiftOn) return;
+    for (Remote* rm : remotes)
+        for (Snap& s : rm->buf) s.com += pendingShift.d;
+    pastShifts.push_back(pendingShift);
+    while (pastShifts.size() > 4) pastShifts.erase(pastShifts.begin());
+    shiftOn = false;
+}
+
+V3 NetSession::frameFix(double stamp) const {
+    V3 fix;
+    if (shiftOn && stamp >= pendingShift.t) fix -= pendingShift.d;  // (sent from the new frame; here it's the old one still)
+    for (const WorldShift& s : pastShifts)
+        if (stamp < s.t) fix += s.d;  // (sent from the old frame, before a slide that's happened here)
+    return fix;
 }
 
 void NetSession::sendGame(const std::string& text) {
@@ -2828,3 +2978,582 @@ void Finder::poll(double now) {
 }
 
 }  // namespace net
+
+// ---- Join codes: the backend, hole punching, the relay, the tunnel ----------------------------
+// docs/plans/join-codes.md. A guest that joins by code has no TCP connection: its reliable
+// messages go over a ReliableStream (nettunnel.h) in "tunnel" packets on the same UDP socket and
+// path as its vehicle states: straight to the host once a punch got through, else wrapped for
+// the backend's relay. Above that it is an ordinary Conn: the same hello, password, secret,
+// limits and checks, and the host is the session's authority as for anyone.
+
+NetSession::Conn::~Conn() { delete tun; }
+
+bool NetSession::live(const Conn& c) const { return c.fd >= 0 || (c.tun && !c.tun->closed && !c.tun->stream.broken); }
+
+NetSession::Conn* NetSession::tunnelConn(uint32_t pair) {
+    for (Conn* c : conns)
+        if (c->tun && c->tun->pair == pair) return c;
+    return nullptr;
+}
+
+NetSession::Link NetSession::myLink() const {
+    if (role != CLIENT || conns.empty() || !conns[0]->tun) return LINK_ADDRESS;
+    return conns[0]->tun->relayed ? LINK_RELAYED : LINK_DIRECT;
+}
+
+NetSession::JoinStep NetSession::joinStep() const {
+    switch (joinStage) {
+        case 10: return JS_FINDING;
+        case 11: return JS_CONNECTING;
+        case 2: return !conns.empty() && conns[0]->tun && conns[0]->tun->relayed ? JS_RELAY : JS_HELLO;
+        case 1: return JS_HELLO;
+        case 3: return JS_LOADING;
+        default: return JS_NONE;
+    }
+}
+
+void NetSession::sendBackend(const std::vector<uint8_t>& b) {
+    if (udpFd < 0 || !rvPort) return;
+    const int n = udpSend(udpFd, b.data(), b.size(), rvIp, rvPort);
+    if (n > 0) bytesOut += n;
+}
+
+void NetSession::tunRaw(Tunnel& t, const uint8_t* p, size_t n) {
+    if (udpFd < 0) return;
+    int sent = 0;
+    if (t.relayed) {
+        if (!rvPort) return;
+        std::vector<uint8_t> f;
+        rv::relayFrame(f, t.pair, t.relayKey, p, n);
+        sent = udpSend(udpFd, f.data(), f.size(), rvIp, rvPort);
+    } else if (t.port) {
+        sent = udpSend(udpFd, p, n, t.ip, t.port);
+    }
+    if (sent > 0) bytesOut += sent;
+}
+
+void NetSession::tunPacket(Tunnel& t, uint8_t type, const uint8_t* body, size_t n) {
+    Writer w;
+    w.b.reserve(kTunHeader + n);
+    w.put<uint16_t>(kTunMagic);
+    w.put<uint8_t>(type);
+    w.put<uint32_t>(t.pair);
+    w.put<uint64_t>(t.secret);
+    if (n) w.b.insert(w.b.end(), body, body + n);
+    tunRaw(t, w.b.data(), w.b.size());
+}
+
+void NetSession::punchTo(uint32_t pair, uint64_t secret, uint8_t type, uint32_t ip, uint16_t port) {
+    if (udpFd < 0 || !port) return;
+    Writer w;
+    w.put<uint16_t>(kTunMagic);
+    w.put<uint8_t>(type);
+    w.put<uint32_t>(pair);
+    w.put<uint64_t>(secret);
+    const int n = udpSend(udpFd, w.b.data(), w.b.size(), ip, port);
+    if (n > 0) bytesOut += n;
+}
+
+void NetSession::sendDgram(Conn* to, const uint8_t* p, size_t n) {
+    if (udpFd < 0) return;
+    Conn* path = to ? to : role == CLIENT && !conns.empty() ? conns[0] : nullptr;
+    if (path && path->tun) return tunRaw(*path->tun, p, n);
+    int sent = 0;
+    if (to) {
+        sent = udpSend(udpFd, p, n, to->udpIp, to->udpPort);
+    } else if (hostUdp) {
+        const sockaddr_in& a = *(const sockaddr_in*)hostUdp;
+        sent = udpSend(udpFd, p, n, ntohl(a.sin_addr.s_addr), ntohs(a.sin_port));
+    }
+    if (sent > 0) bytesOut += sent;
+}
+
+void NetSession::pumpUdp(double now) {
+    if (udpFd < 0) return;
+    uint8_t buf[2048];
+    for (int k = 0; k < 2048; k++) {  // (a frame's worth; the rest waits, or the kernel drops it)
+        uint32_t ip = 0;
+        uint16_t port = 0;
+        const int n = udpRecv(udpFd, buf, sizeof buf, ip, port);
+        if (n <= 0) break;
+        bytesIn += n;
+        onPacket(buf, (size_t)n, ip, port, now, 0);
+    }
+}
+
+void NetSession::onPacket(const uint8_t* p, size_t n, uint32_t ip, uint16_t port, double now, uint32_t relayedPair) {
+    if (n < 4) return;
+    uint16_t magic;
+    std::memcpy(&magic, p, 2);
+    if (magic == kTunMagic) return onTunnel(p, n, ip, port, now, relayedPair);
+    if (magic == kMagic) {  // (a game datagram: read after the connections, as before: readUdp)
+        if (udpHeld.size() < 4096) udpHeld.push_back({std::vector<uint8_t>(p, p + n), ip, port, relayedPair});
+        return;
+    }
+    // From the backend, and only from its address: its answers, and what it relays to us.
+    if (magic != rv::kMagic || relayedPair || !rvPort || ip != rvIp || port != rvPort) return;
+    uint32_t pair = 0;
+    const uint8_t* inner = nullptr;
+    size_t len = 0;
+    if (rv::relayedPayload(p, n, pair, inner, len)) {
+        // (Only for a pair we were introduced to: the tunnel packet inside also has its secret.)
+        const bool ours = role == HOST ? tunnelConn(pair) != nullptr || std::any_of(intros.begin(), intros.end(), [&](const Intro& i) { return i.pair == pair; })
+                                       : pair == codeIntro.pair && pair != 0;
+        if (ours && pair) onPacket(inner, len, 0, 0, now, pair);
+        return;
+    }
+    onBackend(p, n, now);
+}
+
+NetSession::Conn* NetSession::acceptTunnel(const Intro& in, double now) {
+    const uint32_t ip = in.pubIp;
+    auto turnAway = [&](const char* why) -> Conn* {
+        refused++;
+        note("TURNED AWAY " + net::ipText(ip) + " (BY CODE): " + why);
+        return nullptr;
+    };
+    const auto strike = strikes.find(ip);
+    if (strike != strikes.end() && strike->second.until > now) return turnAway("locked out");
+    int theirs = 0;
+    for (const Conn* c : conns) theirs += c->ip == ip;
+    if (theirs >= net::kMaxConnsPerIp) return turnAway("too many connections from there");
+    if ((int)conns.size() >= net::kMaxConns) return turnAway("full");
+    Conn* c = new Conn;
+    c->ip = ip;
+    c->born = c->lastRx = now;
+    c->tun = new Tunnel;
+    c->tun->pair = in.pair, c->tun->secret = in.secret, c->tun->relayKey = in.relayKey;
+    c->tun->born = now;
+    c->tun->stream.lastHeard = now;
+    conns.push_back(c);
+    return c;
+}
+
+void NetSession::onTunnel(const uint8_t* p, size_t n, uint32_t ip, uint16_t port, double now, uint32_t relayedPair) {
+    if (n < kTunHeader) return;
+    Reader r{p, n};
+    r.get<uint16_t>();
+    const uint8_t type = r.get<uint8_t>();
+    const uint32_t pair = r.get<uint32_t>();
+    const uint64_t secret = r.get<uint64_t>();
+    if (!pair || (relayedPair && pair != relayedPair)) return;
+    const uint8_t* body = p + kTunHeader;
+    const size_t bn = n - kTunHeader;
+    auto secretIs = [&](uint64_t want) { return want && sameBytes((const uint8_t*)&secret, (const uint8_t*)&want, 8); };
+    auto stream = [&](Tunnel& t) {
+        switch (type) {
+            case T_DATA:
+                if (bn >= 4) {
+                    uint32_t sq;
+                    std::memcpy(&sq, body, 4);
+                    t.stream.onData(sq, body + 4, bn - 4, now);
+                }
+                break;
+            case T_ACK:
+                if (bn >= 12) {
+                    uint32_t next;
+                    uint64_t bits;
+                    std::memcpy(&next, body, 4);
+                    std::memcpy(&bits, body + 4, 8);
+                    t.stream.onAck(next, bits, now);
+                }
+                break;
+            case T_CLOSE:
+                t.closed = true;
+                if (role == CLIENT && lostWhy.empty()) lostWhy = bn && body[0] == 1 ? "THE HOST REMOVED YOU FROM THE GAME" : "THE HOST CLOSED THE GAME";
+                break;
+            default: break;
+        }
+    };
+    if (role == CLIENT || joinStage == 11) {  // ---- a guest: only the host it was introduced to
+        if (pair != codeIntro.pair || !secretIs(codeIntro.secret)) return;
+        if (type == T_PUNCH || type == T_PUNCH_ACK) {
+            if (relayedPair) return;
+            if (type == T_PUNCH) punchTo(pair, secret, T_PUNCH_ACK, ip, port);
+            if (joinStage == 11 && !forceRelay && !directFound) directFound = true, directIp = ip, directPort = port;
+            return;
+        }
+        Conn* c = tunnelConn(pair);
+        if (!c) return;
+        if (!relayedPair && (ip != c->tun->ip || port != c->tun->port)) return;  // (straight: only from where the punch found the host)
+        stream(*c->tun);
+        return;
+    }
+    if (role != HOST) return;  // ---- the host: a guest it was introduced to
+    Conn* c = tunnelConn(pair);
+    const Intro* in = nullptr;
+    for (const Intro& x : intros)
+        if (x.pair == pair) in = &x;
+    if (!secretIs(c ? c->tun->secret : in ? in->secret : 0)) return;  // (a stranger's packet: dropped, unanswered)
+    if (type == T_PUNCH || type == T_PUNCH_ACK) {
+        if (!relayedPair && type == T_PUNCH) punchTo(pair, secret, T_PUNCH_ACK, ip, port);
+        return;
+    }
+    if (!c) {
+        if (type != T_DATA || !in) return;
+        c = acceptTunnel(*in, now);
+        if (!c) return;
+    }
+    Tunnel& t = *c->tun;
+    // (Answers go back the way the guest's last word came: it picks the path, the host follows.)
+    if (relayedPair) t.relayed = true;
+    else t.relayed = false, t.ip = ip, t.port = port;
+    stream(t);
+}
+
+void NetSession::serviceTunnels(double now) {
+    for (Conn* c : conns) {
+        if (!c->tun || c->tun->closed) continue;
+        Tunnel& t = *c->tun;
+        flush(*c);
+        t.stream.service(now, [&](const net::ReliableStream::Out& o) {
+            uint8_t body[12 + net::ReliableStream::kSegment];
+            std::memcpy(body, &o.seq, 4);
+            if (o.ack) {
+                std::memcpy(body + 4, &o.bits, 8);
+                tunPacket(t, T_ACK, body, 12);
+            } else {
+                std::memcpy(body + 4, o.p, o.n);
+                tunPacket(t, T_DATA, body, 4 + o.n);
+            }
+        });
+        if (now - t.stream.lastHeard > kTunnelDead) t.closed = true;
+        // A punched path gone quiet (a NAT forgot it): the guest moves to the relay, the host follows.
+        if (role == CLIENT && !t.relayed && t.relayKey && now - t.stream.lastHeard > kDirectQuiet && !forceRelay) {
+            t.relayed = true;
+            events.push_back("THE DIRECT LINE TO THE HOST WENT QUIET: USING THE RELAY");
+        }
+    }
+}
+
+bool NetSession::resolveRendezvous(std::string& why) {
+    std::string host;
+    int port = 0;
+    if (rendezvous.empty()) {
+        why = "join codes aren't set up in this game (no join-code server)";
+        return false;
+    }
+    if (!net::parseAddress(rendezvous, host, port, &why, rv::kDefaultPort)) return false;
+    uint32_t ip = 0;
+    if (!resolveIPv4(host, ip)) {
+        why = "can't find the join-code server (" + host + "): check your internet";
+        return false;
+    }
+    rvIp = ip, rvPort = (uint16_t)port;
+    return true;
+}
+
+void NetSession::registerCode(double now) {
+    (void)now;
+    rv::Msg m;
+    m.type = rv::RV_REGISTER, m.version = net::kVersion, m.players = (uint8_t)playerCount(), m.maxPlayers = (uint8_t)maxPlayers;
+    m.flags = password.empty() ? 0 : rv::FL_LOCKED;
+    m.nonce = rvNonce;
+    if (shareLocals) {
+        const uint16_t mine = boundPort(udpFd);
+        for (const net::LocalAddress& a : net::localAddresses())
+            if ((int)m.locals.size() < rv::kMaxLocals) m.locals.push_back({a.addr, mine});
+    }
+    sendBackend(rv::encode(m));
+}
+
+bool NetSession::openToFriends() {
+    if (role != HOST || udpFd < 0) {
+        codeState = CODE_FAILED, codeError = "start a game first";
+        return false;
+    }
+    if (codeState == CODE_OPEN || codeState == CODE_ASKING) return true;
+    std::string why;
+    if (!resolveRendezvous(why)) {
+        codeState = CODE_FAILED, codeError = why;
+        return false;
+    }
+    codeError.clear();
+    joinCode.clear();
+    rvKey = 0;
+    rvNonce = net::random64();
+    rvTries = 0;
+    rvNext = 0;
+    codeState = CODE_ASKING;
+    serviceRendezvous(clockNow());
+    return true;
+}
+
+void NetSession::closeToFriends() {
+    if (role != HOST) return;
+    if (codeState == CODE_OPEN && rvKey) {
+        const bool guests = std::any_of(conns.begin(), conns.end(), [](const Conn* c) { return c->tun != nullptr; });
+        if (rvOldKey) {  // (one closed code kept alive at a time: the older one goes now)
+            rv::Msg m;
+            m.type = rv::RV_CLOSE, m.code = codeWanted, m.key = rvOldKey;
+            sendBackend(rv::encode(m));
+            rvOldKey = 0;
+        }
+        rv::Msg m;
+        m.type = rv::RV_CLOSE, m.code = joinCode, m.key = rvKey, m.flags = guests ? rv::FL_RETIRE : 0;
+        sendBackend(rv::encode(m));
+        if (guests) rvOldKey = rvKey, codeWanted = joinCode, rvOldNext = clockNow() + rv::kKeepEvery;
+    }
+    codeState = CODE_OFF;
+    joinCode.clear();
+    rvKey = 0;
+    intros.clear();
+}
+
+void NetSession::kick(int peer) {
+    if (role != HOST || peer <= 0) return;
+    const double now = clockNow();
+    for (Conn* c : conns)
+        if (c->hello && c->peer == peer && !c->kill) {
+            Writer w;
+            w.str("the host removed you from the game");
+            sendTo(*c, frame(MSG_REJECT, w));
+            strikes[c->ip].until = now + 120;  // (not straight back in)
+            note(players[peer].name + " KICKED");
+            c->kill = true, c->killT = now;
+        }
+}
+
+void NetSession::serviceRendezvous(double now) {
+    if (role != HOST || !rvPort) return;
+    if (codeState == CODE_ASKING && now >= rvNext) {
+        if (rvTries >= 8) {
+            codeState = CODE_FAILED;
+            codeError = "can't reach the join-code server: check your internet, or have friends join by address";
+            return;
+        }
+        rvTries++;
+        rvNext = now + 1.0;
+        registerCode(now);
+    }
+    const int as = playerCount() | maxPlayers << 8 | (password.empty() ? 0 : 1 << 16);
+    if (codeState == CODE_OPEN && as != keptAs) rvNext = std::min(rvNext, std::max(now, rvLastKeep + 1.0));  // (full, or room again: the backend's answers to lookups say so)
+    if (codeState == CODE_OPEN && rvKey && now >= rvNext) {
+        rvNext = now + rv::kKeepEvery;
+        rvLastKeep = now;
+        keptAs = as;
+        rv::Msg m;
+        m.type = rv::RV_KEEP, m.code = joinCode, m.key = rvKey, m.players = (uint8_t)playerCount(), m.maxPlayers = (uint8_t)maxPlayers;
+        m.flags = password.empty() ? 0 : rv::FL_LOCKED;
+        sendBackend(rv::encode(m));
+        if (now - rvHeard > 3.5 * rv::kKeepEvery) {  // (the backend forgot us, or can't be reached: a new code)
+            events.push_back("THE JOIN CODE WAS LOST: GETTING A NEW ONE");
+            codeState = CODE_ASKING, rvNonce = net::random64(), rvTries = 0, rvNext = now;
+        }
+    }
+    if (rvOldKey) {  // a closed code its guests still use (their relay): alive while any is in
+        const bool guests = std::any_of(conns.begin(), conns.end(), [](const Conn* c) { return c->tun != nullptr; });
+        rv::Msg m;
+        m.code = codeWanted, m.key = rvOldKey;
+        if (!guests) {
+            m.type = rv::RV_CLOSE;
+            sendBackend(rv::encode(m));
+            rvOldKey = 0;
+        } else if (now >= rvOldNext) {
+            rvOldNext = now + rv::kKeepEvery;
+            m.type = rv::RV_KEEP, m.maxPlayers = (uint8_t)maxPlayers, m.players = (uint8_t)playerCount(), m.flags = rv::FL_RETIRE;
+            sendBackend(rv::encode(m));
+        }
+    }
+    // Punching towards the guests the backend introduced, until their tunnel opens.
+    for (size_t i = 0; i < intros.size();) {
+        Intro& in = intros[i];
+        if (now - in.born > 120) {
+            intros.erase(intros.begin() + (long)i);
+            continue;
+        }
+        if (now - in.born < punchSecs + 1.0 && now >= in.nextPunch && !tunnelConn(in.pair)) {
+            in.nextPunch = now + 0.1;
+            for (const auto& c : in.cands) punchTo(in.pair, in.secret, T_PUNCH, c.first, c.second);
+        }
+        i++;
+    }
+}
+
+void NetSession::onBackend(const uint8_t* p, size_t n, double now) {
+    rv::Msg m;
+    if (!rv::decode(p, n, m)) return;
+    rvHeard = now;
+    const bool asking = joinStage == 10;
+    if (m.proto != rv::kProto || (m.type == rv::RV_FAIL && m.reason == rv::F_PROTO)) {
+        const std::string why = "the join-code server runs a different version";
+        if (asking) joinFail = JF_BACKEND, error = why;
+        else if (role == HOST && codeState == CODE_ASKING) codeState = CODE_FAILED, codeError = why;
+        return;
+    }
+    switch (m.type) {
+        case rv::RV_REGISTERED:
+            if (role != HOST || codeState != CODE_ASKING || m.nonce != rvNonce) return;
+            joinCode = m.code, rvKey = m.key;
+            codeState = CODE_OPEN;
+            rvNext = now + rv::kKeepEvery;
+            events.push_back("OPEN TO FRIENDS: CODE " + rv::formatCode(joinCode));
+            return;
+        case rv::RV_KEPT: return;
+        case rv::RV_INTRO: {
+            if (role == HOST && m.nonce == 0) {
+                if (codeState != CODE_OPEN) return;  // (closed to friends: nobody new)
+                bool known = false;
+                for (const Intro& in : intros) known |= in.pair == m.pair;
+                if (!known && intros.size() < 64) {
+                    Intro in;
+                    in.pair = m.pair, in.secret = m.secret, in.relayKey = m.key, in.pubIp = m.seen.ip, in.pubPort = m.seen.port;
+                    in.cands.push_back({m.seen.ip, m.seen.port});
+                    for (const rv::Endpoint& e : m.locals) in.cands.push_back({e.ip, e.port});
+                    in.born = now, in.nextPunch = now;
+                    intros.push_back(in);
+                }
+                rv::Msg a;
+                a.type = rv::RV_INTRO_ACK, a.code = joinCode, a.key = rvKey, a.pair = m.pair;
+                sendBackend(rv::encode(a));
+                serviceRendezvous(now);  // (punch at once)
+                return;
+            }
+            if (!asking || m.nonce != rvNonce) return;
+            codeIntro = Intro();
+            codeIntro.pair = m.pair, codeIntro.secret = m.secret, codeIntro.relayKey = m.key, codeIntro.pubIp = m.seen.ip, codeIntro.pubPort = m.seen.port;
+            codeIntro.cands.push_back({m.seen.ip, m.seen.port});
+            for (const rv::Endpoint& e : m.locals) codeIntro.cands.push_back({e.ip, e.port});
+            joinStage = 11;
+            punchT0 = now, nextPunch = 0;
+            directFound = false;
+            return;
+        }
+        case rv::RV_COOKIE:
+            if (!asking || m.nonce != rvNonce) return;
+            rvCookie = m.cookie;
+            rvNext = 0;  // (ask again at once, with it)
+            return;
+        case rv::RV_FAIL: {
+            if (asking && m.nonce == rvNonce) {
+                failPlayers = m.players, failMax = m.maxPlayers;
+                switch (m.reason) {
+                    case rv::F_NOT_FOUND: joinFail = JF_NOT_FOUND, error = "no game has that code"; break;
+                    case rv::F_FULL: joinFail = JF_FULL, error = "that game is full"; break;
+                    case rv::F_OLDER: joinFail = JF_OLDER, error = std::string("your game is older than your friend's: update to ") + net::kRelease + " or newer"; break;
+                    case rv::F_NEWER: joinFail = JF_NEWER, error = "your friend's game is older than yours: they need to update"; break;
+                    case rv::F_BUSY: joinFail = JF_BUSY, error = "too many tries: wait a minute"; break;
+                    default: joinFail = JF_OTHER, error = "the join-code server said no"; break;
+                }
+                return;
+            }
+            if (role != HOST) return;
+            if (codeState == CODE_ASKING && m.nonce == rvNonce) {
+                codeState = CODE_FAILED;
+                codeError = m.reason == rv::F_BUSY ? "the join-code server is busy, or you have too many codes open: try again in a minute" : "the join-code server said no";
+            } else if (m.reason == rv::F_GONE && codeState == CODE_OPEN) {
+                events.push_back("THE JOIN CODE EXPIRED: GETTING A NEW ONE");
+                codeState = CODE_ASKING, rvNonce = net::random64(), rvTries = 0, rvNext = now;
+            }
+            return;
+        }
+        default: return;
+    }
+}
+
+bool NetSession::beginJoinCode(const std::string& code, const std::string& name, double timeout) {
+    close();
+    passwordIssue = PW_OK;
+    joinFail = JF_NONE;
+    lostWhy.clear();
+    error.clear();
+    netInit();
+    codeWanted = rv::normalizeCode(code);
+    if (codeWanted.empty()) {
+        joinFail = JF_NOT_A_CODE;
+        error = "that isn't a join code: six letters and digits, like KX7-M4Q";
+        return false;
+    }
+    std::string why;
+    if (!resolveRendezvous(why)) {
+        joinFail = JF_BACKEND;
+        error = why;
+        return false;
+    }
+    udpFd = udpOpen(0, 0);
+    if (udpFd < 0) {
+        joinFail = JF_OTHER;
+        error = "can't open a network socket";
+        return false;
+    }
+    joinAddress = "code " + rv::formatCode(codeWanted);
+    joinName = net::sanitize(name, net::kMaxNameLen);
+    if (joinName.empty()) joinName = "PLAYER";
+    joinTimeout = timeout;
+    rvNonce = net::random64();
+    rvCookie = 0;
+    rvNext = 0;
+    rvHeard = 0;
+    joinStage = 10;
+    joinT0 = clockNow();
+    return true;
+}
+
+bool NetSession::joinWithCode(const std::string& code, const std::string& name, double timeout) {
+    if (!beginJoinCode(code, name, timeout)) return false;
+    for (;;) {
+        const int st = pollJoin();
+        if (st > 0) return true;
+        if (st < 0) return false;
+        pollfd rp{};
+        rp.fd = udpFd;
+        rp.events = POLLIN;
+        if (rp.fd >= 0) pollFds(&rp, 1, 5);
+    }
+}
+
+int NetSession::pollCodeJoin(double now) {
+    pumpUdp(now);
+    if (joinFail != JF_NONE) return -1;
+    if (joinStage == 10) {  // asking the backend where the code's game is
+        if (now >= rvNext) {
+            rv::Msg m;
+            m.type = rv::RV_LOOKUP, m.version = net::kVersion, m.code = codeWanted, m.nonce = rvNonce, m.cookie = rvCookie;
+            if (shareLocals) {
+                const uint16_t mine = boundPort(udpFd);
+                for (const net::LocalAddress& a : net::localAddresses())
+                    if ((int)m.locals.size() < rv::kMaxLocals) m.locals.push_back({a.addr, mine});
+            }
+            sendBackend(rv::encode(m));
+            rvNext = now + 0.7;
+        }
+        if (joinStage == 10 && now - joinT0 > 6) {
+            joinFail = JF_BACKEND;
+            error = rvHeard > 0 ? "the join-code server stopped answering" : "can't reach the join-code server: check your internet, or join by address";
+            return -1;
+        }
+        if (joinStage == 10) return 0;
+    }
+    if (joinStage == 11) {  // punching: both send at once; the first to get through is the path
+        if (!directFound && !forceRelay && now - punchT0 < punchSecs) {
+            if (now >= nextPunch) {
+                nextPunch = now + 0.1;
+                for (const auto& c : codeIntro.cands) punchTo(codeIntro.pair, codeIntro.secret, T_PUNCH, c.first, c.second);
+            }
+            return 0;
+        }
+        Conn* c = new Conn;
+        c->peer = 0;
+        c->born = c->lastRx = now;
+        c->tun = new Tunnel;
+        Tunnel& t = *c->tun;
+        t.pair = codeIntro.pair, t.secret = codeIntro.secret, t.relayKey = codeIntro.relayKey;
+        t.relayed = !directFound;
+        t.ip = directIp, t.port = directPort;
+        t.born = now;
+        t.stream.lastHeard = now;
+        conns.push_back(c);
+        delete (sockaddr_in*)hostUdp;
+        hostUdp = new sockaddr_in(sockAddr(directFound ? directIp : rvIp, directFound ? directPort : rvPort));  // (unused for sending: the tunnel's path is)
+        role = CLIENT;
+        Writer w;
+        w.put<uint16_t>(net::kVersion);
+        w.str(joinName);
+        sendTo(*c, frame(MSG_HELLO, w));
+        serviceTunnels(now);
+        joinStage = 2;
+        joinT0 = now;
+        joinTimeout = std::max(joinTimeout - (now - punchT0), 8.0);
+    }
+    return 0;
+}

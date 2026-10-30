@@ -18,7 +18,7 @@ typedef unsigned long long GLuint64;
 
 enum : GLenum {
     GL_FALSE_ = 0, GL_TRUE_ = 1,
-    GL_POINTS = 0x0000, GL_LINES = 0x0001, GL_TRIANGLES = 0x0004,
+    GL_POINTS = 0x0000, GL_LINES = 0x0001, GL_TRIANGLES = 0x0004, GL_TRIANGLE_STRIP = 0x0005,
     GL_DEPTH_BUFFER_BIT = 0x0100, GL_COLOR_BUFFER_BIT = 0x4000,
     GL_LEQUAL = 0x0203, GL_LESS = 0x0201, GL_GREATER = 0x0204,
     GL_SRC_ALPHA = 0x0302, GL_ONE_MINUS_SRC_ALPHA = 0x0303,
@@ -38,16 +38,16 @@ enum : GLenum {
     GL_TEXTURE0 = 0x84C0,
     GL_TEXTURE_COMPARE_MODE = 0x884C, GL_TEXTURE_COMPARE_FUNC = 0x884D, GL_COMPARE_REF_TO_TEXTURE = 0x884E,
     GL_ARRAY_BUFFER = 0x8892, GL_ELEMENT_ARRAY_BUFFER = 0x8893,
-    GL_STREAM_DRAW = 0x88E0, GL_STATIC_DRAW = 0x88E4, GL_DYNAMIC_DRAW = 0x88E8,
+    GL_STREAM_DRAW = 0x88E0, GL_STATIC_DRAW = 0x88E4, GL_DYNAMIC_DRAW = 0x88E8, GL_PIXEL_UNPACK_BUFFER = 0x88EC,
     GL_FRAGMENT_SHADER = 0x8B30, GL_VERTEX_SHADER = 0x8B31,
     GL_COMPILE_STATUS = 0x8B81, GL_LINK_STATUS = 0x8B82,
     GL_PROGRAM_POINT_SIZE = 0x8642,
     GL_FRAMEBUFFER_COMPLETE = 0x8CD5, GL_DEPTH_ATTACHMENT = 0x8D00, GL_FRAMEBUFFER = 0x8D40,
-    GL_NONE = 0, GL_BACK = 0x0405,
+    GL_NONE = 0, GL_BACK = 0x0405, GL_FRONT = 0x0404, GL_DEPTH_CLAMP = 0x864F, GL_CURRENT_PROGRAM = 0x8B8D,
     GL_ONE = 1, GL_RGBA = 0x1908, GL_HALF_FLOAT = 0x140B, GL_RG = 0x8227, GL_R16F = 0x822D,
     GL_RGBA16F = 0x881A, GL_RGBA32F = 0x8814, GL_R11F_G11F_B10F = 0x8C3A, GL_DEPTH_COMPONENT32F = 0x8CAC,
     GL_READ_FRAMEBUFFER = 0x8CA8, GL_DRAW_FRAMEBUFFER = 0x8CA9, GL_COLOR_ATTACHMENT0 = 0x8CE0,
-    GL_RENDERBUFFER = 0x8D41, GL_MAX_SAMPLES = 0x8D57,
+    GL_RENDERBUFFER = 0x8D41, GL_COLOR_ATTACHMENT1 = 0x8CE1, GL_R32F = 0x822E, GL_MAX_SAMPLES = 0x8D57,
     // Texture arrays and filtering (the ground's photo-scanned materials).
     GL_TEXTURE_2D_ARRAY = 0x8C1A, GL_SRGB8_ALPHA8 = 0x8C43, GL_RGBA8 = 0x8058, GL_REPEAT = 0x2901,
     GL_LINEAR_MIPMAP_LINEAR = 0x2703, GL_TEXTURE_MAX_ANISOTROPY = 0x84FE, GL_MAX_TEXTURE_MAX_ANISOTROPY = 0x84FF,
@@ -73,6 +73,7 @@ enum : GLenum {
     X(void, Disable, (GLenum))                                                                 \
     X(void, DepthFunc, (GLenum))                                                               \
     X(void, DepthMask, (GLboolean))                                                            \
+    X(void, ColorMask, (GLboolean, GLboolean, GLboolean, GLboolean))                           \
     X(void, BlendFunc, (GLenum, GLenum))                                                       \
     X(void, PolygonOffset, (GLfloat, GLfloat))                                                 \
     X(void, PixelStorei, (GLenum, GLint))                                                      \
@@ -95,6 +96,7 @@ enum : GLenum {
     X(void, Uniform1i, (GLint, GLint))                                                         \
     X(void, Uniform1f, (GLint, GLfloat))                                                       \
     X(void, Uniform2f, (GLint, GLfloat, GLfloat))                                              \
+    X(void, Uniform2i, (GLint, GLint, GLint))                                                  \
     X(void, Uniform3f, (GLint, GLfloat, GLfloat, GLfloat))                                     \
     X(void, Uniform4f, (GLint, GLfloat, GLfloat, GLfloat, GLfloat))                            \
     X(void, UniformMatrix4fv, (GLint, GLsizei, GLboolean, const GLfloat*))                     \
@@ -106,6 +108,7 @@ enum : GLenum {
     X(void, BindBuffer, (GLenum, GLuint))                                                      \
     X(void, BufferData, (GLenum, GLsizeiptr, const void*, GLenum))                             \
     X(void, BufferSubData, (GLenum, GLintptr, GLsizeiptr, const void*))                        \
+    X(void, GetBufferParameteriv, (GLenum, GLenum, GLint*))                                     \
     X(void, VertexAttribPointer, (GLuint, GLint, GLenum, GLboolean, GLsizei, const void*))     \
     X(void, EnableVertexAttribArray, (GLuint))                                                 \
     X(void, DrawArrays, (GLenum, GLint, GLsizei))                                              \
@@ -140,6 +143,8 @@ enum : GLenum {
     X(void, CompressedTexImage2D, (GLenum, GLint, GLenum, GLsizei, GLsizei, GLint, GLsizei, const void*)) \
     X(void, CompressedTexImage3D, (GLenum, GLint, GLenum, GLsizei, GLsizei, GLsizei, GLint, GLsizei, const void*)) \
     X(void, GenerateMipmap, (GLenum))                                                          \
+    X(void, FramebufferTextureLayer, (GLenum, GLenum, GLuint, GLint, GLint))                   \
+    X(void, DrawBuffers, (GLsizei, const GLenum*))                                             \
     X(void, VertexAttribDivisor, (GLuint, GLuint))                                             \
     X(void, DrawElementsInstanced, (GLenum, GLsizei, GLenum, const void*, GLsizei))            \
     X(void, DrawArraysInstanced, (GLenum, GLint, GLsizei, GLsizei))                            \
@@ -152,7 +157,12 @@ enum : GLenum {
     X(void, GetQueryObjectui64v, (GLuint, GLenum, GLuint64*))                                  \
     X(void, QueryCounter, (GLuint, GLenum))                                                    \
     X(void, Finish, (void))                                                                    \
-    X(void, DeleteProgram, (GLuint))
+    X(void, DeleteProgram, (GLuint))                                                           \
+    X(void, CullFace, (GLenum))                                                                \
+    X(GLboolean, IsProgram, (GLuint))                                                                \
+    X(void, GenSamplers, (GLsizei, GLuint*))                                                   \
+    X(void, BindSampler, (GLuint, GLuint))                                                     \
+    X(void, SamplerParameteri, (GLuint, GLenum, GLint))
 
 // Functions past OpenGL 3.3, loaded when the driver has them (null when not).
 #define CZ_GL_OPTIONAL(X)                                                                      \

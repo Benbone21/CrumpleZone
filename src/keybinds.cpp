@@ -57,7 +57,9 @@ const Info kInfo[KA_COUNT] = {
     {SC_O, false, "TOW STRAP", "key_strap", KG_RECOVERY, ANY, false, false},
     {SC_R, false, "REPAIR (TWICE: RESPAWN)", "key_repair", KG_RECOVERY, ANY, false, false},
     {SC_T, false, "BACK ON ITS WHEELS", "key_flip", KG_RECOVERY, ANY, false, false},
-    {SC_U, false, "AUTOPILOT", "key_autopilot", KG_RECOVERY, ANY, false, false},
+    {SC_U, false, "AUTOPILOT: START / STOP", "key_autopilot", KG_RECOVERY, ANY, false, false},
+    {SC_U, true, "AUTOPILOT: WHERE TO", "key_autopilotpick", KG_RECOVERY, ANY, false, false},
+    {SC_J, true, "JOBS", "key_jobs", KG_RECOVERY, ANY, false, false},
     // ON FOOT
     {SC_J, false, "GET OUT / IN", "key_getinout", KG_FOOT, ANY, false, false},
     {SC_E, false, "INTERACT (HOLD)", "key_interact", KG_FOOT, F, true, false},
@@ -73,7 +75,6 @@ const Info kInfo[KA_COUNT] = {
     {SC_F3, false, "DEBUG INFO", "key_devfps", KG_VIEW, ANY, false, false},
     // GAME
     {SC_ESCAPE, false, "MENU", "key_menu", KG_GAME, ANY, false, false},
-    {SC_F6, false, "PAUSE", "key_pause", KG_GAME, ANY, false, false},
     {SC_H, false, "CONTROLS OVERLAY", "key_help", KG_GAME, ANY, false, false},
     {SC_F11, false, "FULLSCREEN", "key_fullscreen", KG_GAME, ANY, false, false},
     {SC_RETURN, false, "CHAT", "key_chat", KG_GAME, ANY, false, false},
@@ -95,6 +96,7 @@ const Info kInfo[KA_COUNT] = {
     {SC_LEFTBRACKET, false, "SLOW MOTION: SLOWER", "key_devslower", KG_DEV, ANY, false, true},
     {SC_RIGHTBRACKET, false, "SLOW MOTION: FASTER", "key_devfaster", KG_DEV, ANY, false, true},
     {SC_F2, false, "LEVEL EDITOR HERE", "key_deveditor", KG_DEV, ANY, false, true},
+    {SC_F8, false, "FREE CAM", "key_devfreecam", KG_DEV, ANY, false, true},
     {SC_J, false, "SCENARIO CHECKS LIST", "key_devscenario", KG_DEV, SCN, false, true},
 };
 static_assert(sizeof kInfo / sizeof kInfo[0] == KA_COUNT, "one kInfo row per KeyAction");
@@ -264,6 +266,10 @@ Keybinds::Press Keybinds::resolve(int sc, bool withShift, bool fromPad, unsigned
 }
 
 bool Keybinds::loadSetting(const std::string& name, int value) {
+    if (name == "key_pause") {  // (the old pause key: gone, Esc's menu pauses; an old file's P there moved the parking brake aside)
+        legacyPauseOnP = value == SC_P;
+        return true;
+    }
     for (int a = 0; a < KA_COUNT; a++) {
         if (name != kInfo[a].setting) continue;
         code[a] = value & 4095;
@@ -276,6 +282,12 @@ bool Keybinds::loadSetting(const std::string& name, int value) {
 
 void Keybinds::sanitize() {
     auto usable = [&](int a) { return (code[a] == 0 && loaded[a]) || bindable(code[a]) || (a == KA_MENU && code[a] == SC_ESCAPE); };
+    // A file saved before the parking brake had P (pause was on P): the brake went aside to an F key. It comes back to P.
+    if (legacyPauseOnP && (!loaded[KA_PARK_BRAKE] || (code[KA_PARK_BRAKE] >= 64 && code[KA_PARK_BRAKE] <= 66 && !shift[KA_PARK_BRAKE]))) {
+        code[KA_PARK_BRAKE] = kInfo[KA_PARK_BRAKE].def, shift[KA_PARK_BRAKE] = kInfo[KA_PARK_BRAKE].shift;
+        loaded[KA_PARK_BRAKE] = true;
+    }
+    legacyPauseOnP = false;
     // An action added since the file was saved (its key is a default) whose key a saved binding took moves aside
     // to a free F key, rather than throw away every binding.
     for (int a = 0; a < KA_COUNT; a++) {
@@ -286,7 +298,7 @@ void Keybinds::sanitize() {
         code[a] = 0, shift[a] = false;
         for (int f : {64, 65, 66}) {  // F7 F8 F9 (not the dev menu's F12)
             bool used = false;
-            for (int b = 0; b < KA_COUNT; b++) used |= code[b] == f && b != a;
+            for (int b = 0; b < KA_COUNT; b++) used |= code[b] == f && b != a && kInfo[b].gated == kInfo[a].gated;  // (a dev key on it, FREE CAM's F8, answers only in DEV KEYS mode)
             if (!used) {
                 code[a] = f;
                 break;

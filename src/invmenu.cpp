@@ -50,6 +50,8 @@ std::string InvMenu::describe(TrunkRef r) {
                 case TOOL_HAMMER: return "HAMMER: KNOCKS A CV AXLE OUT OF ITS HUB AND A TIE ROD OFF ITS KNUCKLE";
                 case TOOL_PRY_BAR: return "PRY BAR: LEVERS A BENT CONTROL ARM OR SWAY BAR LINK BACK OUT";
                 case TOOL_TIRE_IRONS: return "TIRE IRONS: GET A TIRE OFF ITS RIM AND BACK ON";
+                case TOOL_JUMP_PACK: return "JUMP PACK: HOLD E AT A DEAD BATTERY AND IT STARTS";
+                case TOOL_CABLES: return "JUMPER CABLES: CLAMP THEM FROM A RUNNING VEHICLE'S BATTERY TO A DEAD ONE";
                 default: break;
             }
             break;

@@ -1,5 +1,5 @@
 // The game's self-updater (docs/update-signing-keys.md, docs/server-updates-setup.md): on launch, and when a multiplayer host turns
-// out to run a newer version, it fetches the signed manifest from the owner's server (updatecore.h), checks its signature with the
+// out to run a newer version, it fetches the signed manifest from the newest GitHub release (updatekeys.h, updatecore.h), checks its signature with the
 // key compiled into the game, and offers UPDATE NOW / LATER. UPDATE NOW downloads the platform's zip (with progress), checks its size
 // and SHA-256, unpacks it beside the install, swaps it in (the version before is kept for rollback) and restarts:
 //  - Linux (~/.local/share/crumplezone/app) and Mac (the .app): swapped while running, then the new one is started.

@@ -84,25 +84,32 @@ std::vector<std::string> wrap(Renderer& r, const std::string& text, float s, flo
 
 bool shown() { return update::status().phase != update::Phase::Idle; }
 
+// In the menus' look (mainmenudraw.cpp, mpmenudraw.cpp): a dark panel with the amber edge and underlined title, the choices as a
+// column of rows (the focused one with the amber bar and amber words), the key hints along its bottom.
 void draw(Renderer& r, int W, int H, bool padLast) {
     hits.clear();
     const update::Status st = update::status();
     if (st.phase == update::Phase::Idle) return;
     clockNow += 1.0f / 60.0f;
+    const float kAmber[3] = {1.0f, 0.75f, 0.3f}, kGrey[3] = {0.62f, 0.64f, 0.68f}, kPanel[3] = {0.03f, 0.035f, 0.045f};
     const float u = std::max(0.75f, H / 720.0f);
-    const float big = hud::px(2.6f * u), mid = hud::px(1.6f * u), small = hud::px(1.2f * u);
-    r.rect(0, 0, (float)W, (float)H, 0, 0, 0, 0.55f);
-    const float bw = std::min(W - 40 * u, 760 * u), x = (W - bw) / 2, pad = 22 * u;
+    const float big = hud::px(2.6f * u), mid = hud::px(1.6f * u), small = hud::px(1.2f * u), ts = hud::px(2.0f * u);
+    r.rect(0, 0, (float)W, (float)H, 0.0f, 0.0f, 0.0f, 0.6f);
+    const float bw = std::min(W - 40 * u, 760 * u), x = (W - bw) / 2, pad = 24 * u;
     const std::vector<std::string> lines = wrap(r, st.message, mid, bw - 2 * pad);
     const std::vector<Btn> bs = buttons(st);
     const bool bar = st.phase == update::Phase::Downloading;
-    const float bh = pad + 8 * big + 16 * u + lines.size() * (8 * mid + 6 * u) + (bar ? 40 * u : 0) + (bs.empty() ? 0 : 64 * u) + pad;
+    const float rowH = 44 * u, rowGap = 6 * u;
+    const float rowsH = bs.empty() ? 0 : 18 * u + bs.size() * rowH + (bs.size() - 1) * rowGap + 14 * u + 8 * small;
+    const float bh = pad + 8 * big + 20 * u + lines.size() * (8 * mid + 6 * u) + (bar ? 40 * u : 0) + rowsH + pad;
     const float y = (H - bh) / 2;
-    hud::pill(r, x, y, bw, bh, 0.08f, 0.09f, 0.1f, 0.94f);
-    r.rect(x, y, bw, 3 * u, 1.0f, 0.72f, 0.2f, 1);
+    hud::pill(r, x, y, bw, bh, kPanel[0], kPanel[1], kPanel[2], 0.94f);
+    r.rect(x, y + 2 * u, 4 * u, bh - 4 * u, kAmber[0], kAmber[1], kAmber[2], 1);
     float cy = y + pad;
-    hud::label(r, x + pad, cy, big, st.title.empty() ? "UPDATE" : st.title, 1.0f, 0.72f, 0.2f);
-    cy += 8 * big + 16 * u;
+    const std::string title = st.title.empty() ? "UPDATE" : st.title;
+    hud::label(r, x + pad, cy, big, title, kAmber[0], kAmber[1], kAmber[2]);
+    r.rect(x + pad + 2 * u, cy + 8 * big + 4 * u, std::min(bw - 2 * pad, std::max(120 * u, r.textWidth(title, big))), 2 * u, kAmber[0], kAmber[1], kAmber[2], 0.8f);
+    cy += 8 * big + 20 * u;
     for (const std::string& l : lines) {
         r.text(x + pad, cy, mid, l, 0.88f, 0.88f, 0.9f, 1);
         cy += 8 * mid + 6 * u;
@@ -110,30 +117,36 @@ void draw(Renderer& r, int W, int H, bool padLast) {
     if (bar) {
         const float w = bw - 2 * pad, h = 14 * u;
         cy += 8 * u;
-        r.rect(x + pad, cy, w, h, 0.2f, 0.22f, 0.24f, 1);
-        if (st.progress >= 0) r.rect(x + pad, cy, w * st.progress, h, 1.0f, 0.72f, 0.2f, 1);
+        r.rect(x + pad, cy, w, h, 0.0f, 0.0f, 0.0f, 0.55f);
+        if (st.progress >= 0) r.rect(x + pad, cy, w * st.progress, h, kAmber[0], kAmber[1], kAmber[2], 1);
         char b[96];
         if (st.total) std::snprintf(b, sizeof b, "%.1f OF %.1f MB", st.got / 1e6, st.total / 1e6);
         else std::snprintf(b, sizeof b, "%.1f MB", st.got / 1e6);
-        r.text(x + pad, cy + h + 6 * u, small, b, 0.7f, 0.72f, 0.75f, 1);
+        r.text(x + pad, cy + h + 6 * u, small, b, kGrey[0], kGrey[1], kGrey[2], 1);
         cy += 32 * u;
     }
     if (bs.empty()) return;
     if (sel >= (int)bs.size()) sel = 0;
     cy += 18 * u;
-    const float bth = 40 * u, gap = 12 * u, ts = hud::px(1.8f * u);
-    float bx = x + pad;
+    float rw = 0;
+    for (Btn b : bs) rw = std::max(rw, r.textWidth(label(b), ts) + 64 * u);
+    rw = std::min(bw - 2 * pad, std::max(rw, 300 * u));
     for (size_t i = 0; i < bs.size(); i++) {
         const std::string t = bs[i] == B_COPY && copiedAt >= 0 && clockNow - copiedAt < 2 ? "COPIED" : label(bs[i]);
-        const float w = std::max(140 * u, r.textWidth(t, ts) + 36 * u);
         const bool foc = (int)i == sel;
-        hud::pill(r, bx, cy, w, bth, foc ? 0.95f : 0.2f, foc ? 0.68f : 0.22f, foc ? 0.18f : 0.24f, 1);
-        r.text(bx + (w - r.textWidth(t, ts)) / 2, cy + (bth - 7 * ts) / 2, ts, t, foc ? 0.05f : 0.9f, foc ? 0.05f : 0.9f, foc ? 0.05f : 0.92f, 1);
-        hits.push_back({bx, cy, w, bth, bs[i]});
-        bx += w + gap;
+        const float rx = x + pad;
+        if (foc) {
+            hud::pill(r, rx, cy, rw, rowH, 0.0f, 0.0f, 0.0f, 0.55f);
+            r.rect(rx, cy + 2 * u, 4 * u, rowH - 4 * u, kAmber[0], kAmber[1], kAmber[2], 1);
+        } else {
+            r.rect(rx, cy, rw, rowH, 0.0f, 0.0f, 0.0f, 0.3f);
+        }
+        hud::label(r, rx + 16 * u, cy + (rowH - 8 * ts) / 2, ts, t, foc ? kAmber[0] : 0.9f, foc ? kAmber[1] : 0.9f, foc ? kAmber[2] : 0.92f);
+        hits.push_back({rx, cy, rw, rowH, bs[i]});
+        cy += rowH + rowGap;
     }
-    const char* hint = padLast ? "D-PAD: CHOOSE   A: PRESS   B: BACK" : "ARROWS: CHOOSE   ENTER: PRESS   ESC: BACK";
-    r.text(x + bw - pad - r.textWidth(hint, small), cy + bth + 10 * u, small, hint, 0.6f, 0.62f, 0.66f, 1);
+    const char* hint = padLast ? "D-PAD: CHOOSE   A: PRESS   B: BACK" : "UP/DOWN: CHOOSE   ENTER: PRESS   ESC: BACK";
+    r.text(x + pad, cy + 8 * u, small, hint, kGrey[0], kGrey[1], kGrey[2], 0.9f);
 }
 
 bool key(int sc) {

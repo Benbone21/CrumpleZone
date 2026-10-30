@@ -2,6 +2,7 @@
 #include <atomic>
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -10,6 +11,8 @@
 #include "celltiles.h"
 #include "plants.h"
 #include "rivers.h"
+
+struct SectionFile;  // (sectionfile.h)
 
 // Oriented static box (ramps, walls, poles, bumps).
 struct Box {
@@ -52,6 +55,11 @@ struct Rock {
     bool partsDue = false;  // (placed while its world was being made: the world cuts it at the end, World::splitPendingRocks)
     V3 at;  // the point its pose turns it about (code-made: the middle of its points; scanned: the scan's middle)
 };
+// Scenery boulders scattered over the big map's grown country (onemapbuild.cpp: growRegionCountry) are added with seeds from kWholeRockSeeds on:
+// their single hull is what they are to the physics too (not cut into convex pieces: a few dm of slack in a hollow, off the trails, for a
+// fraction of the memory). Said by the seed, so a world from the cache and one built fresh agree.
+constexpr uint32_t kWholeRockSeeds = 0x40000000u;
+inline bool rockCutsIntoPieces(const Rock& k) { return k.scan >= 0 && k.r > 1.2 && (k.seed < kWholeRockSeeds || k.seed >= kWholeRockSeeds + 0x1000000u); }
 
 // Fallen log: a capsule from a to b.
 struct Log {
@@ -168,11 +176,17 @@ inline double surfaceGrip(Surface s) { return surfaceInfo(s).grip; }
 
 // MAP_WILDS is the clean ground that obstacle-section levels are set in: natural country with nothing laid out on it (no
 // course, pad, yard or park), dressed as one of the WildsKinds (World::wildsKind when it's built). Not on the map list: only levels use it.
-enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_WILDS, MAP_COUNT };
+// MAP_PROCEDURAL is the endless seeded world (procworld.h, wip/procworld: its id, 6, is kept for it here; without it a World(6) is
+// the proving ground). MAP_REAL (7): a real place's elevation model made into a map (realterrain.h, docs/real-terrain.md): the one
+// active real terrain.
+enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_WILDS, MAP_PROCEDURAL, MAP_REAL, MAP_COUNT };
 // What the wilds look like: which ground and growth surround the obstacle (the section's biome, biome.h).
 enum WildsKind { WILDS_MEADOW, WILDS_DESERT, WILDS_FOREST, WILDS_CANYON, WILDS_WETLAND, WILDS_UPLAND, WILDS_COUNT };
 const char* wildsKindName(int kind);
 const char* mapName(int map);  // as the menu shows it
+// A map as a pick on the map list: the Mountain, the Frontier and the Open Country are start points on the Backcountry's big map now
+// (onemap.h): "BACKCOUNTRY: MOUNTAIN".
+std::string mapPickName(int map);
 // The map whose music and ambience a map uses (the wilds sound like the proving ground's open country).
 inline int soundMap(int map) { return map == MAP_WILDS ? (int)MAP_PROVING_GROUND : map; }
 // The maps on offer (menus, hosting, the editor): just the proving ground, where everything in
@@ -180,6 +194,13 @@ inline int soundMap(int map) { return map == MAP_WILDS ? (int)MAP_PROVING_GROUND
 // built here, for the tests and --map.)
 const std::vector<int>& listedMaps();
 bool mapListed(int map);
+// The hand-made maps a career world can be on ("BUILT MAPS"): the listed ones less the procedural world and a real terrain.
+const std::vector<int>& careerMaps();
+// The custom worlds a career can be on ("CUSTOM WORLD"): the procedural world, made from the seed the career world keeps (its
+// crates are kept by seed and place id, career.cpp). A real terrain is not offered: its land comes from outside the save.
+const std::vector<int>& customWorldMaps();
+// A built map or a custom world.
+bool careerMap(int map);
 inline bool mapForLevels(int map) { return map == MAP_WILDS || mapListed(map); }  // (levels can be on a listed map or on the wilds)
 int nextListedMap(int map, int dir);  // the next one on the list (from any map)
 
@@ -205,6 +226,29 @@ void backcountryLand(double half, int n, std::vector<float>& out);
 // A trail's center line, ~1 m apart, in the direction of travel: "creek", "ridge", "mud", "wash",
 // "hill", "ridgeroad", "shelf", "pass", "tower", "river", "cabin".
 const std::vector<V3>& backcountryTrail(const char* name);
+// The marked trail network round Elk Valley (bctrails.cpp): each trail's name, rating (0 green, 1 blue, 2 black, 3 red, 4 a faint
+// two-track) and its center line, ~1 m apart in the direction it was laid; and the named spots on them (the pass's obstacles:
+// notch, creek, scree, switchbacks, shelf, slab, choke, saddle, peak, ...). An unknown name: an empty line / (0, 0, 0).
+struct BcTrailInfo {
+    std::string name;
+    int rating = 0;
+    double maxGrade = 0.12;
+};
+const std::vector<BcTrailInfo>& bcTrails();
+const std::vector<V3>& bcTrailLine(const std::string& name);
+V3 bcTrailFeature(const char* name);
+// The obstacle trails built from the proving ground's sections, out in their own country (bctrails.cpp): where each starts and ends.
+struct BcSetPiece {
+    const char* id;
+    const char* name;
+    const char* cacheId;
+    const char* cacheName;
+    int cash;
+    V3 entry, exit;  // (x, z: the first section's entry and the last one's exit)
+    double heading;  // the game's yaw
+    std::vector<int> types;  // SectionType, in order
+};
+const std::vector<BcSetPiece>& bcSetPieces();
 
 struct Contact {
     V3 n;            // surface normal, pointing out of the obstacle
@@ -232,6 +276,11 @@ public:
     static double halfSizeFor(int map);
     // Tests: every map built on this thread is this big instead (0: as the map has it). Per thread, like withShowcase.
     static inline thread_local double halfSizeOverride = 0;
+    // Whether the Backcountry is built as the big map, with the Mountain, the Frontier and the Open Country stitched on round it
+    // (onemap.h, docs/plans/one-map.md); off, it's the 6 km map alone. Per thread, like withShowcase (tests that only need the old map).
+    static inline thread_local bool stitchRegions = true;
+    // Whether the Backcountry gets its trail network (bctrails.cpp): tools/trailroute routes the network over the land without it.
+    static inline thread_local bool withTrailNetwork = true;
     static int gridSizeFor(int map) { return (int)(2 * halfSizeFor(map) / kRes) + 1; }
     double halfSize() const { return half; }
     static constexpr double kPadRadius = 140.0;
@@ -267,7 +316,25 @@ public:
     // from the generator. Off in multiplayer: the others build the proving ground from their own files, so the edits would desync it.
     static inline std::atomic<bool> useLocalEdits{true};
     bool parkEdited = false;      // some park section came from a saved edit
+    // The park sections built from an edit: (SectionType, its .czs text). A host sends them to whoever joins
+    // (net.h, MSG_SECTIONS), so everyone drives the same park.
+    std::vector<std::pair<int, std::string>> editedSections;
+    // A guest's worlds are built with the host's edited sections in place of the generator's (with useLocalEdits off).
+    // Set it before building; empty: the generator's.
+    static void setSessionSections(const std::vector<std::pair<int, std::string>>& sections);
+    static bool sessionSection(int type, SectionFile& out);
     uint64_t editStamp = 0;       // levelFilesStamp() when the park was built
+    // MAP_PROCEDURAL (procworld.h): its seed and where this window of it is (global metres: its middle, a chunk corner), and where
+    // the world started. The next one built on this thread is made from procSeed round procOriginX/Z (procOriginSet false: round
+    // the seed's start).
+    struct ProcInfo {
+        uint64_t seed = 0;
+        int64_t ox = 0, oz = 0;
+        int64_t startX = 0, startZ = 0;
+    } proc;
+    static inline thread_local uint64_t procSeed = 1;
+    static inline thread_local bool procOriginSet = false;
+    static inline thread_local int64_t procOriginX = 0, procOriginZ = 0;
     // The WildsKind the next MAP_WILDS is built as (a level's `terrain`: see levelWorld in level.h). Per thread, like withShowcase.
     static inline thread_local int wildsKind = WILDS_MEADOW;
     // The park's obstacle sections (sections.h), in the order they're driven: where each starts.
@@ -317,6 +384,26 @@ public:
     bool spawnSlot(int k, V3& p, double& yaw) const;
     std::vector<V3> parking;     // where the other vehicles start, facing parkingYaw
     double parkingYaw = M_PI / 2;
+    // The big map's regions' own starts (onemap.h): where each old map started you, and its parked vehicles, moved over. Starting at
+    // one (startAtRegion) makes it the map's start.
+    struct RegionStart {
+        int map = 0;
+        V3 spawn;
+        double yaw = 0;
+        std::vector<V3> parking;
+        double parkingYaw = M_PI / 2;
+    };
+    std::vector<RegionStart> regionStarts;
+    // The gravel roads from the Backcountry into each region (onemapbuild.cpp), as laid: a point every metre, at the road's height.
+    std::vector<std::vector<V3>> regionRoads;
+    // The trails to follow (the Backcountry's, bctrails.cpp), for the M map: a point every ~8 m at the tread's height.
+    struct MarkedTrail {
+        std::string name;
+        int rating = 0;  // 0 green, 1 blue, 2 black, 3 red, 4 a faint two-track
+        std::vector<V3> pts;
+    };
+    std::vector<MarkedTrail> trails;
+    bool startAtRegion(int oldMap);  // false: not a region of this map
     bool crashProps = true;      // crash boxes and barriers (the proving ground)
     // The freeway repeats every wrapPeriod meters along x (0: the map doesn't). The sim
     // shifts everything back by a period as you drive on, so it never ends.
@@ -330,6 +417,9 @@ public:
     // With `pose` it isn't turned or tipped at random but as asked (a ledge's row of rocks, a ramp): the first half-size
     // lies along the pose's yaw, and `top` is then its highest point's height over the ground at (x, z).
     Rock& addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint = 1, const RockPose* pose = nullptr);
+    // The rock addRock would add, not added (anything about the world it reads, it only reads: rocks can be made on several threads,
+    // with the thread's scanned rocks (props::activeRockScans) the same as the world's builder's).
+    Rock makeRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint = 1, const RockPose* pose = nullptr) const;
     // Indices of poles whose cylinders may overlap the box [mn, mx] (appended to out).
     void polesNear(const V3& mn, const V3& mx, std::vector<int>& out) const;
     // Every solid whose lookup cells touch the rectangle [x0, x1] x [z0, z1]: indices into
@@ -356,9 +446,21 @@ public:
     V3 courseStart(int surface) const;
     // Deepest contact of a sphere of radius R (axis == nullptr), or of a wheel:
     // a disc of radius R and half-width hw spinning about `axis`.
-    bool contact(const V3& c, double R, const V3* axis, double hw, Contact& out) const;
-    // Lowest height at (x, z) where a 1 m sphere fits without touching anything.
-    double clearY(double x, double z) const;
+    // (poles = false: leaves out the poles and tree trunks.)
+    bool contact(const V3& c, double R, const V3* axis, double hw, Contact& out, bool poles = true) const;
+    // Lowest height at (x, z) where a 1 m sphere fits without touching anything. overPoles = false:
+    // a pole or a trunk doesn't count (nothing can stand on one: next to a tree, the ground, not
+    // the top of the trunk 10 m up).
+    double clearY(double x, double z, bool overPoles = true) const;
+    // Whether any pole or trunk stands inside the rectangle centered on (x, z) along `fwd` (level,
+    // unit) from a0 to a1 and across it (fwd turned left) from l0 to l1, `margin` clear of its
+    // edges, reaching between heights y0 and y1.
+    bool poleInside(double x, double z, const V3& fwd, double a0, double a1, double l0, double l1, double y0, double y1, double margin) const;
+    // The same rectangle, but anything a car can't drive through: poles and trunks, and the boxes, rocks and logs that stand
+    // more than `step` above whichever is higher of the ground under them and `floorY` (what a tire just rolls over doesn't
+    // count, nor the slab a car stands on). For a way out: the corridor a car would drive along.
+    bool solidInside(double x, double z, const V3& fwd, double a0, double a1, double l0, double l1, double y0, double y1, double margin,
+                     double floorY, double step) const;
 
 private:
     // Terrain baked to a 1 m grid with the roads carved in.
@@ -377,11 +479,54 @@ private:
     void buildFrontier();
     void buildBackcountry();
     void buildWilds();       // the clean open country for obstacle sections (world.cpp)
+    void buildProcedural();  // a window of the endless world (procworld.cpp)
     void buildModelYard();   // every model laid out on the proving ground (world.cpp)
     void buildLapLine();     // the lap timer's start/finish gate on the loop road (world.cpp)
     void buildSectionPark(); // the obstacle sections laid out outside the loop road (world.cpp)
     void buildMountain();
+    void buildReal();        // MAP_REAL: the active real terrain (realterrainbuild.cpp)
     double mountainHeight(double x, double z) const;
+    // The big map (onemapbuild.cpp): the regions' old maps, built on workers while the Backcountry's land is made; their land laid
+    // into it with the seams blended (before the Backcountry paints and plants, so its growth follows the seams; `keep` marks the
+    // regions' cores, where it grows nothing), then the rest of each: surfaces, roads, water, everything on it, stations and starts.
+    struct RegionBuild;
+    static std::vector<RegionBuild*> startRegionBuilds();
+    static void finishRegionBuilds(std::vector<RegionBuild*>& builds);
+    void stitchRegionLand(const std::vector<RegionBuild*>& builds, CellTiles<uint8_t>& keep);
+    void stitchRegionContent(const std::vector<RegionBuild*>& builds);
+    // (`wetLater`: where the Backcountry's rivers and lakes will be, which aren't on the land yet when the roads are laid.)
+    void layRegionRoads(const std::vector<RegionBuild*>& builds, CellTiles<uint8_t>& keep, const std::function<bool(double, double)>& wetLater);
+    // The Backcountry's trail network and what's along it (bctrails.cpp): laid after the old map's own growth, before the new country's.
+    void layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edge);
+    // ...and after the new country's growth: its rock features, the rocks, bushes, trees and logs that fill the open country between, the
+    // places the trails lead to (the fire lookout, the cabins), the obstacle trails' signs.
+    void dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edge);
+    CellTiles<uint8_t> roadMask;  // (while the big map is built: the cells the roads above took, which the regions' own ground doesn't)
+    // The regions' grown country (docs/plans/regions2.md, onemapbuild.cpp): the marked trails between their places and the Mountain's
+    // pass (laid with the roads, into regionRoads after them), the growth and rock of their country (after the Backcountry's own), and
+    // at the end the trails' markers, signs and the pass's obstacles.
+    struct RegionWay {
+        std::vector<V3> pts;  // as laid: a point a metre, at the tread's height
+        int kind = 0;         // 0 an easy trail, 1 a harder one, 2 the Mountain's pass
+        std::vector<std::pair<double, double>> steps;  // (the pass) its ledges: (metres along, rise)
+        std::vector<std::pair<double, double>> camber; // (the pass) off-camber stretches: (from, to) metres along
+        double screeFrom = -1, screeTo = -1;           // (the pass) its scree climb
+    };
+    std::vector<RegionWay> regionWays;
+    size_t linkRoads = 0;  // (how many of regionRoads are the roads in from the Backcountry; the trails come after)
+    struct WayStyle {
+        double half = 3.5, blend = 12, maxGrade = 0.12;
+        int window = 15;       // the land under it smoothed over this many metres either side
+        uint8_t paint = PAINT_ROAD, surface = SURF_GRAVEL;
+    };
+    // Lays a way (from findWay's cells, smoothed into a curve) on the land: cut and filled to the style's grade, eased into the land
+    // either side, painted. `shape` may change its heights before it's laid (steps); `tilt` gives its tread a cross-slope (metres up per
+    // metre left) at a point along it. Returns it as laid (a point a metre).
+    std::vector<V3> layWay(const std::vector<V3>& way, const WayStyle& st, CellTiles<uint8_t>& keep, const std::vector<V3>& pads, int thin,
+                           const std::function<void(std::vector<double>&)>& shape = nullptr, const std::function<double(double)>& tilt = nullptr);
+    void layRegionTrails(const std::vector<RegionBuild*>& builds, CellTiles<uint8_t>& keep, const std::function<bool(double, double)>& wetLater);
+    void growRegionCountry(CellTiles<uint8_t>& keep);  // (after the Backcountry's growth: the 64 m cells past its 6 km square)
+    void dressRegionTrails();                          // (the very end)
     void scatterScenery(uint32_t seed);  // bushes and rocks between the trees
     // Digs a lake basin `depth` deep at (x, z) radius r, banks rising at ~1:4, and fills it.
     void addLake(double x, double z, double r, double depth);

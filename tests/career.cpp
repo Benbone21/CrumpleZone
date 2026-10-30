@@ -2,11 +2,16 @@
 // jobs and medals, the stations' shop; and it all saves. Sandbox owns everything.
 #include <cmath>
 #include <cstdio>
+#include <fstream>
+#include <sstream>
 
 #include "../src/career.h"
 #include "../src/interact.h"
+#include "../src/careerworld.h"
 #include "../src/mods.h"
+#include "../src/platform.h"
 #include "../src/walker.h"
+#include "../src/onemap.h"
 #include "harness.h"
 
 namespace {
@@ -119,7 +124,21 @@ SCENARIO(careerCaches, "career/caches", "Supply caches on the Frontier and in th
         const World& w = ctx.sim.world;
         const std::vector<CacheSpot> spots = cacheSpots(w);
         const std::string name = mapName(map);
-        ctx.check(name + ": ten caches", spots.size() == 10, std::to_string(spots.size()));
+        // (The Backcountry: the ten hand-made ones and fifty from its places (places.h); on the big map, the Frontier's ten in its region
+        // besides, and the twelve of the regions' grown country (regions2: four each).)
+        // The trail network (bctrails.cpp) adds eleven at its hardest spots, on either map.
+        const size_t want = map == MAP_BACKCOUNTRY ? (w.regionStarts.empty() ? 71 : 93) : 10;
+        ctx.check(name + ": " + std::to_string(want) + " caches", spots.size() == want, std::to_string(spots.size()));
+        if (map == MAP_BACKCOUNTRY && !w.regionStarts.empty()) {
+            // The Frontier's own, still the Frontier's (an opened one stays opened), where they were on its map, moved over.
+            World fr(MAP_FRONTIER);
+            const std::vector<CacheSpot> own = cacheSpots(fr);
+            int same = 0;
+            for (const CacheSpot& o : own)
+                for (const CacheSpot& s : spots)
+                    same += s.id == o.id && s.map == MAP_FRONTIER && std::hypot(s.at.x - regionToWorld(MAP_FRONTIER, o.at).x, s.at.z - regionToWorld(MAP_FRONTIER, o.at).z) < 0.01;
+            ctx.check("the Frontier's caches in its region, still the Frontier's", same == (int)own.size() && !own.empty(), std::to_string(same));
+        }
         bool contents = true, dry = true, apart = true, onMap = true;
         std::string bad;
         for (size_t i = 0; i < spots.size(); i++) {
@@ -127,7 +146,7 @@ SCENARIO(careerCaches, "career/caches", "Supply caches on the Frontier and in th
             std::printf("  %s %s at (%.0f, %.0f): %s\n", name.c_str(), s.id.c_str(), s.at.x, s.at.z, s.part.empty() ? ("$" + std::to_string(s.cash)).c_str() : modPartTitle(s.part).c_str());
             if (s.part.empty() ? s.cash <= 0 : modPartTitle(s.part).empty()) contents = false, bad += " " + s.id;
             if (w.waterLevel(s.at.x, s.at.z) > s.at.y - 0.1) dry = false, bad += " wet:" + s.id;
-            if (std::fabs(s.at.x) > 590 || std::fabs(s.at.z) > 590) onMap = false;
+            if (std::fabs(s.at.x) > w.halfSize() - 10 || std::fabs(s.at.z) > w.halfSize() - 10) onMap = false;
             for (size_t j = 0; j < i; j++)
                 if (len(spots[j].at - s.at) < 30) apart = false, bad += " near:" + s.id;
             for (const Station& st : w.stations)
@@ -160,4 +179,143 @@ SCENARIO(careerCaches, "career/caches", "Supply caches on the Frontier and in th
     const std::string said = c.openCache(summit);
     ctx.check("its part is yours", said.rfind("FOUND: ", 0) == 0 && c.owned.count(summit.part), said);
     ctx.check("opened once only", c.openCache(summit).empty() && c.isOpened(summit));
+}
+
+namespace {
+
+std::string slurp(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    std::stringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+void spit(const std::string& path, const std::string& text) {
+    std::ofstream f(path, std::ios::binary);
+    f << text;
+}
+// A fresh folder under build/ for one scenario (the tests are threads of one process, so each has its own).
+std::string freshDir(const std::string& name) {
+    makeDir("build");
+    makeDir("build/test-career");
+    const std::string dir = "build/test-career/" + name;
+    makeDir(dir);
+    for (const char* f : {"/profile.txt", "/profile.txt.bak", "/profile.txt.tmp", "/career.txt"}) std::remove((dir + f).c_str());
+    return dir;
+}
+
+}  // namespace
+
+SCENARIO(careerProfileMigrate, "career/profile-migrate", "With no profile.txt, loadProfile takes the old career.txt; saveProfile then writes profile.txt and leaves career.txt alone") {
+    const std::string dir = freshDir("migrate");
+    ScopedCareerDir scope(dir);
+    const std::string old = "cash 4321\nown TIRES:RACE SLICK\ncache 3:WALL TOP\n";
+    spit(dir + "/career.txt", old);
+    Career c;
+    ctx.check("loads", c.loadProfile());
+    ctx.check("the old cash", c.cash == 4321);
+    ctx.check("owns the slick", c.owned.count("TIRES:RACE SLICK") == 1);
+    ctx.check("the cache is opened", c.opened.count("3:WALL TOP") == 1);
+    ctx.check("saves", c.saveProfile());
+    ctx.check("profile.txt is there", !slurp(dir + "/profile.txt").empty());
+    ctx.check("career.txt is untouched", slurp(dir + "/career.txt") == old);
+    Career d;
+    ctx.check("and loads back", d.loadProfile() && d.cash == 4321 && d.opened == c.opened && d.owned == c.owned);
+    Career none;
+    {
+        ScopedCareerDir empty(freshDir("migrate-none"));
+        ctx.check("nothing at all: false", !none.loadProfile());
+    }
+}
+
+SCENARIO(careerProfileRoundtrip, "career/profile-roundtrip", "Owned vehicles with mods, worlds, conditions and when they were last driven save and load back the same") {
+    const std::string dir = freshDir("roundtrip");
+    ScopedCareerDir scope(dir);
+    Career c;
+    c.startFresh(DIFF_HARDCORE);
+    c.cash = 777;
+    OwnedVehicle a, b;
+    a.vehicle = vehicleIndex("blazer");
+    a.mods.pick[MOD_ENGINE] = 1;
+    a.mods.pick[MOD_WHEELS] = (int)modOptions(a.vehicle, MOD_WHEELS).size() - 1;
+    a.world = "my-world";
+    a.condition = "dent 3 0.5\nline two with \\ slash";
+    a.drove = 1234.5;
+    b.vehicle = vehicleIndex("civic");
+    b.world = "second-1";
+    c.vehicles = {a, b};
+    ctx.check("saves", c.saveProfile());
+    Career d;
+    ctx.check("loads", d.loadProfile());
+    bool same = d.vehicles.size() == 2 && d.cash == 777 && d.owned == c.owned && d.stock == c.stock;
+    for (size_t i = 0; same && i < 2; i++) {
+        const OwnedVehicle &x = c.vehicles[i], &y = d.vehicles[i];
+        same &= x.vehicle == y.vehicle && x.world == y.world && x.condition == y.condition && x.drove == y.drove;
+        for (int k = 0; k < MOD_SLOTS; k++) same &= x.mods.pick[k] == y.mods.pick[k];
+    }
+    ctx.check("the same profile", same);
+}
+
+SCENARIO(careerProfileBak, "career/profile-bak", "A corrupt profile.txt falls back to profile.txt.bak, and a second save keeps the previous good profile as the .bak") {
+    const std::string dir = freshDir("bak");
+    ScopedCareerDir scope(dir);
+    Career c;
+    c.startFresh();
+    c.cash = 111;
+    ctx.check("first save", c.saveProfile());
+    c.cash = 222;
+    ctx.check("second save", c.saveProfile());
+    ctx.check("the .bak is the first", slurp(dir + "/profile.txt.bak").find("cash 111") != std::string::npos);
+    spit(dir + "/profile.txt", "x#!\x01z");
+    Career d;
+    ctx.check("loads", d.loadProfile());
+    ctx.check("from the .bak", d.cash == 111, std::to_string(d.cash));
+    d.cash = 333;
+    ctx.check("saving over the corrupt file", d.saveProfile());
+    ctx.check("a bad file doesn't displace the good .bak", slurp(dir + "/profile.txt.bak").find("cash 111") != std::string::npos);
+}
+
+SCENARIO(careerStartCash, "career/start-cash", "A new profile starts with the difficulty's cash and the starting tools") {
+    Career c;
+    c.startFresh(DIFF_LIGHT);
+    ctx.check("light", c.cash == 2000);
+    c.startFresh(DIFF_MEDIUM);
+    ctx.check("medium", c.cash == 1000);
+    c.startFresh(DIFF_HARDCORE);
+    ctx.check("hardcore", c.cash == 500 && c.owned.size() == 2 && c.vehicles.empty());
+    c.startFresh();
+    ctx.check("default is medium", c.cash == 1000);
+}
+
+SCENARIO(careerProfileBadVehicle, "career/profile-bad-vehicle", "A veh line that can't be read (bad catalog index, malformed) is skipped without moving later vehicles' conditions onto the wrong car") {
+    const std::string dir = freshDir("badveh");
+    ScopedCareerDir scope(dir);
+    const int civic = vehicleIndex("civic"), blazer = vehicleIndex("blazer");
+    std::string text = "cash 5\nveh " + std::to_string(civic) + " w 0 0 0 0 0\ncond 0 first\nveh 99999 w 0 0 0 0 0\ncond 1 lost\nveh oops\nveh " +
+                       std::to_string(blazer) + " w 0 0 0 0 0\ncond 3 third\nfuture-key whatever\n";
+    spit(dir + "/profile.txt", text);
+    Career c;
+    ctx.check("loads", c.loadProfile());
+    ctx.check("two vehicles survive", c.vehicles.size() == 2);
+    ctx.check("each keeps its own condition", c.vehicles.size() == 2 && c.vehicles[0].vehicle == civic && c.vehicles[0].condition == "first" &&
+              c.vehicles[1].vehicle == blazer && c.vehicles[1].condition == "third");
+    ctx.check("resaved, they still match", c.saveProfile());
+    Career d;
+    ctx.check("reloaded", d.loadProfile() && d.vehicles.size() == 2 && d.vehicles[0].condition == "first" && d.vehicles[1].condition == "third");
+}
+
+SCENARIO(careerProfileBrokenOld, "career/profile-broken-old", "A broken or empty old career.txt isn't migrated as $0 with no tools; a damaged profile.txt doesn't fall back to career.txt") {
+    const std::string dir = freshDir("broken-old");
+    ScopedCareerDir scope(dir);
+    spit(dir + "/career.txt", "");
+    Career c;
+    ctx.check("an empty career.txt: nothing loaded", !c.loadProfile());
+    ctx.check("Career::load says so too", !c.load(dir + "/career.txt"));
+    spit(dir + "/career.txt", "cash 4321\n");
+    spit(dir + "/profile.txt", "garbage\n");
+    Career d;
+    ctx.check("a damaged profile.txt: not the old career.txt instead", !d.loadProfile() && d.cash != 4321, std::to_string(d.cash));
+    Career e;
+    e.cash = 9;
+    e.loadProfile();
+    ctx.check("a failed load leaves the career as it was", e.cash == 9);
 }

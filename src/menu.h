@@ -1,5 +1,7 @@
-// The game's menus: the title screen (on launch), and the pause menu (ESC): resume, pick a
-// car, levels, the garage, settings, controls, quit.
+// The game's menus: the title screen (on launch), and the pause menu (ESC): resume, multiplayer, settings,
+// the main menu, quit. SETTINGS is one tabbed screen (GRAPHICS, CONTROLS, AUDIO, GENERAL, DEV; the dev menu is
+// the DEV tab, so F12 opens Settings there), shared by the main menu and the pause menu. Autopilot and jobs are
+// not in the pause menu: they have their own keys (keybinds.h) and open their pages straight from the game.
 // Settings persist in ~/.config/crumplezone/settings.txt.
 #pragma once
 #include <string>
@@ -17,6 +19,7 @@ struct Settings {
     float ambience = 0.6f;      // outdoor wind, foliage, birds and night insects
     bool mph = false;           // speed in mph instead of km/h
     float volume = 0.8f;        // master volume 0..1
+    float vehicleVolume = 1.0f; // all vehicle sounds (engines, tires, impacts, horn, winch), under the master volume (0 = off)
     float music = 0.4f;         // background music, under the master volume (0 = off)
     float fovDeg = 66;          // vertical field of view of the chase and orbit cameras
     bool fullscreen = false, vsync = true, showFps = false;
@@ -24,6 +27,7 @@ struct Settings {
     int physicsThreads = 0;     // 0 AUTO; 1 serial; otherwise up to the available logical CPUs
     bool steeringAssist = true; // limit steering angle at high speeds (false = simulation mode)
     int map = 0;                // the map you were on last
+    unsigned long long procSeed = 0;  // the procedural world's seed (procworld.h; 0: none yet, the next one is new)
     bool realRecovery = true;   // damage stays until a repair station (or arcade: T fixes it)
     bool career = false;        // career (start stock, find, win and buy parts) or sandbox (every part)
     double winchSpeed = 4.0;    // saved gameplay speed multiplier; 1x is rated line speed
@@ -36,6 +40,8 @@ struct Settings {
     bool rememberPassword = false;
     int maxPlayers = 8;         // the most in a game you host (2..8)
     int hostPort = 27015;       // the port you host on, TCP and UDP (1024..65535; net::kDefaultPort)
+    std::string rendezvous;     // the join-code server, HOST[:PORT] ("" = the game's own, net::kDefaultRendezvous)
+    std::vector<std::string> recentJoins;  // the last codes and addresses joined, newest first (3)
     int pilotDest = 0;          // autopilot: which place (index into the menu's list)
     float pilotSpeed = 30;      // km/h
     int pilotRoute = 1;         // 0 roads only, 1 roads and trails, 2 anywhere
@@ -63,12 +69,12 @@ struct Settings {
 
 class PauseMenu {
 public:
-    enum Action { NONE, RESUME, DRIVE, GARAGE, CONTROLS, RESET, QUIT, CHANGED, LOAD_MAP, HOST, JOIN, LEAVE, PILOT_GO, PILOT_STOP,
+    enum Action { NONE, RESUME, GARAGE, CONTROLS, RESET, QUIT, CHANGED, HOST, JOIN, LEAVE, PILOT_GO, PILOT_STOP,
                   DETECT_GFX, FREE_DRIVE, PLAY_LEVEL, EDIT_LEVEL, EDITOR, LEVEL_RESTART, LEVEL_QUIT, MAIN_MENU, JOB_START, JOB_STOP, MEET_UP,
                   CANCEL_JOIN, MODEL_LAB, NEW_SECTION, EDITOR_BACK, DEV_RUN };
     struct Result {
         Action action = NONE;
-        int vehicle = 0;  // for DRIVE; the map for LOAD_MAP; DEV_RUN: the devmenu::Act
+        int vehicle = 0;  // FREE_DRIVE: the vehicle; JOB_START: the job; DEV_RUN: the devmenu::Act
         int arg = 0;      // DEV_RUN: its argument
     };
 
@@ -115,7 +121,27 @@ public:
     bool shift = false;  // a shift key is down (extending a selection)
     bool ctrl = false;   // a control key is down (Ctrl+V pastes into the field)
     void showMultiplayer(int currentVehicle, int currentMap);  // opens straight onto that page
-    void showPage(int page, int currentVehicle, int currentMap);  // (2 multiplayer, 3 autopilot)
+    // Opens straight onto a page: 1 settings, 2 multiplayer, 3 autopilot, 4 levels, 5 jobs (6 and 7: the CONTROLS tab, 8 and 9: the DEV tab).
+    // BACK (and Esc) leaves the menu from there, unless it was the title screen.
+    void showPage(int page, int currentVehicle, int currentMap);
+    // Settings tabs (the SETTINGS page is page 1). The DEV tab is only there in a game (the dev tools act on a world).
+    enum Tab { T_GRAPHICS, T_CONTROLS, T_AUDIO, T_GENERAL, T_DEV, T_COUNT };
+    static const char* tabName(int t);
+    int tabNow() const { return tab; }
+    int tabCount() const { return title ? T_COUNT - 1 : T_COUNT; }
+    void showSettings(int tab, int currentVehicle, int currentMap, bool fromPause = false);  // opens on that tab (BACK: the pause menu if fromPause, else out)
+    void setTab(int t);                  // switches to that tab (clamped to the tabs there are)
+    void stepTab(int dir) { setTab((tab + dir + tabCount()) % tabCount()); }  // Q / E, the pad's shoulder buttons: wraps round
+    // The screen size the last draw (or a test) used, for the mouse: the tab strip's cells are laid out from it and the rows.
+    void setView(int W, int H) { viewW = W, viewH = H; }
+    struct Rect {
+        float x = 0, y = 0, w = 0, h = 0;
+    };
+    Rect tabRect(int t, const Settings& s) const;  // where tab t's cell is (the SETTINGS page), for the mouse and the tests
+    // What the page shows, for the tests: the labels of its rows (not the headers), and the one focused.
+    std::vector<std::string> labels(const Settings& s) const;
+    std::string selectedLabel(const Settings& s) const;
+    bool select(const Settings& s, const std::string& label);  // focus the row with that label
     // Autopilot page: the places it can drive to (set by the game), and its state.
     std::vector<std::string> pilotPlaces;
     std::string pilotStatus = "OFF";
@@ -143,10 +169,13 @@ public:
     void showTitle(int currentVehicle, int currentMap);
     void showTitlePage(int page, int currentVehicle, int currentMap);  // a page (settings, multiplayer, levels) of the title screen: BACK returns to its page 0
     bool sceneBehind = false;  // the title is drawn over the main menu's camp scene (no gradient backdrop, the scene shows through)
-    // The dev menu (devmenu.h): pages 8 (the groups) and 9 (one group's rows). The game fills the lists before drawing.
-    void showDev(int currentVehicle, int currentMap, bool fromPause = false);  // opens straight onto the groups
-    bool devOpen() const { return open && page >= 8; }
+    // The dev menu (devmenu.h) is Settings' DEV tab: the groups, then one group's rows. The game fills the lists before drawing.
+    void showDev(int currentVehicle, int currentMap, bool fromPause = false);  // opens Settings on the DEV tab (already in Settings: switches to it)
+    bool devOpen() const { return open && page == 1 && tab == T_DEV; }
     bool onPausePage() const { return open && !title && page == 0; }
+    // The new main menu is up (the title screen's first page): whatever is behind it (the camp, a plain screen while a map loads, in multiplayer
+    // or from the editor). Only DEV > CLASSIC MENU (`classic`) shows the old title page instead.
+    bool newMainMenu(bool classic) const { return open && title && page == 0 && !classic; }
     std::vector<std::string> devSections;  // the map's obstacle sections (TELEPORT)
     std::vector<std::string> devPlaces;    // and its places
     bool devScenario = false;              // a scenario is playing (its checks list is offered)
@@ -177,14 +206,24 @@ private:
         float x, y, w, h, barX, barW;
         int row;
     };
-    int scroll = 0;                      // keybinds page: the first row showing
-    int devGroup = 0;                    // dev page 9: which group
+    int scroll = 0;                      // a long tab (CONTROLS, DEV): the first row showing
+    int devGroup = 0;                    // the DEV tab: which group
     int devSection = 0, devPlace = 0;    // the TELEPORT page's pickers
-    bool devFromPause = false;           // the dev menu was opened from the pause menu's row (BACK returns there)
+    bool settingsFromPause = false;      // Settings was opened from the pause menu's row (BACK returns there; otherwise BACK leaves the menu)
+    bool standalone = false;             // opened straight onto a page by a key (autopilot, jobs): BACK leaves the menu
+    int tab = T_GRAPHICS;                // the SETTINGS page's tab
+    bool devInGroup = false;             // the DEV tab shows one group's rows (otherwise the groups)
+    int viewW = 1280, viewH = 720;
+    struct Geom {  // the SETTINGS page's panel (drawable pixels): the same for every tab
+        float u, x, y, w, h, tabY, tabH, rowsY, rowsH;
+    };
+    Geom settingsGeom(int W, int H, const Settings& s) const;
+    std::vector<Row> rowsFor(int tabIndex, const Settings& s) const;  // a settings tab's rows
+    void drawSettings(Renderer& r, const Settings& s, int W, int H, float a);
     std::vector<devmenu::Item> devItems(const Keybinds& kb) const;  // the rows of the group shown (the scenario one only while a scenario plays)
-    int listening = -1;  // keybinds page: the KeyAction waiting for a key press (-1: none)
-    std::string keyNote; // keybinds page: why the last key was refused
-    int page = 0;  // 0 main (or the title), 1 settings, 2 multiplayer, 3 autopilot, 4 levels, 5 jobs, 6 controller, 7 keybinds, 8 dev menu, 9 one dev group
+    int listening = -1;  // CONTROLS tab: the KeyAction waiting for a key press (-1: none)
+    std::string keyNote; // CONTROLS tab: why the last key was refused
+    int page = 0;  // 0 main (or the title), 1 settings (tabs), 2 multiplayer, 3 autopilot, 4 levels, 5 jobs
     int sel = 0;
     std::string portText;      // the HOST card's PORT field while it's being typed in (it can be a half-typed number)
     bool portEdited = false, portFresh = false;  // (fresh: untouched, the first digit replaces it)
