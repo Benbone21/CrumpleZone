@@ -3,7 +3,7 @@
 
 CXX      ?= g++
 # The release version (CI passes VERSION from the tag): the .deb, the Mac Info.plist, the installer and the updater (updater.h).
-VERSION  ?= 0.4.8
+VERSION  ?= 0.4.9
 CXXFLAGS ?= -O2 -march=native
 # -ffp-contract=off (every build, 'override' so a command-line CXXFLAGS keeps it): no FMA fusing, so the sim is bit-identical between -march=native and x86-64-v2/Windows builds.
 FPFLAGS  := -ffp-contract=off -fno-fast-math
