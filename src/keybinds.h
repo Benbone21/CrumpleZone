@@ -62,7 +62,9 @@ enum KeyAction {
     KA_STRAP,
     KA_REPAIR,
     KA_FLIP,
-    KA_AUTOPILOT,
+    KA_AUTOPILOT,       // starts and stops it, to the place last picked
+    KA_AUTOPILOT_PICK,  // opens the autopilot page: where to, how fast, which roads (the pause menu no longer has it)
+    KA_JOBS,            // opens the jobs on offer here (the pause menu no longer has them)
     // ON FOOT
     KA_GET_IN_OUT,
     KA_INTERACT,
@@ -78,7 +80,6 @@ enum KeyAction {
     KA_DEBUG_INFO,  // F3: the debug info screen (was the FPS counter)
     // GAME
     KA_MENU,
-    KA_PAUSE,
     KA_HELP,
     KA_FULLSCREEN,
     KA_CHAT,
@@ -100,6 +101,7 @@ enum KeyAction {
     KA_DEV_SLOWER,
     KA_DEV_FASTER,
     KA_DEV_EDITOR,
+    KA_DEV_FREECAM,  // F8: the dev free cam (freecam.h)
     KA_DEV_SCENARIO,
     KA_COUNT
 };
@@ -125,6 +127,7 @@ std::string keyName(int scancode);     // "W", "SPACE", "F4"... for the menu
 struct Keybinds {
     int code[KA_COUNT];        // 0: unbound
     bool shift[KA_COUNT];      // bound to Shift+key
+    bool legacyPauseOnP = false;  // an old file's key_pause line had P (pause is the menu now: Esc)
     bool loaded[KA_COUNT];     // came from the settings file (an action added since, whose key a saved binding took, moves aside)
 
     Keybinds() { resetDefaults(); }

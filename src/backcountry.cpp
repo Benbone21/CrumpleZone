@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "detmath.h"
 #include "loadprof.h"
 #include "onemap.h"
 #include "parallel.h"
@@ -85,10 +86,10 @@ std::vector<V3> crewTrail(V3 pos, double grade, double xMin, double xMax, int di
         if ((dir > 0 && pos.x > xMax) || (dir < 0 && pos.x < xMin)) {
             // Hairpin: a half circle (11 m radius) round toward the uphill side (climbing) or the downhill one.
             const V3 c = pos + V3(0, 0, grade > 0 ? 11 : -11);
-            const double a0 = std::atan2(pos.z - c.z, pos.x - c.x), turn = (grade > 0 ? 1 : -1) * dir;
+            const double a0 = dm::atan2(pos.z - c.z, pos.x - c.x), turn = (grade > 0 ? 1 : -1) * dir;
             for (int k = 1; k <= 15; k++) {
                 const double a = a0 + turn * M_PI * k / 15.0;
-                pos = c + V3(std::cos(a), 0, std::sin(a)) * 11.0;
+                pos = c + V3(dm::cos(a), 0, dm::sin(a)) * 11.0;
                 pts.push_back(pos);
             }
             dir = -dir;
@@ -98,7 +99,7 @@ std::vector<V3> crewTrail(V3 pos, double grade, double xMin, double xMax, int di
         V3 next = pos;
         for (int k = 0; k <= 30; k++) {
             const double ang = (k - 15) * (75.0 / 15) * M_PI / 180;
-            const V3 d(dir * std::cos(ang), 0, std::fabs(std::sin(ang)) * (k >= 15 ? 1 : -1));
+            const V3 d(dir * dm::cos(ang), 0, std::fabs(dm::sin(ang)) * (k >= 15 ? 1 : -1));
             const V3 q = pos + d * step;
             const double g = (h(q) - h(pos)) / step;
             const double score = std::fabs(g - grade) + 0.05 * std::fabs(ang);
@@ -116,7 +117,7 @@ const std::vector<V3>& passCtl() {
         // thin it to every 6th point (the spline rounds it off)
         std::vector<V3> out;
         for (size_t k = 0; k < p.size(); k += 6) out.push_back(p[k]);
-        if (std::hypot(out.back().x - p.back().x, out.back().z - p.back().z) > 1) out.push_back(p.back());
+        if (dm::hypot(out.back().x - p.back().x, out.back().z - p.back().z) > 1) out.push_back(p.back());
         return out;
     }();
     return t;
@@ -152,7 +153,7 @@ const std::vector<V3>& cabinCtl() {
         const std::vector<V3>& c = towerCtl();
         V3 best = c[0];
         for (const V3& q : c)
-            if (std::hypot(q.x - 150, q.z - 135) < std::hypot(best.x - 150, best.z - 135)) best = q;
+            if (dm::hypot(q.x - 150, q.z - 135) < dm::hypot(best.x - 150, best.z - 135)) best = q;
         return std::vector<V3>{best, V3(190, 0, 128), V3(226, 0, 120), V3(262, 0, 114), V3(298, 0, 106), V3(326, 0, 96)};
     }();
     return t;
@@ -174,12 +175,12 @@ Poly resample(const Poly& pts, double step) {
     double carry = 0;
     for (size_t k = 0; k + 1 < pts.size(); k++) {
         const V3 a = pts[k], b = pts[k + 1];
-        const double L = std::hypot(b.x - a.x, b.z - a.z);
+        const double L = dm::hypot(b.x - a.x, b.z - a.z);
         double s = step - carry;
         for (; s <= L; s += step) out.push_back(a + (b - a) * (s / L));
         carry = L - (s - step);
     }
-    if (std::hypot(out.back().x - pts.back().x, out.back().z - pts.back().z) > 0.2 * step) out.push_back(pts.back());
+    if (dm::hypot(out.back().x - pts.back().x, out.back().z - pts.back().z) > 0.2 * step) out.push_back(pts.back());
     return out;
 }
 Poly smooth(const std::vector<V3>& ctl) { return resample(splinePoints(ctl, false), 1.0); }
@@ -197,11 +198,11 @@ V3 dirAlong(const Poly& pts, double s) {
 // the ring trail and out to the Mud Run.
 Poly washPoly() {
     std::vector<V3> ctl = {{182, 0, -66}, {214, 0, -52}, {256, 0, -56}, {298, 0, -84}, {330, 0, -124}, {350, 0, -168}};
-    const double a0 = std::atan2(ctl.back().z - kDunes.z, ctl.back().x - kDunes.x);
+    const double a0 = dm::atan2(ctl.back().z - kDunes.z, ctl.back().x - kDunes.x);
     for (int k = 0; k <= 29; k++) {  // clockwise round the bowl, ~290 degrees
         const double a = a0 - k * (290.0 / 29) * M_PI / 180;
-        const double r = kDuneR + 6 * (1 - k / 29.0) + 3 * std::sin(k * 0.7);
-        ctl.push_back(V3(kDunes.x + r * std::cos(a), 0, kDunes.z + r * std::sin(a)));
+        const double r = kDuneR + 6 * (1 - k / 29.0) + 3 * dm::sin(k * 0.7);
+        ctl.push_back(V3(kDunes.x + r * dm::cos(a), 0, kDunes.z + r * dm::sin(a)));
     }
     const std::vector<V3> out = {{332, 0, -252}, {314, 0, -274}, {298, 0, -292}};
     ctl.insert(ctl.end(), out.begin(), out.end());
@@ -261,7 +262,7 @@ constexpr double kMouthLakeR = 100;
 // The big lake on the Lakeshore.
 const V3 kLake(-1850, 0, -1650);
 constexpr double kLakeR = 480, kLakeY = 1.2;
-double lakeDist(double x, double z) { return std::hypot(x - kLake.x, z - kLake.z) + 60 * (valueNoise(x * 0.004 + 3.3, z * 0.004 - 1.1) - 0.5); }
+double lakeDist(double x, double z) { return dm::hypot(x - kLake.x, z - kLake.z) + 60 * (valueNoise(x * 0.004 + 3.3, z * 0.004 - 1.1) - 0.5); }
 // How far the land at (x, z) is out of Elk River's valley (0 on its floor, 1 up on the hills): the falls' steps rise with the floor.
 double valleyOpen(double x, double z, double east) {
     const double dv = std::fabs(z - riverZ(x));
@@ -274,12 +275,12 @@ constexpr double kRimrockR = 342;  // (the Rimrock's edge, from the peak)
 // rock ribs down them, risen out of Copper Ridge's land wherever they stand above it. Copper Pass is the saddle where they meet (about
 // 185 m); the peak's top is the highest ground in the Backcountry (about 310 m, snow).
 double copperPeakLand(double x, double z, double h) {
-    const double d1 = std::hypot(x - kCopperPeak.x, z - kCopperPeak.z), d2 = std::hypot(x - kCopperThumb.x, z - kCopperThumb.z);
+    const double d1 = dm::hypot(x - kCopperPeak.x, z - kCopperPeak.z), d2 = dm::hypot(x - kCopperThumb.x, z - kCopperThumb.z);
     if (std::min(d1, d2) > 760) return h;
     const double rib = ridgedNoise(x * 0.011 + 4.4, z * 0.011 - 2.2, 3);
     double m1 = 312 - 0.42 * (std::sqrt(d1 * d1 + 45 * 45) - 45) + 16 * (rib - 0.55) * smoothstep(40, 160, d1) * smoothstep(620, 300, d1);
     // The Rimrock: a cliff band round the peak's south-west face, 32 m high, that the pass's shelf climbs across.
-    const double ang = std::atan2(z - kCopperPeak.z, x - kCopperPeak.x);
+    const double ang = dm::atan2(z - kCopperPeak.z, x - kCopperPeak.x);
     m1 -= 32 * smoothstep(-2.9, -2.68, ang) * smoothstep(-1.62, -1.84, ang) * smoothstep(kRimrockR - 3, kRimrockR + 5, d1);
     const double m2 = 262 - 0.5 * (std::sqrt(d2 * d2 + 25 * 25) - 25) + 10 * (rib - 0.55) * smoothstep(30, 120, d2) * smoothstep(420, 200, d2);
     const double m = 0.5 * (m1 + m2 + std::sqrt(sq(m1 - m2) + 18 * 18));  // (a soft max: the saddle's rounded)
@@ -311,7 +312,7 @@ double outerLand(double x, double z, bool seams) {
     const double timber = 45 + 40 * roll + 22 * hill;
     // (Sharp ridges in ranges, broad open valleys and saddles between them: a way through for whoever looks for it.)
     const double range = smoothstep(0.42, 0.62, fbmNoise(x * 0.0011 - 6.0, z * 0.0011 + 2.5, 2));
-    const double copper = 100 + 40 * hill + range * 175 * std::pow(ridge, 2.2) + 30 * roll;
+    const double copper = 100 + 40 * hill + range * 175 * dm::pow(ridge, 2.2) + 30 * roll;
     const double lakes = 172 + 24 * roll + 9 * hill - 14 * smoothstep(0.55, 0.7, fbmNoise(x * 0.003 + 5.0, z * 0.003 + 5.0, 2));
     const double canyon = 72 + 24 * roll + 12 * hill;
     const double bad = 22 + 12 * hill + 22 * smoothstep(0.57, 0.62, fbmNoise(x * 0.004 + 9.0, z * 0.004 - 2.0, 3));  // mesas
@@ -402,7 +403,7 @@ void backcountryLand(double half, int hN, std::vector<float>& out) {
             const double d = z - riverZ(x);
             // Rolling country everywhere (weaker on the flood plain)...
             const double plain = smoothstep(15, 120, std::fabs(d));
-            double h = 4 + 1.2 * std::sin((x + z) * 0.03) + plain * (22 * (fbmNoise(x * 0.011 + 2.0, z * 0.011 - 1.0, 4) - 0.35));
+            double h = 4 + 1.2 * dm::sin((x + z) * 0.03) + plain * (22 * (fbmNoise(x * 0.011 + 2.0, z * 0.011 - 1.0, 4) - 0.35));
             // South of the river: the uplands climb away from it, knobbly with rock.
             const double up = smoothstep(-10, -470, d);
             h += up * (12 + 32 * (fbmNoise(x * 0.006 + 9.0, z * 0.006 + 4.0, 4) - 0.4) + 18 * ridgedNoise(x * 0.012 + 3.0, z * 0.012 - 5.0, 3));
@@ -458,7 +459,7 @@ void World::buildBackcountry() {
         stitchRegionLand(regionBuilds, keep);
         // (Elk River, its mouth lake and the Lakeshore's lake are laid on later: the roads keep clear of where they'll be.)
         const std::function<bool(double, double)> wetLater = [&](double x, double z) {
-            return (x > kMouthLake.x && x < 3100 && std::fabs(z - riverZ(x)) < 45) || std::hypot(x - kMouthLake.x, z - kMouthLake.z) < kMouthLakeR * 1.15 + 90 ||
+            return (x > kMouthLake.x && x < 3100 && std::fabs(z - riverZ(x)) < 45) || dm::hypot(x - kMouthLake.x, z - kMouthLake.z) < kMouthLakeR * 1.15 + 90 ||
                    lakeDist(x, z) < kLakeR + 120;
         };
         layRegionRoads(regionBuilds, keep, wetLater);
@@ -482,7 +483,7 @@ void World::buildBackcountry() {
                 for (int j = cellI(std::min(a.z, b.z) - reach); j <= cellI(std::max(a.z, b.z) + reach); j++) {
                     const double x = X(i), z = X(j);
                     const double t = clampd(((x - a.x) * dx + (z - a.z) * dz) / L2, 0, 1);
-                    const double d = std::hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+                    const double d = dm::hypot(x - (a.x + dx * t), z - (a.z + dz * t));
                     if (d > reach) continue;
                     const int id = i * hN + j;
                     if (sd[id] > 1e8f) cells.push_back(id);
@@ -528,7 +529,7 @@ void World::buildBackcountry() {
                     bool pinned = false;
                     for (const Pin& p : pins) pinned |= p.idx == k;
                     if (pinned) continue;
-                    const double run = std::hypot(pts[k].x - pts[prev].x, pts[k].z - pts[prev].z);
+                    const double run = dm::hypot(pts[k].x - pts[prev].x, pts[k].z - pts[prev].z);
                     y[k] = clampd(y[k], y[prev] - maxGrade * run, y[prev] + maxGrade * run);
                 }
         if (std::getenv("BC_DEBUG")) {
@@ -563,7 +564,7 @@ void World::buildBackcountry() {
     auto levelDisc = [&](const V3& c, double r, double y, double blend, uint8_t pnt, uint8_t sf, bool keepTreads = false) {
         for (int i = cellI(c.x - r - blend); i <= cellI(c.x + r + blend); i++)
             for (int j = cellI(c.z - r - blend); j <= cellI(c.z + r + blend); j++) {
-                const double d = std::hypot(X(i) - c.x, X(j) - c.z);
+                const double d = dm::hypot(X(i) - c.x, X(j) - c.z);
                 if (d > r + blend) continue;
                 const int id = i * hN + j;
                 if (keepTreads && d > r && edge[id] < 3.5) continue;  // (a trail running in keeps its own heights)
@@ -589,27 +590,27 @@ void World::buildBackcountry() {
     // ---- Landforms: hills, the dune bowl --------------------------------------------------------
     for (int i = cellI(kHill.x - 190); i <= cellI(kHill.x + 190); i++)  // Heartbreak Hill
         for (int j = cellI(kHill.z - 190); j <= cellI(kHill.z + 190); j++)
-            hgrid[i * hN + j] += (float)(26 * std::exp(-(sq(X(i) - kHill.x) + sq(X(j) - kHill.z)) / sq(46)));
+            hgrid[i * hN + j] += (float)(26 * dm::exp(-(sq(X(i) - kHill.x) + sq(X(j) - kHill.z)) / sq(46)));
     {
         // The mine's hillside: the land climbs from the trailhead toward the mine, so the creek crawl
         // climbs the whole way.
         const V3 a = kTrailhead, b = kMine;
-        const double L = std::hypot(b.x - a.x, b.z - a.z);
+        const double L = dm::hypot(b.x - a.x, b.z - a.z);
         const V3 ax((b.x - a.x) / L, 0, (b.z - a.z) / L);
         for (int i = cellI(-420); i <= cellI(120); i++)
             for (int j = cellI(-520); j <= cellI(-100); j++) {
                 const V3 d(X(i) - a.x, 0, X(j) - a.z);
                 const double t = dot(d, ax) / L, lat = d.x * ax.z - d.z * ax.x;
-                hgrid[i * hN + j] += (float)(20 * smoothstep(0.05, 1.0, t) * std::exp(-sq(lat / 120)) * smoothstep(1.35, 1.0, t));
+                hgrid[i * hN + j] += (float)(20 * smoothstep(0.05, 1.0, t) * dm::exp(-sq(lat / 120)) * smoothstep(1.35, 1.0, t));
             }
     }
     // The dune bowl: a basin in the foothills with big sand dunes in it.
     for (int i = cellI(kDunes.x - 100); i <= cellI(kDunes.x + 100); i++)
         for (int j = cellI(kDunes.z - 100); j <= cellI(kDunes.z + 100); j++) {
-            const double x = X(i), z = X(j), d = std::hypot(x - kDunes.x, z - kDunes.z);
+            const double x = X(i), z = X(j), d = dm::hypot(x - kDunes.x, z - kDunes.z);
             if (d > 95) continue;
             const int id = i * hN + j;
-            const double ridgeN = std::pow(1 - std::fabs(std::sin(0.055 * (0.8 * x + 0.6 * z) + 1.5 * std::sin(0.013 * z))), 2.0);
+            const double ridgeN = dm::pow(1 - std::fabs(dm::sin(0.055 * (0.8 * x + 0.6 * z) + 1.5 * dm::sin(0.013 * z))), 2.0);
             const double dunes = 4.5 * ridgeN * (0.5 + 0.5 * valueNoise(x * 0.02, z * 0.02)) + 1.0 * valueNoise(x * 0.07, z * 0.07);
             const double floorY = hgrid[id] - 6 * smoothstep(92, 50, d);
             hgrid[id] = (float)(floorY + dunes * smoothstep(90, 60, d));
@@ -641,7 +642,7 @@ void World::buildBackcountry() {
     }
     auto padY = [&](const V3& c) {
         for (const Pad& p : pads)
-            if (std::hypot(p.c.x - c.x, p.c.z - c.z) < 20) return p.y;
+            if (dm::hypot(p.c.x - c.x, p.c.z - c.z) < 20) return p.y;
         return 0.0;
     };
 
@@ -656,15 +657,15 @@ void World::buildBackcountry() {
             for (size_t k = 0; k < y.size(); k++) y[k] += st.second * clampd((k - st.first) / ramp, 0, 1);
         }
         for (const auto& st : steps) {
-            const double s = st.first, g = (yAt(y0, s + 3) - yAt(y0, s)) / 3, pitch = std::atan(g), thick = 1.4;
+            const double s = st.first, g = (yAt(y0, s + 3) - yAt(y0, s)) / 3, pitch = dm::atan(g), thick = 1.4;
             if (st.second >= 0) {
                 const V3 c = pointAlong(pts, s + 0.75), d = dirAlong(pts, s + 0.75);
                 const double top = yAt(y, s + 1.5) - g * 0.75;
-                addBox(V3(c.x, top - thick / 2 * std::cos(pitch), c.z), V3(0.85, thick / 2, halfW), std::atan2(-d.z, d.x), pitch, 0, col);
+                addBox(V3(c.x, top - thick / 2 * dm::cos(pitch), c.z), V3(0.85, thick / 2, halfW), dm::atan2(-d.z, d.x), pitch, 0, col);
             } else {
                 const V3 c = pointAlong(pts, s - 0.35), d = dirAlong(pts, s - 0.35);
                 const double top = yAt(y, s) - g * 0.35;
-                addBox(V3(c.x, top - thick / 2 * std::cos(pitch), c.z), V3(0.85, thick / 2, halfW), std::atan2(-d.z, d.x), pitch, 0, col);
+                addBox(V3(c.x, top - thick / 2 * dm::cos(pitch), c.z), V3(0.85, thick / 2, halfW), dm::atan2(-d.z, d.x), pitch, 0, col);
             }
             boxes.back().rock = true;
         }
@@ -704,7 +705,7 @@ void World::buildBackcountry() {
             double mudness = 0;
             for (const auto& z : kMudZone) mudness = std::max(mudness, smoothstep(z[0] - 6, z[0] + 3, k) * smoothstep(z[1] + 6, z[1] - 3, k));
             const double depth = 0.07 + 0.11 * mudness;
-            const double g = std::exp(-sq((std::fabs(lat) - 1.0) / 0.55)) * smoothstep(3.4, 2.0, d);
+            const double g = dm::exp(-sq((std::fabs(lat) - 1.0) / 0.55)) * smoothstep(3.4, 2.0, d);
             if (waterY[id] < -1e8) hgrid[id] -= (float)(depth * g);
             if (mudness > 0.5 && d < 3.0) paint[id] = PAINT_MUD, surf[id] = SURF_MUD;
         });
@@ -725,7 +726,7 @@ void World::buildBackcountry() {
     std::vector<double> creekY(creek.size());
     {
         const double yT = padY(kTrailhead);
-        for (size_t k = 0; k < creekY.size(); k++) creekY[k] = yT + 9.0 * k / (double)creekY.size() + 1.0 * std::sin(k * 0.045) * smoothstep(0, 40, (double)k);
+        for (size_t k = 0; k < creekY.size(); k++) creekY[k] = yT + 9.0 * k / (double)creekY.size() + 1.0 * dm::sin(k * 0.045) * smoothstep(0, 40, (double)k);
         corridor(creek, creekY, 38, 80, [](double a) { return a < 3 ? 0.0 : 0.9 * (std::min(a, 5.5) - 3) + 0.3 * std::max(0.0, a - 5.5); }, 0, (double)creek.size(), 30);
         std::vector<std::pair<double, double>> steps;
         for (const auto& l : kCreekLedge) steps.push_back({l[0], l[1]});
@@ -740,9 +741,9 @@ void World::buildBackcountry() {
         const V3 k(kMine.x - 27, 0, kMine.z - 4);
         for (int i = cellI(k.x - 24); i <= cellI(k.x + 24); i++)
             for (int j = cellI(k.z - 24); j <= cellI(k.z + 24); j++) {
-                const double d = std::hypot(X(i) - k.x, X(j) - k.z), e = d + 3 * (valueNoise(X(i) * 0.15, X(j) * 0.15) - 0.5);
+                const double d = dm::hypot(X(i) - k.x, X(j) - k.z), e = d + 3 * (valueNoise(X(i) * 0.15, X(j) * 0.15) - 0.5);
                 const int id = i * hN + j;
-                hgrid[id] += (float)(13 * std::exp(-sq(d / 8.5)));
+                hgrid[id] += (float)(13 * dm::exp(-sq(d / 8.5)));
                 if (e < 10 && paint[id] == PAINT_NONE) paint[id] = PAINT_ROCK, surf[id] = SURF_ROCK, keep[id] = 1;
             }
         levelDisc(kMine + V3(-14, 0, -3), 4.5, mineY, 3, PAINT_GRAVEL, SURF_GRAVEL);
@@ -763,7 +764,7 @@ void World::buildBackcountry() {
         std::vector<double> y(ridgeN);
         for (int k = 0; k < ridgeN; k++) {
             const double u = std::min(1.0, k / (double)ridgeDown);
-            y[k] = mineY + (yEnd - mineY) * u + 5 * std::pow(std::sin(M_PI * u), 0.8);
+            y[k] = mineY + (yEnd - mineY) * u + 5 * dm::pow(dm::sin(M_PI * u), 0.8);
         }
         corridor(ridge, y, 26, 60, [](double a) { return -(0.8 * std::min(std::max(0.0, a - 3), 8.0) + 0.45 * std::max(0.0, a - 11)); }, 26, (double)ridgeDown + 10, 16);
         // Past the river it runs on the flat to Far Side Camp.
@@ -804,7 +805,7 @@ void World::buildBackcountry() {
         });
         for (int i = cellI(kDunes.x - 90); i <= cellI(kDunes.x + 90); i++)
             for (int j = cellI(kDunes.z - 90); j <= cellI(kDunes.z + 90); j++) {
-                const double x = X(i), z = X(j), d = std::hypot(x - kDunes.x, z - kDunes.z) + 8 * (valueNoise(x * 0.05, z * 0.05) - 0.5);
+                const double x = X(i), z = X(j), d = dm::hypot(x - kDunes.x, z - kDunes.z) + 8 * (valueNoise(x * 0.05, z * 0.05) - 0.5);
                 if (d < 72) paint[i * hN + j] = PAINT_SAND, surf[i * hN + j] = SURF_SAND, keep[i * hN + j] = 1;
             }
     }
@@ -867,7 +868,7 @@ void World::buildBackcountry() {
             for (int k = 1; k + 1 < n; k++) lvl[k] = 0.25 * lvl[k - 1] + 0.5 * lvl[k] + 0.25 * lvl[k + 1];
         for (int k = 1; k < n; k++) lvl[k] = std::min(lvl[k], lvl[k - 1] - 0.002);
         for (int k = 0; k < n; k++) {
-            const double df = std::hypot(pts[k].x - ford.x, pts[k].z - ford.z), dd = std::hypot(pts[k].x - deepX.x, pts[k].z - deepX.z);
+            const double df = dm::hypot(pts[k].x - ford.x, pts[k].z - ford.z), dd = dm::hypot(pts[k].x - deepX.x, pts[k].z - deepX.z);
             depth[k] = 1.7;
             depth[k] += (0.34 - depth[k]) * smoothstep(34, 15, df);
             depth[k] += (0.88 - depth[k]) * smoothstep(26, 9, dd);
@@ -881,7 +882,7 @@ void World::buildBackcountry() {
         const int n = (int)pts.size();
         for (int s = 0; s + 1 < n; s++) {
             const V3 &a = pts[s], &b = pts[s + 1];
-            const double dx = b.x - a.x, dz = b.z - a.z, L = std::hypot(dx, dz);
+            const double dx = b.x - a.x, dz = b.z - a.z, L = dm::hypot(dx, dz);
             if (L < 1e-6) continue;
             const RiverStretch* sa = st ? &(*st)[s] : nullptr;
             const RiverStretch* sb = st ? &(*st)[s + 1] : nullptr;
@@ -892,7 +893,7 @@ void World::buildBackcountry() {
                 for (int j = cellI(std::min(a.z, b.z) - reach); j <= cellI(std::max(a.z, b.z) + reach); j++) {
                     const double x = X(i), z = X(j);
                     const double t = clampd(((x - a.x) * dx + (z - a.z) * dz) / (L * L), 0, 1);
-                    const double dd = std::hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+                    const double dd = dm::hypot(x - (a.x + dx * t), z - (a.z + dz * t));
                     if (dd > reach) continue;
                     const int id = i * hN + j;
                     // (Out in the new country the falls part it: the cliff's face is only the drop's, and a reach doesn't carve or
@@ -954,7 +955,7 @@ void World::buildBackcountry() {
                 sp.depth = (float)od[k];
                 const RiverStretch q = st ? (*st)[k] : RiverStretch();
                 sp.halfWidth = (float)(kRiverHalf * (st ? q.widthScale : 1.0));
-                sp.speed = (float)(st ? q.speed : std::hypot(flowX[at(o[k].x, o[k].z)], flowZ[at(o[k].x, o[k].z)]));
+                sp.speed = (float)(st ? q.speed : dm::hypot(flowX[at(o[k].x, o[k].z)], flowZ[at(o[k].x, o[k].z)]));
                 sp.cls = (uint8_t)(st ? q.cls : riverClassForDepth(od[k]));
                 sp.bed = (uint8_t)(st ? q.bed : BED_GRAVEL);
                 r.spots.push_back(sp);
@@ -999,9 +1000,9 @@ void World::buildBackcountry() {
             const double reach = kMouthLakeR * 1.15 + 100;  // (its banks rise 0.35 a metre from the water, ~30 m to the land round it)
             for (int i = cellI(c.x - reach); i <= cellI(c.x + reach); i++)
                 for (int j = cellI(c.z - reach); j <= cellI(c.z + reach); j++) {
-                    const double x = X(i), z = X(j), d = std::hypot(x - c.x, z - c.z);
-                    const double ang = std::atan2(z - c.z, x - c.x);  // (a shore that wanders, the same all the way round)
-                    const double rr = kMouthLakeR * (0.85 + 0.3 * valueNoise(std::cos(ang) * 1.3 + 4.0, std::sin(ang) * 1.3 + 0.7));
+                    const double x = X(i), z = X(j), d = dm::hypot(x - c.x, z - c.z);
+                    const double ang = dm::atan2(z - c.z, x - c.x);  // (a shore that wanders, the same all the way round)
+                    const double rr = kMouthLakeR * (0.85 + 0.3 * valueNoise(dm::cos(ang) * 1.3 + 4.0, dm::sin(ang) * 1.3 + 0.7));
                     const int id = i * hN + j;
                     const double q = d / rr, bed = d < rr ? level - 2.4 * (1 - q * q) - 0.15 : level + 0.15 + (d - rr) * 0.35;
                     if (hgrid[id] > bed) hgrid[id] = (float)bed;
@@ -1130,7 +1131,7 @@ void World::buildBackcountry() {
             int n = 0;
             for (int i = cellI(c.x - r); i <= cellI(c.x + r); i += 2)
                 for (int j = cellI(c.z - r); j <= cellI(c.z + r); j += 2)
-                    if (std::hypot(X(i) - c.x, X(j) - c.z) <= r) sum += hgrid[i * hN + j], n++;
+                    if (dm::hypot(X(i) - c.x, X(j) - c.z) <= r) sum += hgrid[i * hN + j], n++;
             return n ? sum / n : 0.0;
         };
         for (const MapPlace& pl : mapPlaces(MAP_BACKCOUNTRY)) {
@@ -1148,7 +1149,7 @@ void World::buildBackcountry() {
             const V3 pit = lm->p + V3(-16, 0, -11);
             for (int i = cellI(pit.x - 8); i <= cellI(pit.x + 8); i++)
                 for (int j = cellI(pit.z - 8); j <= cellI(pit.z + 8); j++) {
-                    const double d = std::hypot(X(i) - pit.x, X(j) - pit.z);
+                    const double d = dm::hypot(X(i) - pit.x, X(j) - pit.z);
                     if (d > 8) continue;
                     hgrid[i * hN + j] -= (float)(2.2 * smoothstep(8, 1.5, d));
                     if (d < 6) paint[i * hN + j] = PAINT_GRAVEL, surf[i * hN + j] = SURF_GRAVEL;
@@ -1168,7 +1169,7 @@ void World::buildBackcountry() {
     // ---- Paint the land: bare rock on the steep and the knobs, scree, snow in the north ----------------
     auto slopeAtCell = [&](int i, int j) {
         const double gx = (hgrid[(i + 1) * hN + j] - hgrid[(i - 1) * hN + j]) / (2 * kRes), gz = (hgrid[i * hN + j + 1] - hgrid[i * hN + j - 1]) / (2 * kRes);
-        return std::hypot(gx, gz);
+        return dm::hypot(gx, gz);
     };
     auto snowline = [&](double x, double z) { return 50 + 16 * (fbmNoise(x * 0.02 + 3.0, z * 0.02 - 8.0, 3) - 0.5); };
     // The regions' weights (onemap.h) every 4 m, read between: worked out per cell they were most of this pass's time.
@@ -1262,7 +1263,7 @@ void World::buildBackcountry() {
             const V3 p = pointAlong(pass, q);
             for (int i = cellI(p.x - 3.5); i <= cellI(p.x + 3.5); i++)
                 for (int j = cellI(p.z - 3.5); j <= cellI(p.z + 3.5); j++)
-                    if (std::hypot(X(i) - p.x, X(j) - p.z) < 2.9 * (0.6 + 0.4 * valueNoise(X(i) * 0.4, X(j) * 0.4)) && paint[i * hN + j] == PAINT_SNOW)
+                    if (dm::hypot(X(i) - p.x, X(j) - p.z) < 2.9 * (0.6 + 0.4 * valueNoise(X(i) * 0.4, X(j) * 0.4)) && paint[i * hN + j] == PAINT_SNOW)
                         paint[i * hN + j] = PAINT_ICE, surf[i * hN + j] = SURF_ICE;
         }
     }
@@ -1362,7 +1363,7 @@ void World::buildBackcountry() {
     for (double k = 10; k < (double)wash.size() - 10; k += 2.0)
         if (rnd() < 0.4) {
             const V3 p = pointAlong(wash, k), l = leftOf(wash, k);
-            if (std::hypot(p.x - kDunes.x, p.z - kDunes.z) < 78) continue;  // the bowl is clear
+            if (dm::hypot(p.x - kDunes.x, p.z - kDunes.z) < 78) continue;  // the bowl is clear
             const double side = rnd() < 0.5 ? -1 : 1, r = between(0.5, 1.4);
             boulder(p + l * (side * between(3.8, 6.5)), r, r * between(0.5, 0.9), 1.2f);
         }
@@ -1395,7 +1396,7 @@ void World::buildBackcountry() {
         sg.col[0] = (float)col.x, sg.col[1] = (float)col.y, sg.col[2] = (float)col.z;
         fixtures.push_back(sg);
         const double half = kind == PROP_MAPBOARD ? 0.8 : 0.0;
-        const V3 sd2(std::sin(yaw), 0, std::cos(yaw));
+        const V3 sd2(dm::sin(yaw), 0, dm::cos(yaw));
         for (int k = kind == PROP_MAPBOARD ? -1 : 1; k <= 1; k += 2)
             poles.push_back({x + sd2.x * half * k, z + sd2.z * half * k, sg.a.y - 0.4, sg.a.y + 2.0, 0.07});
     };
@@ -1404,7 +1405,7 @@ void World::buildBackcountry() {
     auto trailSign = [&](const Poly& pts, double k, double side, const V3& col) {
         const V3 p = pointAlong(pts, k), d = dirAlong(pts, k), l(-d.z, 0, d.x);
         const V3 q = p + l * side;
-        sign(q.x, q.z, std::atan2(d.z, -d.x), col);
+        sign(q.x, q.z, dm::atan2(d.z, -d.x), col);
     };
     auto cabinAt = [&](const V3& c, double yaw) {
         const double y = height(c.x, c.z);
@@ -1422,8 +1423,8 @@ void World::buildBackcountry() {
         V3 a(x0, height(x0, z0), z0), b(x1, height(x1, z1), z1);
         fixtures.push_back({PROP_FENCE, a, b});
         const V3 d = b - a;
-        const double L = std::hypot(d.x, d.z), yaw = std::atan2(-d.z, d.x);
-        addBox((a + b) * 0.5 + V3(0, 0.62, 0), V3(L / 2, 0.3, 0.06), yaw, std::atan2(d.y, L), 0, V3(0.4, 0.3, 0.2));
+        const double L = dm::hypot(d.x, d.z), yaw = dm::atan2(-d.z, d.x);
+        addBox((a + b) * 0.5 + V3(0, 0.62, 0), V3(L / 2, 0.3, 0.06), yaw, dm::atan2(d.y, L), 0, V3(0.4, 0.3, 0.2));
         boxes.back().hidden = true;
         for (double t = 0; t <= L + 0.01; t += 2.5) {
             const V3 p = a + d * (t / L);
@@ -1433,7 +1434,7 @@ void World::buildBackcountry() {
     auto fireRing = [&](const V3& c) {
         for (int k = 0; k < 11; k++) {
             const double a = k * 2 * M_PI / 11;
-            addRock(c.x + 0.95 * std::cos(a), c.z + 0.95 * std::sin(a), V3(0.24, 0.17, 0.2), 0.18, 900 + k, 0.8f);
+            addRock(c.x + 0.95 * dm::cos(a), c.z + 0.95 * dm::sin(a), V3(0.24, 0.17, 0.2), 0.18, 900 + k, 0.8f);
         }
     };
     // A coloured box (a piece of old timber, rusty iron...) standing or lying.
@@ -1513,7 +1514,7 @@ void World::buildBackcountry() {
         standIn(cart, "ore_cart", V3(m.x + 3.2, y + 0.2, m.z), 0.0, {{"track", 1}});
         for (int k = 0; k < 14; k++) {
             const double a = k * 0.9;
-            boulder(V3(m.x + 3 + 5 * std::cos(a) * between(0.5, 1.2), 0, m.z + 9 + 3.5 * std::sin(a) * between(0.5, 1.2)), between(0.4, 1.0), between(0.2, 0.6), 1.15f);
+            boulder(V3(m.x + 3 + 5 * dm::cos(a) * between(0.5, 1.2), 0, m.z + 9 + 3.5 * dm::sin(a) * between(0.5, 1.2)), between(0.4, 1.0), between(0.2, 0.6), 1.15f);
         }
         cabinAt(kMine + V3(6, 0, -12), M_PI);
         cairn(kMine + V3(-4, 0, 5));
@@ -1522,7 +1523,7 @@ void World::buildBackcountry() {
     {
         const V3 p = pointAlong(ridge, kSlabS), l = leftOf(ridge, kSlabS);
         cairn(p + l * 3.8);
-        table(p.x - l.x * 4.6, p.z - l.z * 4.6, std::atan2(-l.z, l.x));
+        table(p.x - l.x * 4.6, p.z - l.z * 4.6, dm::atan2(-l.z, l.x));
     }
     // CLIFF OVERLOOK: a pull-out over the drop, with a cairn and the trail map.
     {
@@ -1530,7 +1531,7 @@ void World::buildBackcountry() {
         const double y = yAt(shelfY, kOverlookS);
         levelDisc(p + r * 5.5, 3.2, y, 2.4, PAINT_ROCK, SURF_ROCK);
         cairn(p + r * 8.0);
-        sign(p.x - r.x * 4.0, p.z - r.z * 4.0, std::atan2(-r.z, r.x), V3(0.3, 0.22, 0.14), PROP_MAPBOARD);
+        sign(p.x - r.x * 4.0, p.z - r.z * 4.0, dm::atan2(-r.z, r.x), V3(0.3, 0.22, 0.14), PROP_MAPBOARD);
         // The shelf's outer edge is marked with posts.
         for (double k = 8; k < (double)shelf.size() - 6; k += 13) {
             const V3 q = pointAlong(shelf, k), dd = dirAlong(shelf, k), rr(dd.z, 0, -dd.x);
@@ -1663,7 +1664,7 @@ void World::buildBackcountry() {
         const int id = at(x, z);
         if (keep[id] || waterY[id] > -1e8 || paint[id] != PAINT_NONE || fbmNoise(x * 0.010 + 7.0, z * 0.010 - 3.0, 3) < 0.5) continue;
         const double r = between(0.18, 0.36), L = between(4, 10), a = between(0, 2 * M_PI);
-        V3 p0(x - std::cos(a) * L / 2, 0, z - std::sin(a) * L / 2), p1(x + std::cos(a) * L / 2, 0, z + std::sin(a) * L / 2);
+        V3 p0(x - dm::cos(a) * L / 2, 0, z - dm::sin(a) * L / 2), p1(x + dm::cos(a) * L / 2, 0, z + dm::sin(a) * L / 2);
         if (keep[at(p0.x, p0.z)] || keep[at(p1.x, p1.z)]) continue;
         p0.y = height(p0.x, p0.z) + r * 0.8, p1.y = height(p1.x, p1.z) + r * 0.8;
         logs.push_back({p0, p1, r});
@@ -1790,7 +1791,7 @@ void World::buildBackcountry() {
                     const double x = x0 + C * rr(), z = z0 + C * rr();
                     int id, i, j;
                     const double r = 0.18 + 0.18 * rr(), L = 4 + 6 * rr(), a = 6.2832 * rr();
-                    V3 p0(x - std::cos(a) * L / 2, 0, z - std::sin(a) * L / 2), p1(x + std::cos(a) * L / 2, 0, z + std::sin(a) * L / 2);
+                    V3 p0(x - dm::cos(a) * L / 2, 0, z - dm::sin(a) * L / 2), p1(x + dm::cos(a) * L / 2, 0, z + dm::sin(a) * L / 2);
                     int i0, j0, id0, i1, j1, id1;
                     if (open(x, z, id, i, j) && paint[id] == PAINT_NONE && open(p0.x, p0.z, id0, i0, j0) && open(p1.x, p1.z, id1, i1, j1)) {
                         p0.y = height(p0.x, p0.z) + r * 0.8, p1.y = height(p1.x, p1.z) + r * 0.8;
@@ -1830,7 +1831,7 @@ void World::buildBackcountry() {
         };
         // A spot `ahead` metres in front of and `left` of o, facing yaw (the game's yaw: front (cos, 0, -sin), left (sin, 0, cos)).
         auto rel = [&](const V3& o, double yaw, double ahead, double left) {
-            return grounded(V3(o.x + std::cos(yaw) * ahead + std::sin(yaw) * left, 0, o.z - std::sin(yaw) * ahead + std::cos(yaw) * left));
+            return grounded(V3(o.x + dm::cos(yaw) * ahead + dm::sin(yaw) * left, 0, o.z - dm::sin(yaw) * ahead + dm::cos(yaw) * left));
         };
         using Set = std::vector<std::pair<std::string, double>>;
         // A code-made building at `at` (its footprint a hidden box of `half` for the collider; the model is drawn over it).
@@ -2001,7 +2002,7 @@ void World::buildBackcountry() {
                 table(rel(P, yw, 6, -10).x, rel(P, yw, 6, -10).z, yw);
                 for (int k = 0; k < 10; k++) {
                     const double a = k * 0.8;
-                    const V3 q = rel(P, yw, -9 + 4 * std::cos(a), 9 + 3 * std::sin(a));
+                    const V3 q = rel(P, yw, -9 + 4 * dm::cos(a), 9 + 3 * dm::sin(a));
                     addRock(q.x, q.z, V3(0.5 + 0.2 * (k % 3), 0.3, 0.5), 0.3, 7100 + k, 1.1f);
                 }
                 const V3 g = rel(P, yw, -27, 0);  // (the head of the spur, west of the yard)
@@ -2064,7 +2065,7 @@ void World::buildBackcountry() {
                 double best = 1e9, face = yw;
                 for (int k = 0; k < 24; k++) {
                     const double a = k * M_PI / 12;
-                    const double h = height(P.x + std::cos(a) * 26, P.z - std::sin(a) * 26);
+                    const double h = height(P.x + dm::cos(a) * 26, P.z - dm::sin(a) * 26);
                     if (h < best) best = h, face = a;
                 }
                 const V3 c = rel(P, face, pl.pad + 6.5, 0);
@@ -2113,7 +2114,7 @@ V3 backcountryFeature(const char* name) {
     auto onTrail = [](const Poly& t, const V3& p) {
         V3 best = t[0];
         for (const V3& q : t)
-            if (std::hypot(q.x - p.x, q.z - p.z) < std::hypot(best.x - p.x, best.z - p.z)) best = q;
+            if (dm::hypot(q.x - p.x, q.z - p.z) < dm::hypot(best.x - p.x, best.z - p.z)) best = q;
         return best;
     };
     // Elk River out in the new country (rivers.cpp): its falls' lips, its fords and pools, mid-channel.

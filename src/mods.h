@@ -50,6 +50,9 @@ std::string modFindPart(const char* vehicleId, int slot, const char* name);
 // Catalog vehicle with these mods fitted. The same mods always give the same object
 // (cars keep a pointer to their spec); no mods gives the catalog entry itself.
 const VehicleSpec& tunedSpec(int vehicle, const ModSet& mods);
+// Makes the body take the parts fitted to a tuned copy (trimmed, flared arches and wheel spacers
+// for bigger tires and longer travel); tunedSpec does it to every build.
+void fitBody(VehicleSpec& s, const VehicleSpec& stock);
 
 // Which mods are fitted to each vehicle in your garage: keys 1-4, parked spawns and
 // traffic all use these. Saved between runs.

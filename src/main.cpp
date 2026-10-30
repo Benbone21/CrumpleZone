@@ -62,6 +62,7 @@
 #include "procstream.h"
 #include "procrules.h"
 #include "procworld.h"
+#include "freecam.h"
 #include "debugscreen.h"
 #include "editor.h"
 #include "fx.h"
@@ -1433,14 +1434,14 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {K(KA_GET_IN_OUT), "GET OUT / IN (ON FOOT: " + K(KA_INTERACT) + " WINCH LINE, " + K(KA_FUEL_CAN) + " FUEL CAN)"},
         {K(KA_TRANSFER), mph ? "4X4: 2H 4H 4L (LOW: BELOW 5 MPH)" : "4X4: 2H 4H 4L (LOW: BELOW 8 KM/H)"},
         {K(KA_LIGHTS), "LIGHTS: AUTO, LOW, HIGH, OFF"},
-        {K(KA_LOCK_FRONT) + sp + K(KA_LOCK_REAR), "FRONT / REAR LOCKER"}, {K(KA_AUTOPILOT), "AUTOPILOT (ESC > AUTOPILOT: WHERE)"},
+        {K(KA_LOCK_FRONT) + sp + K(KA_LOCK_REAR), "FRONT / REAR LOCKER"}, {K(KA_AUTOPILOT) + " / " + K(KA_AUTOPILOT_PICK), "AUTOPILOT: START / STOP, WHERE TO"}, {K(KA_JOBS), "JOBS ON OFFER HERE"},
         {K(KA_CAMERA), "CAMERA"},                                        {"MOUSE", "LOOK / ZOOM"},
-        {K(KA_PAUSE), "PAUSE"},                                          {K(KA_PARK_BRAKE), "PARKING BRAKE"},
+        {K(KA_PARK_BRAKE), "PARKING BRAKE"},
         {K(KA_TRACTION), "TRACTION CONTROL"},                            {K(KA_HORN), "HORN (HOLD)"},
         {K(KA_FULLSCREEN), "FULLSCREEN"},                                {K(KA_PHOTO), "HIDE THE HUD (PHOTOS)"},
         {K(KA_HUD_ALL), "HOLD: SHOW THE FULL HUD"},
         {K(KA_DEBUG_INFO), "DEBUG SCREEN (SHIFT: GRAPH)"},
-        {K(KA_DEV_MENU), "DEV MENU: SPAWN, TELEPORT, DEBUG"},            {K(KA_MENU), "MENU: CARS, SETTINGS, QUIT"},
+        {K(KA_DEV_MENU), "SETTINGS > DEV: SPAWN, TELEPORT, DEBUG"},            {K(KA_MENU), "MENU: MULTIPLAYER, SETTINGS, MAIN MENU, QUIT"},
         {K(KA_HELP), "CLOSE"},
     };
     const int n = (int)keys.size(), rows = (n + 1) / 2;
@@ -1521,8 +1522,8 @@ void drawScenarioStatus(Renderer& r, const Playback& pb, HudState& hud, float u,
     }
 }
 
-// Multiplayer: who's here (top right), and a name tag over each of their vehicles.
-void drawPlayers(Renderer& r, const Sim& sim, const NetSession& net, const View& view, float u, int W, int H, bool fpsOn) {
+// Multiplayer: who's here (top right).
+void drawPlayers(Renderer& r, const NetSession& net, float u, int W, bool fpsOn) {
     if (!net.active()) return;
     const float s = px(1.3f * u), lh = 8 * s + 6 * u;
     float y = hudlayout::playersList(u, W, 1, 0, fpsOn).y;  // (under the FPS block when that is up)
@@ -1537,22 +1538,7 @@ void drawPlayers(Renderer& r, const Sim& sim, const NetSession& net, const View&
         r.text(W - w - 3 * u, y + 3 * u, s, buf, k == net.self ? 1.0f : 0.6f, k == net.self ? 0.75f : 0.9f, k == net.self ? 0.3f : 1.0f);
         y += lh;
     }
-    // Name tags: project a point above each of their vehicles.
-    const V3 fwd = norm(view.target - view.eye), right = norm(cross(fwd, view.up)), up = cross(right, fwd);
-    const double f = 1.0 / std::tan(view.fovy / 2);
-    for (const Car& c : sim.cars) {
-        if (!c.remote || c.isProp()) continue;
-        const V3 p = c.frame().com + V3(0, 1.9, 0) - view.eye;
-        const double z = dot(p, fwd);
-        if (z < 1.0 || z > 400) continue;
-        const float sx = W / 2.0f + (float)(dot(p, right) / z * f * H / 2), sy = H / 2.0f - (float)(dot(p, up) / z * f * H / 2);
-        std::string tag = net.ownerName(c.netId);
-        if (c.engineDead) tag += c.hydrolocked ? "  (FLOODED)" : "  (ENGINE DEAD)";
-        const float ts = px((z < 40 ? 1.4f : 1.1f) * u);
-        const float tw = r.textWidth(tag, ts);
-        pill(r, sx - tw / 2 - 6 * u, sy - 4 * u, tw + 12 * u, 8 * ts + 8 * u, 0.0f, 0.0f, 0.0f, 0.5f);
-        r.text(sx - tw / 2, sy, ts, tag, 0.6f, 0.9f, 1.0f);
-    }
+    // (Their name tags: Coop::drawWorld, one over each vehicle.)
 }
 
 // A career's supply caches still to open, within ~250 m: a marker over each and how far.
@@ -1603,7 +1589,7 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     drawRecovery(r, sim, hud, u, W);
     drawAnchors(r, sim, hud, u, W, H);
     drawStation(r, sim, u, W, H);
-    if (!hud.debugOn) drawPlayers(r, sim, net, view, u, W, H, hud.showFps);  // (F3 lists them itself)
+    if (!hud.debugOn) drawPlayers(r, net, u, W, hud.showFps);  // (F3 lists them itself)
     drawPilot(r, sim, view, u, W, H);
     drawCaches(r, careerRun, hud, caches, view, u, W, H);
     drawTags(r, sim.world, view, u, W, H);
@@ -2225,7 +2211,8 @@ int main(int argc, char** argv) {
     bool classicTitle = false;    // the old title page is up (DEV > CLASSIC MENU, or --menu 9) instead of the new one
     float mainFade = 0;           // the new menu fading in
     // The new main menu is the title screen's page 0 over the camp (the settings, multiplayer and levels pages are still the PauseMenu's).
-    auto mainMenuShown = [&]() { return menu.open && menu.title && menu.pageNow() == 0 && campWorld && !classicTitle; };
+    // (Over the camp when it's loaded; otherwise, with a map still loading, in multiplayer or from the editor, over a plain dark screen: never the old page.)
+    auto mainMenuShown = [&]() { return menu.newMainMenu(classicTitle); };
     auto mpShown = [&]() { return menu.open && menu.pageNow() == 2 && !(menu.title && classicTitle); };
     auto campBehind = [&]() { return campWorld && menu.open && menu.title; };
     bool menuWasPaused = false, garageFromMenu = false;
@@ -2297,6 +2284,16 @@ int main(int argc, char** argv) {
         const bool ownPaint = careerRun.active && c.careerSlot != -1;  // (a career world's vehicle: its own paint, not the garage's)
         ModSet fitted = garage.fitted[c.spec->model];
         careersession::shopMods(careerRun, sim, fitted);  // (a career world's vehicle: its own parts, so opening changes nothing on it)
+        garageShop.swaps.clear();  // (SWAP VEHICLE: in a career the vehicles you own in this world, at a station; in sandbox every listed one)
+        if (career.on) {
+            if (careerRun.active)
+                for (int k = 0; k < (int)careerRun.profile.vehicles.size(); k++) {
+                    const OwnedVehicle& ov = careerRun.profile.vehicles[k];
+                    if (ov.world == careerRun.world.slug) garageShop.swaps.push_back({ov.vehicle, k, c.careerSlot == k});
+                }
+        } else {
+            for (int v : listedVehicles()) garageShop.swaps.push_back({v, -1, v == c.spec->model});
+        }
         garageShop.begin(c.spec->model, fitted, career, career.on, at >= 0, ownPaint ? c.paint : garage.paint[c.spec->model]);
         shopToast.clear();
         shopDrag = false;
@@ -2336,6 +2333,19 @@ int main(int argc, char** argv) {
             } else {
                 garage.paint[garageShop.vehicle] = garageShop.paint;
                 if (!careerQuiet) garage.save(garagePath);  // (as saveSettings: scripted and --script runs never write)
+            }
+        }
+        if (r.swapVehicle >= 0) {  // the SWAP VEHICLE page's pick
+            if (r.swapSlot >= 0) {  // a career world: one of yours, at this station (careersession.h keeps the one you leave parked here)
+                std::string why;
+                if (!careersession::swapTo(careerRun, sim, r.swapSlot, why)) hud.toast(why);
+                else {
+                    cam.initialized = false;
+                    hud.toast(std::string("NOW DRIVING ") + vehicleCatalog()[r.swapVehicle].name + " (YOURS LEFT PARKED HERE)");
+                }
+            } else {
+                sim.swapPlayerVehicle(garage.spec(r.swapVehicle));
+                hud.toast(std::string("NOW DRIVING ") + vehicleCatalog()[r.swapVehicle].name);
             }
         }
         if (r.close) {
@@ -3193,8 +3203,24 @@ int main(int argc, char** argv) {
     auto uiClick = [&]() { if (audioOn) audio.play(SFX_UI_CLICK, 0.35f); };
     auto uiHover = [&]() { if (audioOn) audio.play(SFX_UI_HOVER, 0.16f); };
     auto activationKey = [](int sc) { return sc == 40 || sc == 88 || sc == 44; };  // (Enter, keypad Enter, Space: the pad's A arrives as Enter)
+    // The dev free cam's state (freecam.h; what it does is with the dev tools, below).
+    struct {
+        bool on = false;
+        int prevMode = 0;                    // the camera it came from (back to it on the way out)
+        int speed = freecam::kDefaultSpeed;  // freecam::kSpeeds step
+        bool through = false;                // flies through the ground
+        freecam::Carry carry;
+        bool picker = false;                 // the spawn picker is open
+        int pickSel = 0;                     // ...on this one (listedVehicles())
+        int target = -1;                     // the vehicle under the crosshair
+        bool aimHit = false;                 // the crosshair is on the ground ...
+        V3 aim;                              // ... here
+        bool down = false;                   // a mouse button went down in free cam: a click if it hardly moved before it came up
+        double travel = 0;
+    } fc;
     worldChanged = [&]() {
         worldCareer = career.on;
+        fc.carry = freecam::Carry(), fc.target = -1;  // (the dev free cam's vehicle was the last world's)
         if (sim.world.map == MAP_PROCEDURAL) proc::setActiveWindow(sim.world);  // (its places: mapPlaces, discovery, caches, the autopilot)
         if (jobOn && net.role == NetSession::HOST) net.sendGame("jobstop");
         jobOn = false;  // (its wreck and its places were the last world's)
@@ -3216,23 +3242,6 @@ int main(int argc, char** argv) {
                 break;
             }
             case PauseMenu::RESUME: closeMenu(); break;
-            case PauseMenu::DRIVE:
-                closeMenu();
-                if (careerRun.active) {  // (a career world: one of your own, at a station; careersession.h)
-                    const int k = careersession::ownedOf(careerRun, sim, res.vehicle);
-                    std::string why;
-                    if (walker.active) hud.toast("GET INTO YOUR VEHICLE FIRST");
-                    else if (k < 0) hud.toast(std::string("YOU DON'T OWN ANOTHER ") + vehicleCatalog()[res.vehicle].name);
-                    else if (!careersession::swapTo(careerRun, sim, k, why)) hud.toast(why);
-                    else {
-                        cam.initialized = false;
-                        hud.toast(std::string("NOW DRIVING ") + vehicleCatalog()[res.vehicle].name + " (YOURS LEFT PARKED HERE)");
-                    }
-                    break;
-                }
-                sim.swapPlayerVehicle(garage.spec(res.vehicle));
-                hud.toast(std::string("NOW DRIVING ") + vehicleCatalog()[res.vehicle].name);
-                break;
             case PauseMenu::GARAGE:
                 closeMenu();
                 garageFromMenu = openGarage();
@@ -3458,22 +3467,9 @@ int main(int argc, char** argv) {
                 if (campMenu && !net.active() && !editor.active && !mapLoad.active()) enterCamp();
                 menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), campWorld ? settings.map : sim.world.map);
                 classicTitle = false;
-                if (campWorld) mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model)), mainNav.worlds = listWorlds();
+                mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model)), mainNav.worlds = listWorlds();  // (the camp, or when it can't load now, a plain screen: the new menu either way)
+                mainNav.career = settings.career;
                 break;
-            case PauseMenu::LOAD_MAP: {
-                closeMenu();
-                if (careerRefuses("LEAVE TO THE MAIN MENU TO CHANGE MAP")) break;
-                if (net.active()) {
-                    hud.toast("LEAVE THE MULTIPLAYER SESSION TO CHANGE MAPS");
-                    break;
-                }
-                requestMap(res.vehicle, nullptr);
-                levelHours = -1;
-                settings.map = res.vehicle;
-                saveSettings();
-                hud.toast(std::string("MAP: ") + mapName(res.vehicle));
-                break;
-            }
         }
     };
     // ---- The multiplayer pages (mpmenu.h): the PauseMenu's page 2, drawn and driven in the main menu's style ----
@@ -3630,9 +3626,10 @@ int main(int argc, char** argv) {
                 break;
         }
     };
-    if (opt.menu == 9) {  // (testing: the title screen)
+    if (opt.menu == 9) {  // (testing: the title screen: the new main menu, on a plain screen when the camp isn't loaded)
         openMenu();
         menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
+        mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model)), mainNav.worlds = listWorlds();
     } else if (opt.menu >= 1) {  // (1: the settings page)
         openMenu();
         menu.showPage(opt.menu, std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
@@ -3703,6 +3700,7 @@ int main(int argc, char** argv) {
     } else if (!scripted && opt.scenario.empty() && opt.map < 0 && !opt.spawnSet && opt.hostPort < 0 && opt.join.empty() && opt.menu < 0 && opt.resumeModel < 0) {
         openMenu();
         menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
+        mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model)), mainNav.worlds = listWorlds();
     }
     // What the new main menu asked for (mainmenu.h).
     handleMainFn = [&](const mainmenu::Result& r) {
@@ -3731,6 +3729,7 @@ int main(int argc, char** argv) {
                 openEditor(l);
                 break;
             }
+            case A_LEVELS:
             case A_DEV_LEVELS:
                 if (refreshLevelsLater) refreshLevelsLater();
                 menu.showTitlePage(4, model, settings.map);
@@ -3830,6 +3829,144 @@ int main(int argc, char** argv) {
         const unsigned* k = benchCars.carKindTris;
         std::printf("bench: car tris (main, k) skin %.1f glass %.1f bound parts %.1f running gear %.1f wheels %.1f parts models %.1f\n",
                     k[0] / n / 1000, k[1] / n / 1000, k[2] / n / 1000, k[3] / n / 1000, k[4] / n / 1000, k[5] / n / 1000);
+    };
+    // ---- The dev FREE CAM (freecam.h): the drone made a dev tool. It flies through the ground if asked, in speed steps, the world
+    // streamed round it; it carries vehicles, sets them down and spawns new ones where it looks. Dev keys only in a career world;
+    // in multiplayer only the host carries and spawns (the moved vehicles go out in its states, a set-down as the jump a teleport is).
+    auto fcLook = [&]() { return V3(std::cos(cam.droneYaw) * std::cos(cam.dronePitch), std::sin(cam.dronePitch), -std::sin(cam.droneYaw) * std::cos(cam.dronePitch)); };
+    // Carrying, spawning and driving another vehicle change the world: refused to a guest, and in a career world without DEV KEYS.
+    auto fcMay = [&]() {
+        if (net.active() && net.role != NetSession::HOST) {
+            hud.toast("FREE CAM: ONLY THE HOST CARRIES AND SPAWNS VEHICLES IN MULTIPLAYER");
+            return false;
+        }
+        if (careerRun.active && !settings.devHotkeys) {
+            hud.toast("FREE CAM: CAREER WORLDS NEED DEV KEYS (" + K(KA_DEV_TOGGLE) + ")");
+            return false;
+        }
+        return true;
+    };
+    auto fcName = [&](int k) {
+        if (k < 0 || k >= (int)sim.cars.size()) return std::string();
+        const Car& c = sim.cars[k];
+        std::string n = c.spec->name;
+        if (c.remote) n += " (" + net.ownerName(c.netId) + ")";
+        else if (k == sim.player) n += " (YOURS)";
+        else if (c.ai || c.pilot.active) n += " (AI)";
+        else n += " (PARKED)";
+        return n;
+    };
+    // Where the carried vehicle hangs: in front of the camera and below it, never in the ground.
+    auto fcHang = [&]() {
+        const Car& c = sim.cars[fc.carry.car];
+        V3 at = freecam::hangPoint(cam.droneEye, cam.droneYaw, 4.0 + c.spec->length * 0.6, 2.5);
+        at.y = std::max(at.y, sim.world.height(at.x, at.z) + 1.6);
+        return at;
+    };
+    auto fcPickUp = [&](int k) {
+        if (!fcMay()) return;
+        if (k < 0) {
+            hud.toast("FREE CAM: NO VEHICLE UNDER THE CROSSHAIR");
+            return;
+        }
+        if (sim.cars[k].remote) {
+            hud.toast("FREE CAM: THAT ONE IS " + net.ownerName(sim.cars[k].netId) + "'S");
+            return;
+        }
+        if (freecam::pickUp(sim, k, fc.carry)) {
+            freecam::hold(sim, fc.carry, fcHang());
+            hud.toast("CARRYING " + std::string(sim.cars[k].spec->name));
+        }
+    };
+    auto fcSetDown = [&](bool atCrosshair) {  // at the crosshair's ground point, else on the ground under where it hangs
+        if (!fc.carry.on()) return;
+        const std::string name = freecam::valid(sim, fc.carry) ? sim.cars[fc.carry.car].spec->name : "";
+        V3 p = freecam::valid(sim, fc.carry) ? sim.cars[fc.carry.car].frame().com : cam.droneEye;
+        if (atCrosshair && fc.aimHit) p = fc.aim;
+        freecam::dropAt(sim, fc.carry, p.x, p.z);
+        if (!name.empty()) hud.toast("SET DOWN " + name);
+    };
+    auto fcLetGo = [&]() {
+        if (!fc.carry.on()) return;
+        freecam::letGo(sim, fc.carry);
+        hud.toast("LET GO");
+    };
+    auto fcDrive = [&]() {  // into the carried or targeted vehicle
+        if (!fcMay()) return;
+        const int k = fc.carry.on() ? fc.carry.car : fc.target;
+        if (k < 0 || k >= (int)sim.cars.size()) {
+            hud.toast("FREE CAM: NO VEHICLE UNDER THE CROSSHAIR");
+            return;
+        }
+        if (sim.cars[k].remote) {
+            hud.toast("FREE CAM: THAT ONE IS " + net.ownerName(sim.cars[k].netId) + "'S");
+            return;
+        }
+        if (fc.carry.on()) fcSetDown(false);
+        if (walker.active) getIn(k);
+        else if (k != sim.player) {
+            sim.player = k;
+            Car& c = sim.cars[k];
+            c.handbrake = 0;
+            if (c.ai || c.pilot.active) c.ai = false, c.pilot.active = false, c.pilot.followCar = -1, c.gear = std::max(c.gear, 1);
+            c.wake();
+            cam.initialized = false;
+        }
+        if (sim.player == k) hud.toast(std::string("NOW DRIVING ") + sim.cars[k].spec->name + " (FREE CAM KEY OR ESC: BACK TO IT)");
+    };
+    auto fcSpawn = [&](bool carried) {  // the picker's vehicle, at the crosshair or in the camera's hands
+        if (!fcMay()) return;
+        const std::vector<int>& listed = listedVehicles();
+        if (listed.empty()) return;
+        const int k = std::min(std::max(fc.pickSel, 0), (int)listed.size() - 1);
+        V3 p = fc.aim;
+        if (carried || !fc.aimHit) p = freecam::hangPoint(cam.droneEye, cam.droneYaw, 9, 0);
+        if (carried && fc.carry.on()) fcSetDown(false);
+        const double yaw = cam.droneYaw + M_PI / 2;  // (across the view: you see its side)
+        whenVisualReady(garage.spec(listed[k]), [&, k, p, yaw, carried] {
+            const int i = freecam::spawnAt(sim, garage.spec(listedVehicles()[k]), p.x, p.z, yaw);
+            if (i < 0) {
+                hud.toast("VEHICLE LIMIT REACHED");
+                return;
+            }
+            hud.toast(std::string("SPAWNED ") + sim.cars[i].spec->name);
+            if (carried && fc.on && !fc.carry.on() && freecam::pickUp(sim, i, fc.carry)) freecam::hold(sim, fc.carry, fcHang());
+        });
+    };
+    auto fcEnter = [&]() {
+        if (careerRun.active && !settings.devHotkeys) {
+            hud.toast("FREE CAM: CAREER WORLDS NEED DEV KEYS (" + K(KA_DEV_TOGGLE) + ")");
+            return;
+        }
+        if (editor.active) return;
+        fc.on = true;
+        fc.picker = false;
+        fc.prevMode = cam.mode == 3 ? 0 : cam.mode;
+        if (cam.mode != 3) {  // (from where the camera was, as the drone takes off)
+            cam.mode = 3;
+            cam.droneEye = lastView.eye;
+            const V3 d = norm(lastView.target - lastView.eye);
+            cam.droneYaw = std::atan2(-d.z, d.x);
+            cam.dronePitch = std::asin(clampd(d.y, -1, 1));
+        }
+        hud.toast("FREE CAM: CLICK OR G CARRIES, B SPAWNS, V DRIVES IT, WHEEL SPEED, X THROUGH THE GROUND; " + K(KA_DEV_FREECAM) + " OR ESC LEAVES");
+    };
+    auto fcExit = [&]() {
+        if (!fc.on) return;
+        if (fc.carry.on()) fcSetDown(false);
+        fc.on = fc.picker = false;
+        fc.target = -1;
+        cam.mode = fc.prevMode;
+        cam.initialized = false;
+        // (The procedural world's window followed the camera: a truck left beyond its land is brought to where you are.)
+        if (sim.world.map == MAP_PROCEDURAL && !net.active() && !walker.active && sim.player >= 0 && sim.player < (int)sim.cars.size()) {
+            const V3 p = sim.cars[sim.player].frame().com;
+            if (std::max(std::fabs(p.x), std::fabs(p.z)) > proc::kWindowHalf - 200) {
+                const V3 g = fc.aimHit ? fc.aim : cam.droneEye;
+                sim.teleportCar(sim.player, g.x, g.z, cam.droneYaw);
+                hud.toast("YOUR VEHICLE WAS BROUGHT TO WHERE YOU WERE LOOKING");
+            }
+        }
     };
     size_t spawnType = 0, trafficType = 0;
     // The dev tools (devmenu.h): what the old test keys did, now also what the dev menu's entries do.
@@ -3970,6 +4107,10 @@ int main(int argc, char** argv) {
                 break;
             case SCENARIO_CHECKS:
                 if (playback.active()) hud.scenarioDetail = !hud.scenarioDetail;
+                break;
+            case FREE_CAM:
+                if (fc.on) fcExit();
+                else fcEnter();
                 break;
             case EXPORT_KEYBINDS: {  // the saved layout as the new defaults (keybinds.h): the text to paste over kInfo's first two fields
                 makeDir("build");
@@ -4477,7 +4618,7 @@ int main(int argc, char** argv) {
                         }
                         break;
                     }
-                    if (menu.open && menu.title && classicTitle && campWorld && menu.pageNow() == 0 && evKeyScancode(e) == SC_ESCAPE) {  // (the old title page: Esc is back to the new one)
+                    if (menu.open && menu.title && classicTitle && menu.pageNow() == 0 && evKeyScancode(e) == SC_ESCAPE) {  // (the old title page: Esc is back to the new one)
                         classicTitle = false;
                         break;
                     }
@@ -4518,6 +4659,48 @@ int main(int argc, char** argv) {
                         }
                         break;
                     }
+                    if (fc.on && !garageShop.open && !coop.typing && !(freecam::passesThrough(evKeyScancode(e)) && !fc.picker)) {  // the dev free cam takes every key but the always-on ones (freecam.h)
+                        const int k = evKeyScancode(e);
+                        const bool shift = shiftDown();
+                        const std::vector<int>& listed = listedVehicles();
+                        if (k == freecam::K_EXIT || settings.keys.matches(KA_DEV_FREECAM, k, shift)) {
+                            if (evKeyRepeat(e)) break;
+                            if (fc.picker) fc.picker = false;
+                            else fcExit();
+                            break;
+                        }
+                        if (fc.picker) {  // the spawn picker: up / down, Enter (Shift: carried) or G, B or Esc to close
+                            const int n = (int)listed.size();
+                            if (k == freecam::K_FORWARD || k == SC_UP) fc.pickSel = (fc.pickSel + n - 1) % std::max(1, n);
+                            else if (k == freecam::K_BACK || k == SC_DOWN) fc.pickSel = (fc.pickSel + 1) % std::max(1, n);
+                            else if (evKeyRepeat(e)) {
+                            } else if (k == SC_RETURN || k == SC_KP_ENTER || k == freecam::K_GRAB) fc.picker = false, fcSpawn(shift);
+                            else if (k == freecam::K_SPAWN) fc.picker = false;
+                            break;
+                        }
+                        if (evKeyRepeat(e)) break;
+                        switch (k) {
+                            case freecam::K_GRAB:  // pick up what's under the crosshair, or set the carried one down at it
+                                if (fc.carry.on()) fcSetDown(true);
+                                else fcPickUp(fc.target);
+                                break;
+                            case freecam::K_LET_GO: fcLetGo(); break;
+                            case freecam::K_TURN:
+                                if (fc.carry.on()) fc.carry.yaw += (shift ? -1 : 1) * M_PI / 12;
+                                else hud.toast("FREE CAM: PICK A VEHICLE UP FIRST (" + std::string("G OR CLICK") + ")");
+                                break;
+                            case freecam::K_SPAWN: fc.picker = true; break;
+                            case freecam::K_DRIVE: fcDrive(); break;
+                            case freecam::K_THROUGH:
+                                fc.through = !fc.through;
+                                hud.toast(fc.through ? "FREE CAM: FLIES THROUGH THE GROUND" : "FREE CAM: STAYS ABOVE THE GROUND");
+                                break;
+                            case freecam::K_SLOWER: fc.speed = std::max(0, fc.speed - 1); break;
+                            case freecam::K_FASTER: fc.speed = std::min(freecam::kSpeedCount - 1, fc.speed + 1); break;
+                            default: break;
+                        }
+                        break;
+                    }
                     if (evKeyRepeat(e)) break;
                     // The key as the in-game switch knows it: the player's keyboard bindings turned back into
                     // the default keys the switch is written against (a gamepad press already is one).
@@ -4540,6 +4723,13 @@ int main(int argc, char** argv) {
                         devmenu::dispatchKey(settings.keys, evKeyScancode(e), shiftDown(), settings.devHotkeys, kctx,
                                              [](void* fn, const devmenu::Action& a) { (*static_cast<std::function<void(const devmenu::Action&)>*>(fn))(a); }, &runDev))
                         break;
+                    if (kh.action == KA_AUTOPILOT_PICK || kh.action == KA_JOBS) {  // (their pages, straight from the game: no longer rows of the pause menu)
+                        if (!editor.active && !inv.open) {
+                            openMenu();
+                            menu.showPage(kh.action == KA_JOBS ? 5 : 3, std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
+                        }
+                        break;
+                    }
                     switch (gsc) {
                         case SC_ESCAPE:  // (the pause menu: Esc on the keyboard, Start on the pad, the MENU key if rebound)
                             if (hud.showHelp) hud.showHelp = false;
@@ -4661,10 +4851,6 @@ int main(int argc, char** argv) {
                             hud.toast(c.parkBrake ? "PARKING BRAKE ON" : "PARKING BRAKE OFF");
                             break;
                         }
-                        case SC_F6:
-                            if (net.active()) hud.toast("NO PAUSING IN MULTIPLAYER (" + K(KA_MENU) + " STILL OPENS THE MENU)");
-                            else sim.paused = !sim.paused;
-                            break;
                         case SC_X: {
                             Car& c = sim.cars[sim.player];
                             c.tractionControl = !c.tractionControl;
@@ -4842,6 +5028,7 @@ int main(int argc, char** argv) {
                     } else if (evMotionState(e) & 0x5) {  // left or right button held
                         cam.drag(evMotionXrel(e), evMotionYrel(e));
                         dragging = true;
+                        if (fc.down) fc.travel += std::abs(evMotionXrel(e)) + std::abs(evMotionYrel(e));
                     }
                     break;
                 case SDL_MOUSEBUTTONDOWN:
@@ -4876,12 +5063,31 @@ int main(int argc, char** argv) {
                         if (menu.overRow(mx, my)) uiClick();
                         handleMenu(menu.mouseDown(mx, my, settings));
                     }
+                    if (fc.on && !menu.open) fc.down = true, fc.travel = 0;  // (a click, if it hardly moves before it comes up: a drag looks round)
                     break;
                 case SDL_MOUSEBUTTONUP:
                     dragging = false;
                     menu.mouseUp();
+                    if (fc.on && fc.down && !menu.open && fc.travel < 8) {  // free cam: a left click carries / sets down (in the picker: spawns), a right one lets go
+                        if (evButton(e) == 1 && fc.picker) fc.picker = false, fcSpawn(shiftDown());
+                        else if (evButton(e) == 1 && fc.carry.on()) fcSetDown(true);
+                        else if (evButton(e) == 1) fcPickUp(fc.target);
+                        else if (evButton(e) == 3 && fc.picker) fc.picker = false;
+                        else if (evButton(e) == 3) fcLetGo();
+                    }
+                    fc.down = false;
                     break;
                 case SDL_MOUSEWHEEL:
+                    if (fc.on && !menu.open) {  // free cam: the speed step; Ctrl or Alt: turns the carried vehicle; the picker: its row
+                        const uint8_t* ks = SDL_GetKeyboardState(nullptr);
+                        const int w = evWheelY(e) > 0 ? 1 : evWheelY(e) < 0 ? -1 : 0;
+                        const int n = (int)listedVehicles().size();
+                        if (w == 0) break;
+                        if (fc.picker && n > 0) fc.pickSel = (fc.pickSel - w + n) % n;
+                        else if (fc.carry.on() && (ks[224] || ks[228] || ks[226] || ks[230])) fc.carry.yaw += w * M_PI / 12;
+                        else fc.speed = std::min(std::max(fc.speed + w, 0), freecam::kSpeedCount - 1);
+                        break;
+                    }
                     if (!menu.open) cam.dist = clampd(cam.dist * std::pow(0.88, evWheelY(e)), 3.0, 60.0);
                     else if (mainMenuShown()) {
                         if (evWheelY(e) != 0 && mainNav.page != mainmenu::P_FRONT) mainNav.move(evWheelY(e) > 0 ? -1 : 1);
@@ -4902,7 +5108,8 @@ int main(int argc, char** argv) {
         int airing = kb.held(KA_AIR_DOWN, keys, shiftHeld) ? -1 : kb.held(KA_AIR_UP, keys, shiftHeld) ? 1 : 0;
         if (cam.mode == 3 && !menu.open && !editor.active && !coop.typing && !coop.mapOpen) {
             // The drone: the keys fly the camera; the truck waits on its handbrake.
-            const double speed = (8 + std::max(0.0, cam.droneEye.y - sim.world.height(cam.droneEye.x, cam.droneEye.z)) * 0.6) * (shiftHeld ? 3 : 1);
+            const double speed = fc.on ? freecam::speedOf(fc.speed) * (shiftHeld ? 3 : 1)  // (free cam: the speed step)
+                                       : (8 + std::max(0.0, cam.droneEye.y - sim.world.height(cam.droneEye.x, cam.droneEye.z)) * 0.6) * (shiftHeld ? 3 : 1);
             const V3 f(std::cos(cam.droneYaw), 0, -std::sin(cam.droneYaw)), l(f.z, 0, -f.x);
             V3 m;
             if (up) m += f;
@@ -4918,7 +5125,12 @@ int main(int argc, char** argv) {
                 cam.droneEye += f * (opt.eyeFly * dt);
                 cam.droneEye.y = sim.world.height(cam.droneEye.x, cam.droneEye.z) + over;
             }
-            cam.droneEye.y = std::max(cam.droneEye.y, sim.world.height(cam.droneEye.x, cam.droneEye.z) + 0.5);
+            if (!(fc.on && fc.through)) cam.droneEye.y = std::max(cam.droneEye.y, sim.world.height(cam.droneEye.x, cam.droneEye.z) + 0.5);
+            if (fc.on) {  // what the crosshair is on: a vehicle (not the carried one), and the ground
+                const V3 look = fcLook();
+                fc.target = freecam::pickVehicle(sim, cam.droneEye, look, 600, fc.carry.car);
+                fc.aimHit = freecam::groundHit(sim.world, cam.droneEye, look, 4000, fc.aim);
+            }
             up = down = left = right = false;
             hb = true;
         }
@@ -5147,6 +5359,22 @@ int main(int argc, char** argv) {
                     if (frame == 100 && std::getenv("CZ_INV_PAD")) pad::ui.last = true;
                     if (frame == 200 && std::getenv("CZ_INV_CLOSE")) closeInventory();
                 }
+            }
+            if (opt.script == "freecam") {  // (screenshots of the dev free cam: a parked vehicle ahead, picked up and carried off; CZ_FREECAM_DROP=F sets it down at the crosshair at frame F,
+                                            //  CZ_FREECAM_PICKER=F opens the spawn picker at frame F)
+                if (frame == 3) sim.spawnAhead(vehicleCatalog()[listedVehicles()[1 % listedVehicles().size()]]);
+                if (frame == 12) {
+                    runDev({devmenu::FREE_CAM, 0});
+                    const Frame fr = sim.cars[sim.player].frame();
+                    const V3 fwd = norm(V3(fr.fwd.x, 0, fr.fwd.z)), side(-fwd.z, 0, fwd.x);
+                    cam.droneEye = fr.com - fwd * 6.0 + side * 9.0 + V3(0, 6, 0);
+                    const V3 d = norm(fr.com + fwd * 9.0 - cam.droneEye);
+                    cam.droneYaw = std::atan2(-d.z, d.x), cam.dronePitch = std::asin(clampd(d.y, -1, 1));
+                }
+                if (frame == 20) fcPickUp(fc.target >= 0 ? fc.target : (int)sim.cars.size() - 1);
+                if (frame > 20 && frame <= 60 && fc.carry.on()) fc.carry.yaw += 0.02, cam.droneEye.y += 0.03;
+                if (std::getenv("CZ_FREECAM_DROP") && frame == std::atoi(std::getenv("CZ_FREECAM_DROP"))) fcSetDown(true);
+                if (std::getenv("CZ_FREECAM_PICKER") && frame == std::atoi(std::getenv("CZ_FREECAM_PICKER"))) fc.picker = true, fc.pickSel = 2;
             }
             if (opt.script == "cars" && frame == 2) {  // (CZ_BENCH: CZ_CARS vehicles in view, models mixed, in rows ahead of yours; CZ_CARS_AWAKE=1 keeps them simulated)
                 const char* env = std::getenv("CZ_CARS");
@@ -5714,6 +5942,7 @@ int main(int argc, char** argv) {
             if (sim.world.map == MAP_PROCEDURAL && !mapLoad.active() && !editor.active && !sim.cars.empty()) {
                 V3 focus = walker.active ? walker.p : sim.cars[sim.player].frame().com;
                 const bool mp = net.active();
+                if (fc.on && !mp) focus = cam.droneEye;  // (the dev free cam: the land streams in round the camera)
                 const double sharedNow = mp ? net.sharedTime((double)SDL_GetPerformanceCounter() / freq) : -1;
                 if (net.role == NetSession::HOST) {
                     // The host slides everyone's window: round the middle of the group (the box round every vehicle), told 3 s ahead
@@ -5758,6 +5987,10 @@ int main(int argc, char** argv) {
                                     (long long)sim.world.proc.oz, d.x, d.z, procStream.lastBuildMs, procStream.lastSwapMs);
                     loadprof::report("procworld window");  // (CZ_LOADPROF: what the build and the swap spent)
                 }
+            }
+            if (fc.carry.on()) {  // the carried vehicle: rigid, at rest, where it hangs (after the step, so it's drawn there)
+                if (!fc.on || !freecam::valid(sim, fc.carry)) fc.carry = freecam::Carry();
+                else freecam::hold(sim, fc.carry, fcHang());
             }
             for (const std::string& ev : sim.events) hud.toast(ev);
             sim.events.clear();
@@ -7012,6 +7245,73 @@ int main(int argc, char** argv) {
             const uint64_t dbgStart = SDL_GetPerformanceCounter();
             dbg.draw(renderer, di, W, H, corner ? 60 * std::max(0.75f, H / 720.0f) : 0);
             if (frame >= 40) dbgMsSum += (double)(SDL_GetPerformanceCounter() - dbgStart) * 1000 / freq, dbgMsN++;  // (CZ_BENCH prints it)
+        }
+        if (showHud && fc.on) {  // the dev free cam: a crosshair, the vehicle under it outlined and named, the keys, the speed, what it carries
+            const float u = std::max(0.75f, H / 720.0f), s = px(1.4f * u), ls = px(1.8f * u);
+            const float cx = W / 2.0f, cy = H / 2.0f;
+            renderer.rect(cx - 9 * u, cy - 1 * u, 6 * u, 2 * u, 1, 1, 1, 0.85f);
+            renderer.rect(cx + 3 * u, cy - 1 * u, 6 * u, 2 * u, 1, 1, 1, 0.85f);
+            renderer.rect(cx - 1 * u, cy - 9 * u, 2 * u, 6 * u, 1, 1, 1, 0.85f);
+            renderer.rect(cx - 1 * u, cy + 3 * u, 2 * u, 6 * u, 1, 1, 1, 0.85f);
+            auto outline = [&](int k, float r, float g, float b) {  // its box on the screen, and its name over it
+                if (k < 0 || k >= (int)sim.cars.size()) return;
+                const Car& c = sim.cars[k];
+                const Frame cf = c.frame();  // (its own box, along its frame: a level box round a car turned 45 degrees is half again too big)
+                double lo[3] = {1e9, 1e9, 1e9}, hi[3] = {-1e9, -1e9, -1e9};
+                for (int n = 0; n < (int)c.nodes.size(); n++) {
+                    if (n < (int)c.stray.size() && c.stray[n]) continue;  // (a bit of it left lying far off)
+                    const V3 d = c.nodes[n].p - cf.com;
+                    const double e[3] = {dot(d, cf.fwd), dot(d, cf.up), dot(d, cf.left)};
+                    for (int a = 0; a < 3; a++) lo[a] = std::min(lo[a], e[a]), hi[a] = std::max(hi[a], e[a]);
+                }
+                if (lo[0] > hi[0]) return;
+                float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+                int seen = 0;
+                for (int q = 0; q < 8; q++) {
+                    const V3 p = cf.com + cf.fwd * ((q & 1) ? hi[0] : lo[0]) + cf.up * ((q & 2) ? hi[1] : lo[1]) + cf.left * ((q & 4) ? hi[2] : lo[2]);
+                    float sx, sy;
+                    if (!worldToScreen(view, W, H, p, sx, sy)) continue;
+                    seen++;
+                    x0 = std::min(x0, sx), y0 = std::min(y0, sy), x1 = std::max(x1, sx), y1 = std::max(y1, sy);
+                }
+                if (seen < 8) return;  // (part of it behind the camera: no box)
+                x0 = std::max(x0, 0.0f), y0 = std::max(y0, 0.0f), x1 = std::min(x1, (float)W), y1 = std::min(y1, (float)H);
+                const float t = px(2 * u);
+                renderer.rect(x0, y0, x1 - x0, t, r, g, b, 0.9f);
+                renderer.rect(x0, y1 - t, x1 - x0, t, r, g, b, 0.9f);
+                renderer.rect(x0, y0, t, y1 - y0, r, g, b, 0.9f);
+                renderer.rect(x1 - t, y0, t, y1 - y0, r, g, b, 0.9f);
+                centeredPill(renderer, (x0 + x1) / 2, std::max(2.0f, y0 - 14 * s), s, fcName(k), 0, 0, 0, 0.9f, r, g, b);
+            };
+            if (fc.carry.on()) outline(fc.carry.car, 0.45f, 0.85f, 1.0f);
+            if (fc.target >= 0 && fc.target != fc.carry.car) outline(fc.target, 1.0f, 0.85f, 0.35f);
+            if (fc.aimHit && fc.carry.on()) {  // where G or a click would set it down
+                float sx, sy;
+                if (worldToScreen(view, W, H, fc.aim + V3(0, 0.3, 0), sx, sy)) renderer.rect(sx - 3 * u, sy - 3 * u, 6 * u, 6 * u, 0.45f, 0.85f, 1.0f, 0.9f);
+            }
+            char sp[64];
+            const double mps = freecam::speedOf(fc.speed);
+            std::snprintf(sp, sizeof sp, "SPEED %d/%d %.0f %s", fc.speed + 1, freecam::kSpeedCount, settings.mph ? mps * 2.23694 : mps * 3.6, settings.mph ? "MPH" : "KM/H");
+            const std::string head = std::string("FREE CAM  ") + sp + (fc.through ? "  THROUGH THE GROUND" : "") +
+                                     (fc.carry.on() && freecam::valid(sim, fc.carry) ? std::string("  CARRYING ") + sim.cars[fc.carry.car].spec->name : "");
+            const std::string keys = fc.carry.on() ? "CLICK/G SET DOWN AT THE CROSSHAIR  RMB/F LET GO  R OR CTRL+WHEEL TURN  V DRIVE IT  " + K(KA_DEV_FREECAM) + "/ESC LEAVE"
+                                                   : "WASD Q E FLY  SHIFT FAST  WHEEL OR - = SPEED  CLICK/G CARRY  B SPAWN  V DRIVE IT  X THROUGH GROUND  " + K(KA_DEV_FREECAM) + "/ESC LEAVE";
+            centeredPill(renderer, cx, H - 64 * u, ls, head, 0, 0, 0, 0.9f, 0.45f, 0.85f, 1.0f);
+            centeredPill(renderer, cx, H - 36 * u, s, keys, 0, 0, 0, 0.85f);
+            if (fc.picker) {  // the spawn picker: the listed vehicles
+                const std::vector<int>& listed = listedVehicles();
+                const std::string foot = "ENTER/CLICK AT THE CROSSHAIR  SHIFT: CARRIED";
+                const float lh = 10 * s + 4 * u, bw = std::max(260 * u, renderer.textWidth(foot, s) + 24 * u), bx = 24 * u, by = H * 0.18f;
+                pill(renderer, bx, by, bw, 20 * u + lh * (float)(listed.size() + 2), 0, 0, 0, 0.6f);
+                renderer.text(bx + 12 * u, by + 8 * u, s, "SPAWN", 0.45f, 0.85f, 1.0f, 1);
+                for (size_t i = 0; i < listed.size(); i++) {
+                    const bool sel = (int)i == fc.pickSel;
+                    const float y = by + 8 * u + lh * (float)(i + 1);
+                    if (sel) renderer.rect(bx + 6 * u, y - 2 * u, bw - 12 * u, lh, 1, 1, 1, 0.15f);
+                    renderer.text(bx + 12 * u, y, s, vehicleCatalog()[listed[i]].name, 1, sel ? 0.85f : 1, sel ? 0.35f : 1, 1);
+                }
+                renderer.text(bx + 12 * u, by + 8 * u + lh * (float)(listed.size() + 1), s, foot, 0.8f, 0.8f, 0.8f, 1);
+            }
         }
         if (showHud && walker.active && cam.mode != 3) {  // on foot: a crosshair, the job in front of you, what you carry
             const float u = std::max(0.75f, H / 720.0f), s = px(1.4f * u);

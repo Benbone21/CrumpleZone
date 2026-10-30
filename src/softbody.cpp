@@ -1230,11 +1230,23 @@ void Car::buildWheelRub() {
         wh.rubAllow.clear();
         if (restLocal.empty() || !stock) continue;
         const V3 c0 = (restLocal[wh.inner] + restLocal[wh.outer]) * 0.5, axis0 = norm(restLocal[wh.outer] - restLocal[wh.inner]);
-        const double Rs = std::max(stock->wheelRadius, stock->wellTireRadius) + 0.03,
-                     half = 0.5 * std::max(wh.front || stock->wheelWidthRear <= 0 ? stock->wheelWidth : stock->wheelWidthRear, stock->wellTireWidth) + 0.02;
-        const double bump = wh.front ? (stock->bumpFront > 0 ? stock->bumpFront : 0.085) : (stock->bumpRear > 0 ? stock->bumpRear : 0.085);
-        const double droop = wh.front ? (stock->droopFront > 0 ? stock->droopFront : 0.11) : (stock->droopRear > 0 ? stock->droopRear : 0.11);
+        // (A garage build whose tires or travel outgrow the factory's wheel wells has its arches
+        // trimmed and flared round them (mods.cpp fitBody: wellTire*, and the kit's travel), as
+        // the drawn arches are (archGrowth): then it's that clearance the tire has.)
+        const double Rs = std::max({stock->wheelRadius, stock->wellTireRadius, spec->wellTireRadius}) + 0.03,
+                     half = 0.5 * std::max({wh.front || stock->wheelWidthRear <= 0 ? stock->wheelWidth : stock->wheelWidthRear, stock->wellTireWidth, spec->wellTireWidth}) + 0.02;
+        // (Unset travel: carbuild's defaults, scaled by tire size on a build; the factory's as it was.)
+        auto travel = [&](const VehicleSpec& v, bool bumpSide) {
+            const double t = wh.front ? (bumpSide ? v.bumpFront : v.droopFront) : (bumpSide ? v.bumpRear : v.droopRear);
+            return t > 0 ? t : (bumpSide ? 0.085 : 0.11) * (&v == stock ? 1.0 : v.wheelRadius / 0.32);
+        };
+        // (Trimmed by a builder, a well leaves a couple of cm over the kit's bump stops, for the
+        // stops' own squash on a hard landing.)
+        const bool trimmed = spec != stock && spec->wellsTrimmed;
+        const double bump = std::max(travel(*stock, true), trimmed ? travel(*spec, true) + 0.025 : 0.0);
+        const double droop = std::max(travel(*stock, false), trimmed ? travel(*spec, false) : 0.0);
         const double reach = wh.R + 0.35;
+        const bool solid = (wh.front ? spec->frontSusp : spec->rearSusp) == SOLID_AXLE;
         for (const auto& f : faces) {
             bool own = false;
             for (int k = 0; k < 3; k++) own |= std::find(wh.assembly.begin(), wh.assembly.end(), f[k]) != wh.assembly.end();
@@ -1262,12 +1274,20 @@ void Car::buildWheelRub() {
                         auto turn = [&](const V3& v) { return V3(v.x * cs + v.z * sn, v.y, -v.x * sn + v.z * cs); };
                         const V3 pivot = c0 - axis0 * kp;
                         const V3 c = pivot + turn(c0 - pivot) + V3(0, up, 0);
-                        const V3 ax = turn(axis0);
-                        for (int i = 0; i < 7; i++) {
-                            const V3 d = pts[i] - c;
-                            const double da = dot(d, ax), dr = len(d - ax * da);
-                            // (By the nearer way out, as the contact measures it.)
-                            if (std::fabs(da) < half && dr < Rs) allow[i] = std::max(allow[i], std::min(Rs - dr, half - std::fabs(da)));
+                        // (A trimmed well also clears the tire leaning as it goes: a live axle
+                        // tilting as one end rises, a wishbone's camber gain. The factory's
+                        // clearance stays as it was measured.)
+                        const double lean = !trimmed ? 0.0 : std::atan(std::fabs(up) / std::max(0.3, std::fabs(c0.z))) * (solid ? 1.0 : 0.5);
+                        for (double tilt : {0.0, lean, -lean}) {
+                            if (tilt != 0 && lean < 1e-4) continue;
+                            const double ct = std::cos(tilt), stl = std::sin(tilt);
+                            const V3 a0 = turn(axis0), ax(a0.x, a0.y * ct - a0.z * stl, a0.y * stl + a0.z * ct);
+                            for (int i = 0; i < 7; i++) {
+                                const V3 d = pts[i] - c;
+                                const double da = dot(d, ax), dr = len(d - ax * da);
+                                // (By the nearer way out, as the contact measures it.)
+                                if (std::fabs(da) < half && dr < Rs) allow[i] = std::max(allow[i], std::min(Rs - dr, half - std::fabs(da)));
+                            }
                         }
                     }
             wh.rubFaces.push_back(f);
@@ -3582,10 +3602,13 @@ void Sim::towPlayerHome() {
     accum = 0;
 }
 
-void Sim::teleportPlayer(double x, double z, double yaw) {
-    Car& c = cars[player];
+void Sim::teleportPlayer(double x, double z, double yaw) { teleportCar(player, x, z, yaw); }
+
+void Sim::teleportCar(int car, double x, double z, double yaw) {
+    if (car < 0 || car >= (int)cars.size()) return;
+    Car& c = cars[car];
     if (c.remote) return;  // (someone else's)
-    dropRopes(player);
+    dropRopes(car);
     c.placeUpright(world, x, z, yaw);
     double turn = 0;
     const V3 s = poleFreeShift(c, &turn);

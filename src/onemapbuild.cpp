@@ -14,6 +14,7 @@
 #include <thread>
 #include <unordered_map>
 
+#include "detmath.h"
 #include "loadprof.h"
 #include "onemap.h"
 #include "parallel.h"
@@ -324,7 +325,7 @@ void World::stitchRegionContent(const std::vector<RegionBuild*>& builds) {
             const size_t k = end ? road.size() - 9 : 8, k2 = end ? k - 4 : k + 4;
             const V3 d = norm(V3(road[k2].x - road[k].x, 0, road[k2].z - road[k].z)), right(-d.z, 0, d.x);
             const V3 q = road[k] - right * 5.5;
-            Prop sg{PROP_SIGN, V3(q.x, height(q.x, q.z), q.z), V3(), std::atan2(d.z, -d.x)};
+            Prop sg{PROP_SIGN, V3(q.x, height(q.x, q.z), q.z), V3(), dm::atan2(d.z, -d.x)};
             sg.col[0] = 0.1f, sg.col[1] = 0.55f, sg.col[2] = 0.2f;
             fixtures.push_back(sg);
             poles.push_back({q.x, q.z, sg.a.y - 0.4, sg.a.y + 2.0, 0.07});
@@ -335,7 +336,7 @@ void World::stitchRegionContent(const std::vector<RegionBuild*>& builds) {
     // A start of its own where the old map had none (the Open Country is played as levels: theirs had the pad).
     for (RegionStart& s : regionStarts) {
         bool padded = false;
-        for (const SpawnPad& sp : spawnPads) padded |= std::hypot(sp.p.x - s.spawn.x, sp.p.z - s.spawn.z) < 0.5;
+        for (const SpawnPad& sp : spawnPads) padded |= dm::hypot(sp.p.x - s.spawn.x, sp.p.z - s.spawn.z) < 0.5;
         if (padded) continue;
         s.spawn.y = height(s.spawn.x, s.spawn.z);
         s.spawn = addSpawnPad(*this, s.spawn, s.yaw, 8, 3, 30).p;
@@ -386,7 +387,7 @@ std::vector<V3> findWay(const World& w, const V3& a, const V3& b, const std::fun
     double stepLen[3][3];
     float roughLen[3][3];
     for (int di = -1; di <= 1; di++)
-        for (int dj = -1; dj <= 1; dj++) stepLen[di + 1][dj + 1] = C * std::hypot(di, dj), roughLen[di + 1][dj + 1] = (float)(C * std::hypot(di, dj) + 1e-9);
+        for (int dj = -1; dj <= 1; dj++) stepLen[di + 1][dj + 1] = C * dm::hypot(di, dj), roughLen[di + 1][dj + 1] = (float)(C * dm::hypot(di, dj) + 1e-9);
     // How steep the land round each cell is, any way (a road along the foot of a cliff would have to cut into it: kept clear of).
     std::vector<float> rough((size_t)nx * nz, 0.0f);
     for (int i = 1; i + 1 < nx; i++)
@@ -406,7 +407,7 @@ std::vector<V3> findWay(const World& w, const V3& a, const V3& b, const std::fun
     std::vector<int> from((size_t)nx * nz, -1);
     std::priority_queue<std::pair<float, int>, std::vector<std::pair<float, int>>, std::greater<std::pair<float, int>>> open;
     // (`greed` over 1 trusts the straight line more: far fewer cells looked at, a way a little longer than the best. The trails use it.)
-    auto guess = [&](int k) { return (float)(greed * std::hypot(X(k / nz) - b.x, Z(k % nz) - b.z)); };
+    auto guess = [&](int k) { return (float)(greed * dm::hypot(X(k / nz) - b.x, Z(k % nz) - b.z)); };
     g[start] = 0, open.push({guess(start), start});
     while (!open.empty()) {
         const auto [f, k] = open.top();
@@ -444,12 +445,12 @@ std::vector<V3> resampled(const std::vector<V3>& pts, double step) {
     double carry = 0;
     for (size_t k = 1; k < pts.size(); k++) {
         const V3 a = pts[k - 1], d = pts[k] - a;
-        const double L = std::hypot(d.x, d.z);
+        const double L = dm::hypot(d.x, d.z);
         double s = step - carry;
         for (; s <= L; s += step) out.push_back(a + d * (s / L));
         carry = L - (s - step);
     }
-    if (std::hypot(out.back().x - pts.back().x, out.back().z - pts.back().z) > 0.3) out.push_back(pts.back());
+    if (dm::hypot(out.back().x - pts.back().x, out.back().z - pts.back().z) > 0.3) out.push_back(pts.back());
     return out;
 }
 }  // namespace
@@ -472,7 +473,7 @@ void World::layRegionRoads(const std::vector<RegionBuild*>& builds, CellTiles<ui
             const V3 want(285, 0, -260);
             V3 best = R.loopRoad[0];
             for (const V3& q : R.loopRoad)
-                if (std::hypot(q.x - want.x, q.z - want.z) < std::hypot(best.x - want.x, best.z - want.z)) best = q;
+                if (dm::hypot(q.x - want.x, q.z - want.z) < dm::hypot(best.x - want.x, best.z - want.z)) best = q;
             plans.push_back({r.map, placeAt("BC.FUEL_LAKE") + V3(0, 0, -15), best + t});
         } else if (r.map == MAP_FRONTIER) {  // the Lost Mine's wash, south to the Cold Creek Lodge
             V3 lodge = V3(440, 0, 471);
@@ -498,7 +499,7 @@ std::vector<V3> World::layWay(const std::vector<V3>& way, const WayStyle& st, Ce
     // A curve through every `thin`th cell of the way.
     std::vector<V3> ctl;
     for (size_t k = 0; k < way.size(); k += thin) ctl.push_back(way[k]);
-    if (std::hypot(ctl.back().x - way.back().x, ctl.back().z - way.back().z) > 1) ctl.push_back(way.back());
+    if (dm::hypot(ctl.back().x - way.back().x, ctl.back().z - way.back().z) > 1) ctl.push_back(way.back());
     std::vector<V3> pts = resampled(splinePoints(ctl, false), 1.0);
     const int n = (int)pts.size();
     if (n < 3) return {};
@@ -820,7 +821,7 @@ void World::dressRegionTrails() {
                 if (end) d = d * -1.0;
                 const V3 right(-d.z, 0, d.x);
                 const V3 q = p[k] - right * (half + 2.0);
-                sign(q, std::atan2(d.z, -d.x), colours[rw.kind]);
+                sign(q, dm::atan2(d.z, -d.x), colours[rw.kind]);
             }
         // Markers along it: posts, cairns where it's rocky or high.
         const double every = rw.kind == 3 ? 140 : rw.kind == 4 ? 200 : 70;
@@ -855,11 +856,11 @@ void World::dressRegionTrails() {
         };
         for (const auto& st : rw.steps) {
             const double s = st.first, thick = 1.4;
-            const double g = (yAt(s + 3) - yAt(s - 3) - st.second) / 6, pitch = std::atan(g);
+            const double g = (yAt(s + 3) - yAt(s - 3) - st.second) / 6, pitch = dm::atan(g);
             const double at = st.second >= 0 ? s + 0.75 : s - 0.35;
             const V3 c = p[(size_t)clampd(at, 0, n - 1)], d = dirAt(p, (size_t)at);
             const double top = st.second >= 0 ? yAt(s + 1.5) - g * 0.75 : yAt(s) - g * 0.35;
-            addBox(V3(c.x, top - thick / 2 * std::cos(pitch), c.z), V3(0.85, thick / 2, 2.6), std::atan2(-d.z, d.x), pitch, 0, V3(0.48, 0.46, 0.43));
+            addBox(V3(c.x, top - thick / 2 * dm::cos(pitch), c.z), V3(0.85, thick / 2, 2.6), dm::atan2(-d.z, d.x), pitch, 0, V3(0.48, 0.46, 0.43));
             boxes.back().rock = true;
             // (Boulders at each end of the ledge, so it isn't driven round.)
             const V3 l(-d.z, 0, d.x);
@@ -923,7 +924,7 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
     auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + half) / kRes), 0), hN - 1); };
     auto slopeAt = [&](int i, int j) {
         const double gx = (hgrid[(i + 1) * hN + j] - hgrid[(i - 1) * hN + j]) / 2, gz = (hgrid[i * hN + j + 1] - hgrid[i * hN + j - 1]) / 2;
-        return std::hypot(gx, gz);
+        return dm::hypot(gx, gz);
     };
     // (On several threads: each cell's growth into a list of its own, in four passes so no two cells side by side grow at once (a tree
     // keeps its distance from the ones in the cells round it that grew before); then all of it onto the map, cell by cell in order.)
@@ -1028,7 +1029,7 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
                     if (pick < 0.35) {  // a boulder field
                         for (int k = 0; k < 18; k++) {
                             const double a = rr() * 6.2832, d = 18 * std::sqrt(rr());
-                            const double x = fx + std::cos(a) * d, z = fz + std::sin(a) * d;
+                            const double x = fx + dm::cos(a) * d, z = fz + dm::sin(a) * d;
                             if (!open(x, z, id, i, j)) continue;
                             const double rad = 0.3 + rr() * rr() * 1.3;
                             out.rocks.push_back(makeRock(x, z, V3(rad, rad * 0.75, rad * 0.9), rad * (0.5 + 0.4 * rr()), cellSeed + 30 + (uint32_t)k, (float)(0.85 + 0.2 * rr())));
@@ -1052,10 +1053,10 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
                         }
                     } else {  // a slab: a wide flat rock lying with the slope, to drive up onto
                         const V3 nr = normal(fx, fz);
-                        const double hl = std::hypot(nr.x, nr.z);
+                        const double hl = dm::hypot(nr.x, nr.z);
                         RockPose pose;
-                        pose.yaw = hl > 1e-6 ? std::atan2(nr.z, -nr.x) : rr() * 6.28;  // (uphill: against the normal's lean)
-                        pose.pitch = std::atan2(hl, nr.y) * 0.85, pose.roll = 0;
+                        pose.yaw = hl > 1e-6 ? dm::atan2(nr.z, -nr.x) : rr() * 6.28;  // (uphill: against the normal's lean)
+                        pose.pitch = dm::atan2(hl, nr.y) * 0.85, pose.roll = 0;
                         const double L = 5 + 3 * rr();
                         out.rocks.push_back(makeRock(fx, fz, V3(L, 0.7, L * (0.6 + 0.2 * rr())), 0.6, cellSeed + 70, (float)(0.9 + 0.15 * rr()), &pose));
                     }
@@ -1065,7 +1066,7 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
             if (grove > 0.5 && style != 1 && rr() < 0.55 * grove) {
                 const double x = x0 + C * rr(), z = z0 + C * rr();
                 const double r = 0.18 + 0.18 * rr(), L = 4 + 6 * rr(), a = 6.2832 * rr();
-                V3 p0(x - std::cos(a) * L / 2, 0, z - std::sin(a) * L / 2), p1(x + std::cos(a) * L / 2, 0, z + std::sin(a) * L / 2);
+                V3 p0(x - dm::cos(a) * L / 2, 0, z - dm::sin(a) * L / 2), p1(x + dm::cos(a) * L / 2, 0, z + dm::sin(a) * L / 2);
                 int id, i, j, id0, i0, j0, id1, i1, j1;
                 if (open(x, z, id, i, j) && paint[id] == PAINT_NONE && open(p0.x, p0.z, id0, i0, j0) && open(p1.x, p1.z, id1, i1, j1) && hgrid[id] < 175) {
                     p0.y = height(p0.x, p0.z) + r * 0.8, p1.y = height(p1.x, p1.z) + r * 0.8;
@@ -1079,7 +1080,7 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
             for (int k = 0; k < bushes0; k++) {
                 const int c = k % 3;
                 const double a = rr() * 6.2832, d = 9 * std::sqrt(rr());
-                const double x = mx[c] + std::cos(a) * d, z = mz[c] + std::sin(a) * d;
+                const double x = mx[c] + dm::cos(a) * d, z = mz[c] + dm::sin(a) * d;
                 int id, i, j;
                 if (!open(x, z, id, i, j)) continue;
                 const bool desert = paint[id] == PAINT_DESERT || paint[id] == PAINT_SAND;

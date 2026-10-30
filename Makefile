@@ -31,6 +31,7 @@ SCEN     += tests/careerworld.cpp
 PHYS     += src/carsave.cpp src/careersession.cpp
 SCEN     += tests/carsave.cpp
 SCEN     += tests/drivetrainmodels.cpp
+SCEN     += tests/fitment.cpp
 PHYS     += src/paint.cpp
 SCEN     += tests/carpaint.cpp
 SCEN     += tests/net_rendezvous.cpp tests/net_codes.cpp
@@ -38,13 +39,15 @@ SCEN     += tests/onemap.cpp
 SCEN     += tests/treestuck.cpp
 SCEN     += tests/procworld.cpp tests/procreveal.cpp tests/procmodels.cpp
 SCEN     += tests/hitches.cpp
-PHYS     += src/bgwork.cpp
+PHYS     += src/bgwork.cpp src/menu.cpp src/daylight.cpp
 PHYS     += src/realterrain.cpp src/realterrainplan.cpp src/realterrainbuild.cpp
 SCEN     += tests/realterrain.cpp
 PHYS     += src/bctrails.cpp
+PHYS     += src/freecam.cpp
+SCEN     += tests/freecam.cpp
 SCEN     += tests/bctrails.cpp
-SCEN     += tests/damping.cpp
-GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/peopleseat.cpp src/garageshopdraw.cpp src/mpmenudraw.cpp src/scenery.cpp src/menu.cpp src/menuscene.cpp src/mainmenudraw.cpp src/mappreview.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp src/invdraw.cpp src/debugscreen.cpp src/buildinfo.cpp $(PHYS) $(SCEN) src/treedraw.cpp src/texcomp.cpp
+SCEN     += tests/damping.cpp tests/pausemenu.cpp
+GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/peopleseat.cpp src/garageshopdraw.cpp src/mpmenudraw.cpp src/scenery.cpp src/menudraw.cpp src/menuscene.cpp src/mainmenudraw.cpp src/mappreview.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp src/invdraw.cpp src/debugscreen.cpp src/buildinfo.cpp $(PHYS) $(SCEN) src/treedraw.cpp src/texcomp.cpp
 GAME_SRC += src/procstream.cpp src/farforest.cpp src/vehiclepreview.cpp
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
 TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp)
@@ -91,6 +94,10 @@ build/bench_sim: build/tools/bench_sim.o $(patsubst %.cpp,build/%.o,$(PHYS))
 build/worldtime: build/tools/worldtime.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
 
+# The world's fingerprint, by category (src/worldprint.h): build/worldprint [--scans] [--threads N] [--dump FILE] [MAP...]
+build/worldprint: build/tools/worldprint.o $(patsubst %.cpp,build/%.o,$(PHYS))
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+
 # Prototype performance targets are measured separately from functional scenario checks.
 build/bench_autopilot: build/tests/run_tests.o build/tests/lidar.o build/tests/harness.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
@@ -130,6 +137,9 @@ build/win/bench_sim.exe: build/win/obj/tools/bench_sim.o $(patsubst %.cpp,build/
 
 # The world-build timer for Windows (its land hash: the same big map on Linux and Windows? docs/plans/one-map.md).
 build/win/worldtime.exe: build/win/obj/tools/worldtime.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
+	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
+
+build/win/worldprint.exe: build/win/obj/tools/worldprint.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
 	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
 build/win/run_tests.exe: build/win/obj/tests/run_tests.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS) $(SCEN) src/music.cpp)
@@ -193,6 +203,8 @@ build/rel/run_tests: $(REL_TEST)
 	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ -lpthread -lm
 build/rel/bench_sim: build/rel/tools/bench_sim.o $(REL_PHYS)
 	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ -lpthread -lm
+build/rel/worldprint: build/rel/tools/worldprint.o $(REL_PHYS)
+	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ -lpthread -lm
 build/rel/test_render: build/rel/tests/render.o $(filter-out build/rel/src/main.o,$(REL_GAME))
 	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ $(LDLIBS)
 build/rel/test_audio: build/rel/tests/audio.o build/rel/tests/engine_samples.o build/rel/tests/soundscape.o build/rel/src/audio.o build/rel/src/engineaudio.o build/rel/src/engine_samples.o build/rel/src/music.o build/rel/src/ambience.o $(filter-out build/rel/src/allocstat.o,$(REL_PHYS))
@@ -250,7 +262,7 @@ windows-installer: windows
 # A universal (Apple silicon + Intel) app with SDL2.framework inside it. Needs the official
 # SDL2 macOS framework (from the SDL2-2.x.dmg) in $(MACSDL). Ad-hoc signed only: the first
 # launch needs right-click > Open (or: xattr -dr com.apple.quarantine CrumpleZone.app).
-VERSION  ?= 0.4.7
+VERSION  ?= 0.4.9
 MACCXX   ?= clang++
 MACSDL   ?= third_party/sdl2-mac
 MACLTO   ?= -flto=thin

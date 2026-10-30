@@ -1,6 +1,7 @@
 // One map: the region table and its coordinates (onemap.h). The stitching itself is World::stitchRegionLand / stitchRegionContent
 // (onemapbuild.cpp).
 #include "onemap.h"
+#include "detmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -22,7 +23,7 @@ double MapRegion::coreOutside(double lx, double lz) const {
     double a, b, c, d;
     core(a, b, c, d);
     const double dx = std::max({a - lx, 0.0, lx - b}), dz = std::max({c - lz, 0.0, lz - d});
-    return std::hypot(dx, dz);
+    return dm::hypot(dx, dz);
 }
 
 bool MapRegion::inCore(double lx, double lz) const { return coreOutside(lx, lz) <= 0; }
@@ -87,7 +88,7 @@ namespace {
 double outsideCountry(const MapRegion& r, double x, double z) {
     const double dx = std::max(r.ex0 - x, x - r.ex1), dz = std::max(r.ez0 - z, z - r.ez1);
     if (dx <= 0 && dz <= 0) return std::max(dx, dz);
-    return std::hypot(std::max(dx, 0.0), std::max(dz, 0.0));
+    return dm::hypot(std::max(dx, 0.0), std::max(dz, 0.0));
 }
 }  // namespace
 

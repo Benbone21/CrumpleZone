@@ -205,15 +205,19 @@ bool Coop::mapPoint(float x, float y, V3& out) const {
 void Coop::drawWorld(Renderer& r, const Sim& sim, const NetSession& net, const View& view, int W, int H) const {
     const float u = std::max(0.75f, H / 720.0f), s = px(1.2f * u);
     const V3 me = sim.cars[sim.player].frame().com;
-    // Buddies: name and distance over each other player's truck.
+    // Buddies: one tag each, name and distance, clear of the truck's roof (its highest point, rolled or upright).
     if (net.active())
         for (const Car& c : sim.cars) {
-            if (!c.remote || c.isProp()) continue;
-            const V3 p = c.frame().com + V3(0, 2.4, 0);
+            if (!c.remote || c.isProp() || c.nodes.empty()) continue;
+            const V3 com = c.frame().com;
+            double top = com.y;
+            for (const Node& n : c.nodes) top = std::max(top, n.p.y);
+            const double d = len(com - me);
             float sx, sy;
-            if (!worldToScreen(view, W, H, p, sx, sy)) continue;
-            const std::string t = net.ownerName(c.netId) + "  " + distText(len(c.frame().com - me));
-            label(r, sx - r.textWidth(t, s) / 2, sy - 8 * s, s, t, 0.6f, 0.95f, 0.7f, 0.95f);
+            if (!worldToScreen(view, W, H, V3(com.x, top + 0.6 + d * 0.004, com.z), sx, sy)) continue;
+            std::string t = net.ownerName(c.netId) + "  " + distText(d);
+            if (c.engineDead) t += c.hydrolocked ? "  (FLOODED)" : "  (ENGINE DEAD)";
+            label(r, sx - r.textWidth(t, s) / 2, sy - 10 * s, s, t, 0.6f, 0.95f, 0.7f, 0.95f);  // (the tag's foot above the point)
         }
     for (const RemoteWalker& wk : walkers) {
         float sx, sy;

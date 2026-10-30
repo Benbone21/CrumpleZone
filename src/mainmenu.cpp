@@ -212,6 +212,7 @@ Result Nav::choose(int i) {
                     return {};
                 case F_QUIT: return {A_QUIT};
                 case F_SETTINGS: return {A_SETTINGS};
+                case F_LEVELS: return {A_LEVELS};
             }
             return {};
         }
