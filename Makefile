@@ -2,11 +2,13 @@
 # Needs only g++ and the SDL2 runtime library (libsdl2-2.0-0); no -dev packages.
 
 CXX      ?= g++
+# The release version (CI passes VERSION from the tag): the .deb, the Mac Info.plist, the installer and the updater (updater.h).
+VERSION  ?= 0.4.9
 CXXFLAGS ?= -O2 -march=native
 # -ffp-contract=off (every build, 'override' so a command-line CXXFLAGS keeps it): no FMA fusing, so the sim is bit-identical between -march=native and x86-64-v2/Windows builds.
 FPFLAGS  := -ffp-contract=off -fno-fast-math
 override CXXFLAGS += $(FPFLAGS) -std=c++17 -Wall -Wextra
-LDLIBS   := -l:libSDL2-2.0.so.0 -lpthread -lm
+LDLIBS   := -l:libSDL2-2.0.so.0 -lpthread -lm -ldl
 
 MODELS   := $(sort $(wildcard src/models/*.cpp))
 PHYS     := src/modelkit.cpp $(MODELS) src/perf.cpp src/physics_workers.cpp src/collision.cpp src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/laptimer.cpp src/editcore.cpp src/saveflow.cpp src/textedit.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/spawnpad.cpp src/sections.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp src/prompts.cpp src/fixes.cpp src/carparts.cpp src/carframe.cpp src/vtools.cpp src/keybinds.cpp src/devmenu.cpp src/career.cpp src/anchors.cpp src/biome.cpp src/plants.cpp src/handwork.cpp src/sectionfile.cpp src/trunk.cpp src/invmenu.cpp src/objshape.cpp src/bodyshell.cpp src/throttle.cpp src/debuginfo.cpp src/forest.cpp src/meshopt.cpp src/frameprof.cpp src/watermesh.cpp src/worldsound.cpp src/texenc.cpp src/occlusion.cpp src/loadprof.cpp src/meshcache.cpp src/benchreport.cpp src/simdkern.cpp src/trafficlod.cpp
@@ -47,10 +49,15 @@ PHYS     += src/freecam.cpp
 SCEN     += tests/freecam.cpp
 SCEN     += tests/bctrails.cpp
 SCEN     += tests/damping.cpp tests/pausemenu.cpp
+# The self-updater (updater.h; docs/update-signing-keys.md): SHA-2, Ed25519, the manifest/zip/swap logic, HTTPS through the OS or a
+# run-time loaded libcurl (-ldl; Windows: -lwinhttp). Linked into the game, run_tests and build/cz-update, not the sim tools.
+UPD      := src/sha2.cpp src/ed25519.cpp src/updatecore.cpp src/httpget.cpp src/updater.cpp
+UPDTEST  := tests/update.cpp
 GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/peopleseat.cpp src/garageshopdraw.cpp src/mpmenudraw.cpp src/scenery.cpp src/menudraw.cpp src/menuscene.cpp src/mainmenudraw.cpp src/mappreview.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp src/invdraw.cpp src/debugscreen.cpp src/buildinfo.cpp $(PHYS) $(SCEN) src/treedraw.cpp src/texcomp.cpp
 GAME_SRC += src/procstream.cpp src/farforest.cpp src/vehiclepreview.cpp
+GAME_SRC += $(UPD) src/updatecard.cpp
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
-TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp)
+TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp $(UPD) $(UPDTEST))
 HEADERS  := $(wildcard src/*.h src/models/*.h tests/*.h)
 
 all: crumplezone
@@ -76,7 +83,11 @@ build/crumplezone-dev: $(GAME_OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
 build/run_tests: $(TEST_OBJ)
-	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm -ldl
+
+# The release-signing and checking tool (docs/update-signing-keys.md, docs/server-updates-setup.md): --keygen, --sign, --verify.
+build/cz-update: build/tools/cz_update.o $(patsubst %.cpp,build/%.o,$(UPD)) build/src/platform.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -ldl
 
 # Dedicated multiplayer server (headless, no SDL/OpenGL).
 build/crumplezone-server: build/src/server_main.o $(PHYS)
@@ -142,8 +153,8 @@ build/win/worldtime.exe: build/win/obj/tools/worldtime.o $(patsubst %.cpp,build/
 build/win/worldprint.exe: build/win/obj/tools/worldprint.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
 	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
-build/win/run_tests.exe: build/win/obj/tests/run_tests.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS) $(SCEN) src/music.cpp)
-	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
+build/win/run_tests.exe: build/win/obj/tests/run_tests.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS) $(SCEN) src/music.cpp $(UPD) $(UPDTEST))
+	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -lwinhttp -static -static-libgcc -static-libstdc++
 
 build/win/test_audio.exe: build/win/obj/tests/audio.o build/win/obj/tests/engine_samples.o build/win/obj/tests/soundscape.o build/win/obj/src/audio.o build/win/obj/src/engineaudio.o build/win/obj/src/engine_samples.o build/win/obj/src/music.o build/win/obj/src/ambience.o $(patsubst %.cpp,build/win/obj/%.o,$(filter-out src/allocstat.cpp,$(PHYS)))
 	$(WINCXX) $(WINFLAGS) -o $@ $^ $(WINSDL)/SDL2.dll -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
@@ -158,6 +169,16 @@ build/test_loading_visual: build/tests/loading_visual.o build/src/carvisual.o bu
 build/%.o: %.cpp $(HEADERS)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+# The release version the updater compares (VERSION, set by CI from the tag) and the update address (UPDATE_URL, optional: it can
+# also go in src/updatekeys.h): stamped like the commit below, so updater.o rebuilds when either changes.
+UPDATE_URL ?=
+UPDFLAGS  = -DCZ_VERSION='"$(VERSION)"' $(if $(UPDATE_URL),-DCZ_UPDATE_URL='"$(UPDATE_URL)"')
+build/version.txt: FORCE
+	@mkdir -p build
+	@echo '$(VERSION) $(UPDATE_URL)' | cmp -s - $@ || echo '$(VERSION) $(UPDATE_URL)' > $@
+build/src/updater.o: build/version.txt
+build/src/updater.o: CXXFLAGS += $(UPDFLAGS)
 
 # The commit the F3 screen reports: build/buildid.txt is rewritten only when it changes, so buildinfo.o (and the relink)
 # only follow a new commit.
@@ -193,18 +214,20 @@ RELFLAGS := -O2 $(RELARCH) -flto=$(LTOJ) -fno-plt $(FPFLAGS) $(PGOFLAGS) -std=c+
 RELLD    := -s
 REL_GAME := $(patsubst %.cpp,build/rel/%.o,$(GAME_SRC))
 REL_PHYS := $(patsubst %.cpp,build/rel/%.o,$(PHYS))
-REL_TEST := $(patsubst %.cpp,build/rel/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp)
+REL_TEST := $(patsubst %.cpp,build/rel/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp $(UPD) $(UPDTEST))
 
 build/rel/%.o: %.cpp $(HEADERS)
 	@mkdir -p $(dir $@)
 	$(CXX) $(RELFLAGS) -c -o $@ $<
 build/rel/src/buildinfo.o: build/buildid.txt
 build/rel/src/buildinfo.o: RELFLAGS += -DCZ_GIT='"$(GITID)"'
+build/rel/src/updater.o: build/version.txt
+build/rel/src/updater.o: RELFLAGS += $(UPDFLAGS)
 
 build/rel/crumplezone: $(REL_GAME)
 	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ $(LDLIBS)
 build/rel/run_tests: $(REL_TEST)
-	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ -lpthread -lm
+	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ -lpthread -lm -ldl
 build/rel/bench_sim: build/rel/tools/bench_sim.o $(REL_PHYS)
 	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ -lpthread -lm
 build/rel/worldprint: build/rel/tools/worldprint.o $(REL_PHYS)
@@ -233,14 +256,17 @@ WIN_OBJ  := $(patsubst %.cpp,build/win/obj/%.o,$(GAME_SRC))
 build/win/obj/%.o: %.cpp $(HEADERS)
 	@mkdir -p $(dir $@)
 	$(WINCXX) $(WINFLAGS) -c -o $@ $<
+build/win/obj/src/updater.o: build/version.txt
+build/win/obj/src/updater.o: WINFLAGS += $(UPDFLAGS)
 
 build/win/CrumpleZone/crumplezone.exe: $(WIN_OBJ)
 	@mkdir -p $(dir $@)
-	$(WINCXX) $(WINFLAGS) -mwindows -s -o $@ $^ $(WINSDL)/SDL2.dll -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
+	$(WINCXX) $(WINFLAGS) -mwindows -s -o $@ $^ $(WINSDL)/SDL2.dll -lws2_32 -liphlpapi -lwinhttp -static -static-libgcc -static-libstdc++
 
 windows: build/win/CrumpleZone/crumplezone.exe
 	cp $(WINSDL)/SDL2.dll build/win/CrumpleZone/
 	cp README.md build/win/CrumpleZone/README.txt
+	printf 'layout windows\n' > build/win/CrumpleZone/cz-install.txt
 	@mkdir -p build/win/CrumpleZone/docs
 	cp docs/performance.md build/win/CrumpleZone/docs/
 	cp docs/multiplayer.md build/win/CrumpleZone/docs/
@@ -266,7 +292,6 @@ windows-installer: windows
 # A universal (Apple silicon + Intel) app with SDL2.framework inside it. Needs the official
 # SDL2 macOS framework (from the SDL2-2.x.dmg) in $(MACSDL). Ad-hoc signed only: the first
 # launch needs right-click > Open (or: xattr -dr com.apple.quarantine CrumpleZone.app).
-VERSION  ?= 0.4.9
 MACCXX   ?= clang++
 MACSDL   ?= third_party/sdl2-mac
 MACLTO   ?= -flto=thin
@@ -294,6 +319,8 @@ MACAPP   := build/mac/CrumpleZone.app
 build/mac/obj/%.o: %.cpp $(HEADERS)
 	@mkdir -p $(dir $@)
 	$(MACCXX) $(MACFLAGS) -c -o $@ $<
+build/mac/obj/src/updater.o: build/version.txt
+build/mac/obj/src/updater.o: MACFLAGS += $(UPDFLAGS)
 
 build/mac/crumplezone: $(MAC_OBJ)
 	$(MACCXX) $(MACFLAGS) $(MACLDX) -o $@ $^ -F$(MACSDL) -framework SDL2 -Wl,-rpath,@executable_path/../Frameworks
@@ -309,6 +336,7 @@ mac: build/mac/crumplezone
 	if [ -d assets/models ]; then cp -R assets/models $(MACAPP)/Contents/Resources/assets/; fi
 	cp -R $(MACSDL)/SDL2.framework $(MACAPP)/Contents/Frameworks/
 	cp README.md $(MACAPP)/Contents/Resources/README.md
+	printf 'layout mac\n' > $(MACAPP)/Contents/Resources/cz-install.txt
 	printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>CFBundleName</key><string>Crumple Zone</string>\n<key>CFBundleDisplayName</key><string>Crumple Zone</string>\n<key>CFBundleIdentifier</key><string>io.github.benbone21.crumplezone</string>\n<key>CFBundleExecutable</key><string>crumplezone</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>CFBundleShortVersionString</key><string>$(VERSION)</string>\n<key>CFBundleVersion</key><string>$(VERSION)</string>\n<key>LSMinimumSystemVersion</key><string>11.0</string>\n<key>LSApplicationCategoryType</key><string>public.app-category.simulation-games</string>\n<key>NSHighResolutionCapable</key><true/>\n</dict></plist>\n' > $(MACAPP)/Contents/Info.plist
 	codesign --force --deep --sign - $(MACAPP)
 	cd build/mac && rm -f CrumpleZone-mac.zip && ditto -c -k --keepParent CrumpleZone.app CrumpleZone-mac.zip
@@ -342,7 +370,7 @@ mac-dmg: mac
 build/mac/bench_sim: build/mac/obj/tools/bench_sim.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS))
 	$(MACCXX) $(MACFLAGS) $(MACLDX) -o $@ $^
 
-build/mac/run_tests: build/mac/obj/tests/run_tests.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS) $(SCEN) src/music.cpp)
+build/mac/run_tests: build/mac/obj/tests/run_tests.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS) $(SCEN) src/music.cpp $(UPD) $(UPDTEST))
 	$(MACCXX) $(MACFLAGS) $(MACLDX) -o $@ $^
 
 build/mac/test_audio: build/mac/obj/tests/audio.o build/mac/obj/tests/engine_samples.o build/mac/obj/tests/soundscape.o build/mac/obj/src/audio.o build/mac/obj/src/engineaudio.o build/mac/obj/src/engine_samples.o build/mac/obj/src/music.o build/mac/obj/src/ambience.o $(patsubst %.cpp,build/mac/obj/%.o,$(filter-out src/allocstat.cpp,$(PHYS)))
@@ -366,11 +394,31 @@ deb: build/rel/crumplezone
 	if [ -d assets/procworld ]; then cp -r assets/procworld $(DEBROOT)/opt/crumplezone/assets/; fi
 	if [ -f assets/props/props.txt ]; then cp -r assets/props $(DEBROOT)/opt/crumplezone/assets/; fi
 	if [ -d assets/models ]; then cp -r assets/models $(DEBROOT)/opt/crumplezone/assets/; fi
+	printf 'layout deb\n' > $(DEBROOT)/opt/crumplezone/cz-install.txt
 	ln -s /opt/crumplezone/crumplezone $(DEBROOT)/usr/games/crumplezone
 	cp README.md $(DEBROOT)/usr/share/doc/crumplezone/README.md
 	printf '[Desktop Entry]\nType=Application\nName=Crumple Zone\nComment=Soft-body driving: crash it, crawl it, race it\nExec=/usr/games/crumplezone\nTerminal=false\nCategories=Game;Simulation;\n' > $(DEBROOT)/usr/share/applications/crumplezone.desktop
 	printf 'Package: crumplezone\nVersion: $(VERSION)\nSection: games\nPriority: optional\nArchitecture: amd64\nDepends: libsdl2-2.0-0, libgl1, libc6, libstdc++6\nMaintainer: Crumple Zone <noreply@users.noreply.github.com>\nInstalled-Size: %s\nDescription: Soft-body driving sim: crash it, crawl it, race it\n Node-and-beam soft-body vehicles (ladder frames, live axles, crumple zones)\n for rock crawling, off-roading, crashes and racing.\n' "$$(du -sk $(DEBROOT) | cut -f1)" > $(DEBROOT)/DEBIAN/control
 	dpkg-deb --root-owner-group --build $(DEBROOT) build/deb/crumplezone_$(VERSION)_amd64.deb
+
+# ---- Linux per-user zip (the self-updater's Linux file; installer/linux-user-install.sh installs it in ~/.local) ----
+#   make linux-zip [VERSION=x.y.z]  ->  build/linux/CrumpleZone-linux.zip, one folder crumplezone/ (the game, assets, the marker,
+#   install.sh). No sudo: the game then updates itself there.
+LINROOT := build/linux/crumplezone
+linux-zip: build/rel/crumplezone
+	rm -rf build/linux && mkdir -p $(LINROOT)/assets
+	install -m755 build/rel/crumplezone $(LINROOT)/crumplezone
+	strip $(LINROOT)/crumplezone
+	cp -r assets/ground $(LINROOT)/assets/
+	if [ -d assets/audio ]; then cp -r assets/audio $(LINROOT)/assets/; fi
+	if [ -d assets/menu ]; then cp -r assets/menu $(LINROOT)/assets/; fi
+	if [ -d assets/procworld ]; then cp -r assets/procworld $(LINROOT)/assets/; fi
+	if [ -f assets/props/props.txt ]; then cp -r assets/props $(LINROOT)/assets/; fi
+	if [ -d assets/models ]; then cp -r assets/models $(LINROOT)/assets/; fi
+	install -m755 installer/linux-user-install.sh $(LINROOT)/install.sh
+	cp README.md $(LINROOT)/README.md
+	printf 'layout linux\n' > $(LINROOT)/cz-install.txt
+	cd build/linux && zip -qry -X CrumpleZone-linux.zip crumplezone
 
 # ---- Props: the offline baker for the Poly Haven scans (Linux; needs ImageMagick's `convert`) ----
 #   make bake PROPSRC=/path/to/polyhaven/models   ->  assets/props/ (committed; the game reads it)
@@ -393,7 +441,7 @@ run: crumplezone
 clean:
 	rm -rf build crumplezone
 
-.PHONY: windows windows-installer mac mac-dev mac-dmg deb all test run clean bake meshaudit
+.PHONY: windows windows-installer mac mac-dev mac-dmg deb linux-zip all test run clean bake meshaudit
 
 # The real-terrain importer's tool (docs/real-terrain.md): build/realterrain info|sample|make|synth ...
 build/realterrain: build/tools/realterrain.o $(patsubst %.cpp,build/%.o,$(PHYS))

@@ -3,6 +3,10 @@
 #   (a check that every platform still builds; nothing is published).
 # - On a version tag (v1.2.3): also publishes them as a GitHub release, with the notes in
 #   docs/releases/<tag>.md when it exists (else GitHub writes them from the commits).
+#   The release also carries the self-updater's files (src/updater.h): a per-platform zip for each OS and update-manifest.txt,
+#   signed with the Ed25519 key in the secret UPDATE_SIGNING_KEY (docs/update-signing-keys.md). The games read the newest release's
+#   manifest (.../releases/latest/download/update-manifest.txt, docs/server-updates-setup.md). Without the secret the release is
+#   published as before, with no manifest. A release the owner already made (his own .deb and installer) only gets files added.
 #   The mac job is skipped on a pushed tag unless the repository variable RELEASE_MAC is "true"
 #   (Settings > Variables); the release then has the .deb and .exe only. To add the Mac files
 #   later: run this workflow by hand (Run workflow) on the tag, or use release-recovery.yml.
@@ -91,14 +95,16 @@ jobs:
           make -j"$(nproc)" PGO=$PGO $TARGETS || { echo "::warning::PGO build failed, building without it"; PGO=""; rm -rf build/rel; make -j"$(nproc)" $TARGETS; }
           make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" build/test_visibility
           ./build/test_visibility
-          ./build/rel/run_tests --jobs 1 engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure net/state vtools/
+          ./build/rel/run_tests --jobs 1 engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure net/state vtools/ update/
           # The big map's fingerprint (src/worldprint.h): every OS must build Linux's world (the WORLDPRINT lines can be compared across the logs).
           CZ_XPLAT_SCANS=1 ./build/rel/run_tests --jobs 1 -v onemap/xplat-fingerprint
           SDL_VIDEODRIVER=offscreen LP_NUM_THREADS=2 ./build/rel/test_render
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/rel/test_audio
           python3 tests/test_engine_import.py
           make deb VERSION="$V" PGO=$PGO
+          make linux-zip VERSION="$V" PGO=$PGO
           mkdir -p out && cp "build/deb/crumplezone_${V}_amd64.deb" "out/CrumpleZone-${V}-linux.deb"
+          cp build/linux/CrumpleZone-linux.zip "out/CrumpleZone-${V}-linux.zip"
       - uses: actions/upload-artifact@v4
         with: { name: linux, path: out/* }
 
@@ -128,6 +134,7 @@ jobs:
           grep -q 'NvOptimusEnablement' build/win/imports.txt
           grep -q 'AmdPowerXpressRequestHighPerformance' build/win/imports.txt
           mkdir -p out && cp build/win/CrumpleZone-setup.exe "out/CrumpleZone-${V}-windows-setup.exe"
+          cp build/win/CrumpleZone-windows.zip "out/CrumpleZone-${V}-windows.zip"
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: out/* }
       - uses: actions/upload-artifact@v4
@@ -160,7 +167,7 @@ jobs:
         run: |
           .\cpu-tests\test_visibility.exe
           if ($LASTEXITCODE -ne 0) { throw "Windows culling/LOD geometry checks failed" }
-          .\cpu-tests\run_tests.exe --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/
+          .\cpu-tests\run_tests.exe --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/ update/
           if ($LASTEXITCODE -ne 0) { throw "Windows networking/physics regression checks failed (exit $LASTEXITCODE)" }
           $env:CZ_XPLAT_SCANS = '1'
           .\cpu-tests\run_tests.exe --jobs 1 -v onemap/xplat-fingerprint
@@ -208,7 +215,7 @@ jobs:
           for a in 127.0.0.2 127.0.0.3 $(seq -f '127.0.1.%g' 1 40); do sudo ifconfig lo0 alias "$a" up; done
           make -j4 build/mac/bench_sim build/mac/run_tests build/mac/test_audio build/mac/test_render build/mac/test_visibility
           ./build/mac/test_visibility
-          ./build/mac/run_tests --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/
+          ./build/mac/run_tests --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/ update/
           CZ_XPLAT_SCANS=1 ./build/mac/run_tests --jobs 1 -v onemap/xplat-fingerprint
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/mac/test_audio
           python3 -u - <<'PY'
@@ -293,7 +300,44 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { path: dist, merge-multiple: true }
+      - name: Sign the update manifest
+        # The self-updater's manifest (src/updatecore.h): the version, and each platform's file (its absolute URL on this tag's GitHub
+        # release, size, SHA-256), signed with the secret's Ed25519 key. The games fetch it from
+        # .../releases/latest/download/update-manifest.txt (src/updatekeys.h, docs/server-updates-setup.md). The key only ever lives
+        # in this step's environment; build/cz-update reads it from there and never prints or writes it. --require-builtin: the key
+        # must match the public key compiled into the game (src/updatekeys.h), or every game would refuse the manifest.
+        # No secret, or any failure here: a warning, and the release goes out as before, without a manifest (no game is offered it).
+        continue-on-error: true
+        env:
+          CZ_UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          V="${VERSION#[vV]}"
+          rm -f dist/update-manifest.txt
+          if [ -z "$CZ_UPDATE_SIGNING_KEY" ]; then
+            echo "::warning title=No update manifest::The UPDATE_SIGNING_KEY secret is not set, so this release gets no signed update-manifest.txt and no game will offer it as an update. Add the secret (docs/update-signing-keys.md) and re-run the publish job."
+            exit 0
+          fi
+          make -j"$(nproc)" build/cz-update
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          args=()
+          # The zips the game installs itself, and the .deb (only linked: a .deb install says where to get it).
+          for p in windows:windows.zip linux:linux.zip mac:mac.zip deb:linux.deb; do
+            f="CrumpleZone-${V}-${p#*:}"
+            if [ -s "dist/$f" ]; then args+=(--file "${p%%:*}" "$base/$f" "dist/$f"); fi
+          done
+          if ! build/cz-update --sign dist/update-manifest.txt --version "$V" --date "$(date -u +%F)" \
+               --notes "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" --require-builtin "${args[@]}"; then
+            echo "::warning title=No update manifest::The update manifest was not signed (see above): the release goes out without it"
+            rm -f dist/update-manifest.txt
+          elif ! build/cz-update --verify dist/update-manifest.txt --files dist; then
+            echo "::warning title=No update manifest::The signed manifest didn't check out: the release goes out without it"
+            rm -f dist/update-manifest.txt
+          fi
       - name: Publish the release
+        # Creates this tag's release with every file, or (the owner may have made it already, with his own .deb and installer from
+        # `gh release create`) adds to it: the updater's files (the zips and update-manifest.txt, which must be exactly the files the
+        # manifest signed) are uploaded with --clobber; anything else (.deb, setup .exe, .dmg, SHA256SUMS) only when the release
+        # doesn't have that file yet, so his are never replaced. Nothing is ever deleted.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -302,21 +346,36 @@ jobs:
           # Always the .exe and .deb; the Mac files only when the mac job built them (both or neither).
           names=("CrumpleZone-${V}-windows-setup.exe" "CrumpleZone-${V}-linux.deb")
           if [ -e "dist/CrumpleZone-${V}-mac.dmg" ] || [ -e "dist/CrumpleZone-${V}-mac.zip" ]; then
-            names+=("CrumpleZone-${V}-mac.dmg" "CrumpleZone-${V}-mac.zip")
+            names+=("CrumpleZone-${V}-mac.dmg")
           fi
           for name in "${names[@]}"; do test -s "dist/$name"; done
-          (cd dist && sha256sum "${names[@]}" > SHA256SUMS)
-          files=()
-          for name in "${names[@]}"; do files+=("dist/$name"); done
-          files+=("dist/SHA256SUMS")
+          # The self-updater's files: the zips (Mac's too), and the signed manifest when the step above made one.
+          updater=()
+          for name in "CrumpleZone-${V}-windows.zip" "CrumpleZone-${V}-linux.zip" "CrumpleZone-${V}-mac.zip" update-manifest.txt; do
+            if [ -s "dist/$name" ]; then updater+=("$name"); fi
+          done
+          (cd dist && sha256sum "${names[@]}" "${updater[@]}" > SHA256SUMS)
+          names+=(SHA256SUMS)
           notes=(--generate-notes)
           if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then notes=(--notes-file "docs/releases/${GITHUB_REF_NAME}.md"); fi
-          # (A release made by hand on the website for this tag just gets the files attached.)
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+            have=$(gh release view "$GITHUB_REF_NAME" --json assets -q '.assets[].name')
+            add=()
+            for name in "${names[@]}"; do
+              if grep -qxF "$name" <<<"$have"; then echo "keeping the release's own $name"; else add+=("dist/$name"); fi
+            done
+            for name in "${updater[@]}"; do add+=("dist/$name"); done
+            if [ ${#add[@]} -gt 0 ]; then gh release upload "$GITHUB_REF_NAME" "${add[@]}" --clobber; fi
             if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then
               gh release edit "$GITHUB_REF_NAME" --title "Crumple Zone ${V}" --notes-file "docs/releases/${GITHUB_REF_NAME}.md" --draft=false --prerelease=false --latest
             fi
           else
+            files=()
+            for name in "${names[@]}" "${updater[@]}"; do files+=("dist/$name"); done
             gh release create "$GITHUB_REF_NAME" --verify-tag --title "Crumple Zone ${V}" "${notes[@]}" "${files[@]}"
+          fi
+          if [ -s dist/update-manifest.txt ]; then
+            echo "Update manifest published: https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/update-manifest.txt"
+          else
+            echo "::warning title=No update manifest::This release has no update-manifest.txt: games won't be offered it (the newest release with one is what /latest/ must point at)."
           fi
