@@ -716,7 +716,7 @@ SCENARIO(updFlow, "update/flow", "the whole thing against a local server: check,
     srv.files["/bad/manifest.txt"] = manifest("9.9.9", "game.zip", seed);
     srv.files["/bad/game.zip"] = changed;
     srv.files["/foreign/manifest.txt"] = manifest("9.9.9", "game.zip", other);
-    srv.files["/old/manifest.txt"] = manifest("0.0.1", "game.zip", seed);
+    srv.files["/old/manifest.txt"] = manifest("0.0.0-a", "game.zip", seed);
     if (!ctx.check("the server starts", srv.start())) return;
     const std::string cfg = t.path + "/config";
     auto setUp = [&](const std::string& path) {
