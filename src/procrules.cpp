@@ -104,6 +104,7 @@ std::vector<Key> keys() {
     k.push_back({SC, "rock_size", nullptr, AT(r.scatter.rockSize), "...and their size, times the old scatter's (big enough to crawl over)"});
     k.push_back({SC, "cluster_share", nullptr, AT(r.scatter.clusterShare), "0..1: of those placed, this share are a cluster's middle: bigger, with smaller ones round it..."});
     k.push_back({SC, "cluster_rocks", nullptr, AT(r.scatter.clusterRocks), "...about this many"});
+    k.push_back({SC, "downed_trees", nullptr, AT(r.scatter.downedTrees), "trunks fallen across a trail every 100 m in the thickest woods (fewer as they thin): over, or round"});
     k.push_back({SC, "logs_per_ha", nullptr, AT(r.scatter.logsPerHa), "fallen logs a hectare tried in the woods (the meadows' groves half that)"});
     k.push_back({SC, "bush_thicket", nullptr, AT(r.scatter.bushThicket), "0..1: how much the bushes gather in thickets (0: evenly)"});
     k.push_back({SC, "blue_rocks", nullptr, AT(r.scatter.blueRocks), "rocks beside a blue trail's tread, every 100 m"});

@@ -1517,7 +1517,8 @@ static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, c
     m.h = env;
 
     // ---- The biomes: up high, the mountains; below, by the climate ----
-    const double alpine = smoothstep(RR.alpineFrom, RR.alpineFull, m.h + RR.alpineHeatShift * (0.5 - m.heat) * 2);
+    // (Mesa country stays desert however high its tops stand: no alpine meadow on a mesa)
+    const double alpine = smoothstep(RR.alpineFrom, RR.alpineFull, m.h + RR.alpineHeatShift * (0.5 - m.heat) * 2) * (1 - smoothstep(0.15, 0.35, ms.lw[PB_BADLANDS]));
     for (int b = 0; b < PB_COUNT; b++) m.w[b] = b == PB_MOUNTAINS ? alpine : ms.lw[b] * (1 - alpine);
     // ---- The knolls (procrules.h KnollRule): lumpy hills, saddles and gullies over what the valleys left ----
     {
@@ -2010,7 +2011,7 @@ bool lakeOkOf(const ProcWorld& G, const Lake& L) {
 namespace {
 // (The rule: water never stands over the land beside it. A creek's stretch, where the land 30 m to either side, across it, is lower than
 // its water (on a valley's side at a slant, or beside a deeper neighbour), carries no water there: it's dry, seeped into the scree.)
-bool creekPerched(const ProcWorld& G, int64_t i, int64_t j) {
+bool creekPerchedRaw(const ProcWorld& G, int64_t i, int64_t j) {
     int q;
     {
         const int p = blockFor(G, i, j, q)->perched[q].load(std::memory_order_relaxed);
@@ -2029,6 +2030,16 @@ bool creekPerched(const ProcWorld& G, int64_t i, int64_t j) {
     }
     blockFor(G, i, j, q)->perched[q].store(perched ? 1 : 0, std::memory_order_relaxed);
     return perched;
+}
+// (A creek's water as a run, not in pieces (owner: "drawn as separate segments with gaps between them"): a lone wet stretch between
+// dry ones is dry too; a lone dry stretch can't carry its water through, as there it would stand over the land beside it.)
+bool creekPerched(const ProcWorld& G, int64_t i, int64_t j) {
+    const bool here = creekPerchedRaw(G, i, j);
+    const int d = down2Of(G, i, j), u = upMain2Of(G, i, j);
+    const bool down = d >= 0 ? creekPerchedRaw(G, i + kN8[d][0], j + kN8[d][1]) : here;
+    const bool up = u >= 0 ? creekPerchedRaw(G, i + kN8[u][0], j + kN8[u][1]) : here;
+    if (!here && up && down) return true;
+    return here;
 }
 }  // namespace
 
@@ -2651,6 +2662,7 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
                 else if (wet[nc] == 2 && wet[c] != 2) step += canBridge || e->road ? 350 : 8000;  // (a bridge costs; wading a big river: never, nearly)
                 else if (wet[nc] == 2) step += 2000;  // (and never along one: a gorge's river is no road, nor a bridge down its length)
                 else if (wet[nc] && !wet[c]) step += 120;  // (into the water: a crossing costs, so it crosses once)
+                else if (wet[nc] == 1 && wet[c] == 1) step += L * 6;  // (and not down a creek's bed: beside it, or across)
                 if (din < ND) {
                     const double cs = ux[din] * ux[d] + uz[din] * uz[d];
                     step += turnK * (1 - cs) + (cs < -0.3 ? hairpinK : 0);
@@ -3210,7 +3222,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
             const double t = w[b2] / (w[b1] + w[b2]);  // 0..0.5
             const double dith = 0.5 + 0.35 * (vnoise(P.s[S_DITHER], x * 0.03, z * 0.03) - 0.5);  // (one short, natural edge where two biomes meet: no patchwork of the other inside)
             cl.dom = (uint8_t)(2 * t > dith ? b2 : b1);
-            if (w[PB_BADLANDS] > 0.15 + 0.1 * (dith - 0.5) && cl.dom != PB_MOUNTAINS) cl.dom = PB_BADLANDS;  // (mesa country is desert ground right across: red sand and sage, no grass)
+            if (w[PB_BADLANDS] > 0.15 + 0.1 * (dith - 0.5)) cl.dom = PB_BADLANDS;  // (mesa country is desert ground right across: red sand and sage, no grass)
             for (int b = 0; b < PB_COUNT; b++) cl.w[b] = (float)w[b];
         }
     auto CC = [&](int i, int j) -> const Cell& { return C[(size_t)(i + 1) * A + (j + 1)]; };
@@ -3467,6 +3479,32 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                 c->rocks.push_back(r);
             }
         }
+    }
+    {  // Downed trees across the trails in thick woods (owner): a trunk over the tread to drive over, or round where it's thick
+        const double woods = w[PB_FOREST] + 0.8 * w[PB_MOUNTAINS] + 0.3 * w[PB_MEADOW] * grove;
+        const double per100 = SCR.downedTrees * smoothstep(0.35, 0.85, woods);
+        if (per100 > 0)
+            for (const auto& ep : edges) {
+                const TrailEdge& e = *ep;
+                if (e.x.size() < 20) continue;
+                const uint64_t ek = hashIJ(seed_ ^ 0x10C5ull, std::llround(e.ax), std::llround(e.az));
+                for (size_t k = 10; k + 10 < e.x.size(); k++) {
+                    const double fx = e.ax + e.x[k] - (double)gx0, fz = e.az + e.z[k] - (double)gz0;
+                    if (fx < 0 || fz < 0 || fx >= 64 || fz >= 64) continue;
+                    if (!e.onBridge.empty() && e.onBridge[k]) continue;
+                    if (hash01(ek, (int64_t)k, 31) >= per100 * (e.along[k + 1] - e.along[k]) / 100) continue;
+                    int i, j;
+                    cellOf(fx, fz, i, j);
+                    if (CC(i, j).water > -1e8 || CC(i, j).bridge || CC(i, j).bed == 4) continue;
+                    const double tx = e.x[k + 1] - e.x[k - 1], tz = e.z[k + 1] - e.z[k - 1], tl = std::sqrt(tx * tx + tz * tz) + 1e-9;
+                    // (across it, slanted up to ~35 degrees, reaching past both edges; thick ones now and then, to go round)
+                    const double sl = (hash01(ek, (int64_t)k, 32) - 0.5) * 1.2, nx = -tz / tl + sl * tx / tl, nz = tx / tl + sl * tz / tl, nl = std::sqrt(nx * nx + nz * nz);
+                    const double L2 = e.half() + 2.5 + 3 * hash01(ek, (int64_t)k, 33), r = 0.2 + 0.18 * hash01(ek, (int64_t)k, 34) + (hash01(ek, (int64_t)k, 35) < 0.2 ? 0.2 : 0.0);
+                    const double off = (hash01(ek, (int64_t)k, 36) - 0.5) * 2;
+                    const double cx2 = fx + nx / nl * off, cz2 = fz + nz / nl * off;
+                    c->logs.push_back({(float)(cx2 - nx / nl * L2), (float)(cz2 - nz / nl * L2), (float)(cx2 + nx / nl * L2), (float)(cz2 + nz / nl * L2), (float)r});
+                }
+            }
     }
     {  // Rocks by the steepness (procrules.h SlopeRockRule): scree on the moderate slopes, rock walls on the steep, boulders at their feet.
         const SlopeRockRule& SR = RU.slopeRock;

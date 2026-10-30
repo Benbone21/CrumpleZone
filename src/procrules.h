@@ -115,6 +115,7 @@ struct ScatterRule {
     double rockSize = 1.8;        // ...and their size, times the old scatter's (owner: big enough to crawl over)
     double clusterShare = 0.3;    // 0..1: of those placed, this share are a cluster's middle: bigger, with smaller ones round it...
     double clusterRocks = 3;      // ...about this many
+    double downedTrees = 1.5;     // trunks fallen across a trail every 100 m in the thickest woods (fewer as they thin)
     double logsPerHa = 1.4;       // fallen logs a hectare tried in the woods (the meadows' groves half that)
     double bushThicket = 0.75;    // 0..1: how much the bushes gather in thickets (0: even, as before)
     double blueRocks = 3;         // rocks beside a blue trail's tread, every 100 m

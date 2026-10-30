@@ -1082,8 +1082,9 @@ SCENARIO(procRiverSpacing, "procworld/river-spacing", "Big rivers about every 5 
                       100.0 * st.rangeCreeksWet / std::max(1L, st.rangeCreeks), 100.0 * st.rangeCreeksPerched / std::max(1L, st.rangeCreeks));
         ctx.note(b);
         // (Was 70% before the summits went to 2.5 km: their gorges leave more creek stretches perched, dry there. The owner's trade.)
-        // (v6: steeper, narrower ranges: more of a creek's stretches would stand over the land beside them (dry there): 58-67%, so 55%.)
-        ctx.check("seed " + std::to_string(seed) + ": the ranges' creeks: most carry water (over 55%)", st.rangeCreeks > 100 && st.rangeCreeksWet * 100 > st.rangeCreeks * 55);
+        // (v6: steeper, narrower ranges: more of a creek's stretches would stand over the land beside them (dry there); v7: a lone wet
+        // stretch between dry ones is dry too (owner: no isolated strips of water): 52-66%, so half.)
+        ctx.check("seed " + std::to_string(seed) + ": the ranges' creeks: half or more carry water", st.rangeCreeks > 100 && st.rangeCreeksWet * 100 >= st.rangeCreeks * 50);
     }
 }
 

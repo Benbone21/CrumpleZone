@@ -100,6 +100,7 @@ rock_rate = 1.6                   # the loose rocks tried, times the old scatter
 rock_size = 1.8                   # ...and their size, times the old scatter's (big enough to crawl over)
 cluster_share = 0.3               # 0..1: of those placed, this share are a cluster's middle: bigger, with smaller ones round it...
 cluster_rocks = 3                 # ...about this many
+downed_trees = 1.5                # trunks fallen across a trail every 100 m in the thickest woods (fewer as they thin): over, or round
 logs_per_ha = 1.4                 # fallen logs a hectare tried in the woods (the meadows' groves half that)
 bush_thicket = 0.75               # 0..1: how much the bushes gather in thickets (0: evenly)
 blue_rocks = 3                    # rocks beside a blue trail's tread, every 100 m
