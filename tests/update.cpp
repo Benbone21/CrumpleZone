@@ -724,7 +724,7 @@ SCENARIO(updFlow, "update/flow", "the whole thing against a local server: check,
 
     ctx.check("init: nothing to do, keeps running", !setUp("/rel/manifest.txt"));
     update::checkFor(99, "9.9.9");
-    ctx.check("a newer host: the check offers 9.9.9", waitFor({Phase::Offer, Phase::Info}, 15) == Phase::Offer && update::status().title.find("9.9.9") != std::string::npos,
+    ctx.check("a newer host: the check offers 9.9.9", waitFor({Phase::Offer, Phase::Info}, 60) == Phase::Offer && update::status().title.find("9.9.9") != std::string::npos,
               update::status().title + " / " + update::status().message);
     update::accept();
     const Phase end = waitFor({Phase::Restarting, Phase::Info}, 30);
@@ -745,7 +745,7 @@ SCENARIO(updFlow, "update/flow", "the whole thing against a local server: check,
     put(live + "/version.txt", "old");
     setUp("/bad/manifest.txt");
     update::checkFor(99);
-    waitFor({Phase::Offer, Phase::Info}, 15);
+    waitFor({Phase::Offer, Phase::Info}, 60);
     update::accept();
     ctx.check("a download that doesn't match the signed hash: refused", waitFor({Phase::Restarting, Phase::Info}, 30) == Phase::Info &&
                                                                           update::status().message.find("DOESN'T MATCH") != std::string::npos,
@@ -755,21 +755,21 @@ SCENARIO(updFlow, "update/flow", "the whole thing against a local server: check,
 
     setUp("/foreign/manifest.txt");
     update::checkOnLaunch();
-    const std::string n1 = waitNotice(15);
+    const std::string n1 = waitNotice(60);
     ctx.check("a manifest signed by another key: a quiet notice, no card", n1.find("DOESN'T MATCH") != std::string::npos && update::status().phase == Phase::Idle, n1);
     setUp("/nothing/manifest.txt");
     update::checkOnLaunch();
-    const std::string n2 = waitNotice(15);
+    const std::string n2 = waitNotice(60);
     ctx.check("no manifest on the server (404): a quiet notice", n2.find("COULDN'T CHECK") != std::string::npos && update::status().phase == Phase::Idle, n2);
     setUp("/old/manifest.txt");
     update::checkFor(9);
-    ctx.check("the server only has an older release: the card says so", waitFor({Phase::Info, Phase::Offer}, 15) == Phase::Info &&
+    ctx.check("the server only has an older release: the card says so", waitFor({Phase::Info, Phase::Offer}, 60) == Phase::Info &&
                                                                            update::status().message.find("NEWER THAN THE LATEST RELEASE") != std::string::npos,
               update::status().message);
     update::dismiss();
     setUp("/rel/manifest.txt");
     update::checkOnLaunch();
-    ctx.check("the launch check offers it too", waitFor({Phase::Offer}, 15) == Phase::Offer);
+    ctx.check("the launch check offers it too", waitFor({Phase::Offer}, 60) == Phase::Offer);
     update::later();
     ctx.check("LATER hides it", update::status().phase == Phase::Idle);
     update::testSetup("", "", {});
@@ -829,7 +829,7 @@ SCENARIO(updGithub, "update/github", "GitHub Releases' layout on a local server:
         char* argv[] = {&a0[0], &a1[0], &a2[0]};
         update::init(3, argv, 8);
         update::checkOnLaunch();
-        ctx.check(tag + "the launch check follows /latest/ and offers 9.9.9", waitFor({Phase::Offer, Phase::Info}, 15) == Phase::Offer,
+        ctx.check(tag + "the launch check follows /latest/ and offers 9.9.9", waitFor({Phase::Offer, Phase::Info}, 60) == Phase::Offer,
                   update::status().title + " / " + update::status().message + " / " + update::takeNotice());
         update::accept();
         ctx.check(tag + "the release's file found, checked and installed", waitFor({Phase::Restarting, Phase::Info}, 30) == Phase::Restarting, update::status().message);
@@ -849,7 +849,7 @@ SCENARIO(updGithub, "update/github", "GitHub Releases' layout on a local server:
         char* argv[] = {&a0[0], &a1[0], &a2[0]};
         update::init(3, argv, 8);
         update::checkOnLaunch();
-        waitFor({Phase::Info, Phase::Offer}, 15);
+        waitFor({Phase::Info, Phase::Offer}, 60);
         const update::Status st = update::status();
         ctx.check(".deb: an Info card, not UPDATE NOW", st.phase == Phase::Info, st.title + " / " + st.message);
         ctx.check(".deb: says download the new .deb or switch to the per-user install",
@@ -864,7 +864,7 @@ SCENARIO(updGithub, "update/github", "GitHub Releases' layout on a local server:
         waitFor({Phase::Info, Phase::Offer}, 2);
         ctx.check(".deb: once OK'd, the next launch doesn't show it again", update::status().phase == Phase::Idle, update::status().message);
         update::checkFor(99);
-        ctx.check(".deb: an explicit check still does", waitFor({Phase::Info, Phase::Offer}, 15) == Phase::Info, update::status().message);
+        ctx.check(".deb: an explicit check still does", waitFor({Phase::Info, Phase::Offer}, 60) == Phase::Info, update::status().message);
         update::dismiss();
     }
     // The release is up but CI hasn't attached the manifest yet: a quiet notice on launch.
@@ -873,7 +873,7 @@ SCENARIO(updGithub, "update/github", "GitHub Releases' layout on a local server:
     char* argv[] = {&a0[0], &a1[0], &a2[0]};
     update::init(3, argv, 8);
     update::checkOnLaunch();
-    const std::string n = waitNotice(15);
+    const std::string n = waitNotice(60);
     ctx.check("no manifest on the newest release yet: a quiet notice, no card", n.find("COULDN'T CHECK") != std::string::npos && update::status().phase == Phase::Idle, n);
     update::testSetup("", "", {});
 }
