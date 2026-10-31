@@ -557,7 +557,7 @@ SCENARIO(netMpSeparateWorlds, "net/mp-separate-worlds", "step 4: players no long
     g.sendGame("ping 0 56 78");
     rig.wall(1.0);
     ctx.check("the guest left behind can't ping the host's new world", !heardPing(rig.host) && !g.active());
-    ctx.check("the host's new session has only the host", rig.host.playerCount() == 1 && !rig.host.players[1].active);  // (the game drops the old session's vehicles: main.cpp leaveSession)
+    ctx.check("the host's new session has only the host", rig.host.playerCount() == 1 && !rig.host.players[1].active && rig.remotes(ctx.sim) == 0);
     rig.host.sendGame("ping 1 1 1");
     rig.wall(0.5);
     ctx.check("nor the host the guest", !heardPing(g));
@@ -575,6 +575,7 @@ SCENARIO(netMpFollowHost, "net/mp-follow-host", "step 5: guests always follow th
     rig.host.close("the host went to another world");
     rig.wall(0.8);
     ctx.check("the guests are out, and neither carries on as a host of the old world", !a.active() && !b.active() && a.role == NetSession::OFF && b.role == NetSession::OFF);
+    ctx.check("the host's sim keeps none of their vehicles (stale bodies the next session's same ids would land on)", rig.remotes(ctx.sim) == 0, std::to_string(rig.remotes(ctx.sim)) + " left");
     ctx.check("their old world's window went with the session", !a.proc.on && !b.proc.on && a.map == 0);
     const std::string c2 = rig.open(10, false, MAP_PROVING_GROUND);
     ctx.check("a guest on the built map", rig.join(a, c2, 0) > 0 && a.map == MAP_PROVING_GROUND && !a.proc.on, a.error);

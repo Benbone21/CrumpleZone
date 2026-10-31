@@ -329,7 +329,10 @@ struct NetSession::Tunnel {
 };
 
 NetSession::NetSession() {}
-NetSession::~NetSession() { close(); }
+NetSession::~NetSession() {
+    lastSim = nullptr;  // (the sim may be gone before the session: nothing in it is touched now)
+    close();
+}
 
 int NetSession::playerCount() const {
     int n = 0;
@@ -384,6 +387,13 @@ void NetSession::close(const std::string& why) {
     joinStage = 0;
     delete (sockaddr_in*)hostUdp;
     hostUdp = nullptr;
+    // The others' vehicles go with the session. Left in the sim, nothing would move them any more (a body held where its last
+    // state put it, settling into the ground), and the next session's would be taken for them: its players get the same ids
+    // (player 1's first vehicle is 0x10001 in every session), so a newcomer's states would land on a stale body.
+    if (lastSim)
+        for (int i = (int)lastSim->cars.size() - 1; i >= 0; i--)
+            if (lastSim->cars[i].remote) eraseCar(*lastSim, i);
+    lastSim = nullptr;
     for (Remote* r : remotes) delete r;
     remotes.clear();
     knownCars.clear();
