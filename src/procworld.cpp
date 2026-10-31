@@ -302,6 +302,7 @@ struct DBlock {
     std::atomic<int32_t> A[kB * kB];     // the drainage (-1: not yet counted)
     std::atomic<int8_t> up[kB * kB];     // the biggest neighbour draining into it (-2: not yet found, -1: none)
     std::atomic<float> level[kB * kB];   // the channel's level at the node (NaN: not yet worked out)
+    std::atomic<float> level2[kB * kB];  // ...a creek's, cut down after against the land the first pass made (NaN: not yet)
     // (The second pass: the creeks and gullies drain down the land the rivers' valleys made, not the broad routing height.)
     std::atomic<int8_t> down2[kB * kB];  // where it drains in the end (-3: not yet worked out, -1: a sink)
     std::atomic<int32_t> A2[kB * kB];    // its drainage in the end (-1: not yet counted)
@@ -374,6 +375,7 @@ std::shared_ptr<DBlock> makeBlock(const ProcWorld& G, int64_t bi, int64_t bj) {
             b->A[q].store(-1, std::memory_order_relaxed);
             b->up[q].store(-2, std::memory_order_relaxed);
             b->level[q].store(std::numeric_limits<float>::quiet_NaN(), std::memory_order_relaxed);
+            b->level2[q].store(std::numeric_limits<float>::quiet_NaN(), std::memory_order_relaxed);
             b->down2[q].store(-3, std::memory_order_relaxed), b->A2[q].store(-1, std::memory_order_relaxed), b->up2[q].store(-2, std::memory_order_relaxed);
             b->K[q].store(std::numeric_limits<float>::quiet_NaN(), std::memory_order_relaxed);
             b->perched[q].store(-1, std::memory_order_relaxed);
@@ -709,6 +711,7 @@ inline double notchDepth(double A, double mk, double cross, double along) {
 // A creek's or gully's level at node (i, j) (drainage under river_area): as low as its notch under the land the rivers left at each of
 // its nodes, and never higher than any above it (a running low from its sources down: it cuts through a rise rather than climb it),
 // and never lower than the river it runs into. Worked out over its whole tree upstream (small: under river_area), memoised.
+thread_local bool gFirstPass = false;  // (working out the creeks' second levels: the land at their first levels)
 double creekLevelOf(const ProcWorld& G, int64_t i, int64_t j) {
     {
         int q;
@@ -783,13 +786,15 @@ double creekLevelOf(const ProcWorld& G, int64_t i, int64_t j) {
     return result;
 }
 
+double creekLevel2Of(const ProcWorld& G, int64_t i, int64_t j);
 double levelOf(const ProcWorld& G, int64_t i, int64_t j) {
-    {
+    if (gFirstPass || isRiver(G, i, j)) {
         int q;
         const float l = blockFor(G, i, j, q)->level[q].load(std::memory_order_relaxed);
         if (l == l) return l;
     }
-    return isRiver(G, i, j) ? riverLevelOf(G, i, j) : creekLevelOf(G, i, j);
+    if (isRiver(G, i, j)) return riverLevelOf(G, i, j);
+    return gFirstPass ? creekLevelOf(G, i, j) : creekLevel2Of(G, i, j);
 }
 
 // ---- The channels' straight pieces ---------------------------------------------------------------------------------------------
@@ -1133,7 +1138,7 @@ struct TKHash {
     size_t operator()(const TKey& k) const { return (size_t)hashIJ(k.seed ^ 0x7113ull, k.i, k.j); }
 };
 std::mutex tileMutex;
-std::unordered_map<TKey, std::shared_ptr<const DTile>, TKHash> tileMap[2];  // (all the channels; the rivers alone)
+std::unordered_map<TKey, std::shared_ptr<const DTile>, TKHash> tileMap[3];  // (all the channels; the rivers alone; all, at the creeks' first levels)
 
 std::shared_ptr<const DTile> makeTile(const ProcWorld& G, int64_t ti, int64_t tj, bool riversOnly) {
     auto t = std::make_shared<DTile>();
@@ -1206,9 +1211,9 @@ std::shared_ptr<const DTile> tileAt(const ProcWorld& G, double x, double z, bool
         int64_t i = 0, j = 0;
         std::shared_ptr<const DTile> t;
     };
-    thread_local Slot slots[2][4];
-    thread_local int next[2] = {0, 0};
-    const int kind = riversOnly ? 1 : 0;
+    thread_local Slot slots[3][4];
+    thread_local int next[3] = {0, 0, 0};
+    const int kind = riversOnly ? 1 : gFirstPass ? 2 : 0;
     const uint64_t ep = drainEpoch.load(std::memory_order_relaxed);
     for (Slot& s : slots[kind])
         if (s.t && s.epoch == ep && s.i == ti && s.j == tj && s.seed == G.seed()) return s.t;
@@ -1577,6 +1582,67 @@ static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, c
     return m;
 }
 
+namespace {
+// A creek's second level (owner: creeks run unbroken and never sit over their banks): its first level cut down to under the land
+// 30 m either side of it as the first levels made that land (every other channel in), never over the levels above it, never under
+// the river it runs into. The creeks' channels and the land are made from these.
+double creekLevel2Of(const ProcWorld& G, int64_t i, int64_t j) {
+    int q;
+    {
+        const float l = blockFor(G, i, j, q)->level2[q].load(std::memory_order_relaxed);
+        if (l == l) return l;
+    }
+    double lv = creekLevelOf(G, i, j);
+    const int nd = down2Of(G, i, j);
+    double upMin = 1e30;
+    for (int e = 0; e < 8; e++) {  // (the creeks above it: never higher than the lowest of them)
+        const int64_t mi = i + kN8[e][0], mj = j + kN8[e][1];
+        if (!isRiver(G, mi, mj) && down2Of(G, mi, mj) == ((e + 4) & 7)) upMin = std::min(upMin, creekLevel2Of(G, mi, mj));
+    }
+    lv = std::min(lv, upMin);
+    if (nd >= 0) {
+        const NodeInfo n = nodeInfo(G, i, j), dn = nodeInfo(G, i + kN8[nd][0], j + kN8[nd][1]);
+        const double dx = dn.x - n.x, dz = dn.z - n.z, dl = std::sqrt(dx * dx + dz * dz) + 1e-9, px = -dz / dl * 30, pz = dx / dl * 30;
+        const bool was = gFirstPass;
+        gFirstPass = true;
+        double side = 1e30;
+        for (double t : {0.0, 0.5}) {  // (at the node, and half way to the next)
+            const double cx = n.x + dx * t, cz = n.z + dz * t;
+            for (int sd = -1; sd <= 1; sd += 2) {
+                const double x = cx + px * sd, z = cz + pz * sd;
+                const auto T = tileAt(G, x, z);
+                const int ta = std::min(kTC - 1, std::max(0, (int)std::floor((x - T->ox) / kTCell))), tb = std::min(kTC - 1, std::max(0, (int)std::floor((z - T->oz) / kTCell)));
+                const int tc = ta * kTC + tb;
+                side = std::min(side, evalMacro(G, x, z, *T, T->idx.data() + T->start[tc], (int)(T->start[tc + 1] - T->start[tc]), false).h);
+            }
+        }
+        gFirstPass = was;
+        lv = std::min(lv, side - 0.45);
+        // (never under a river beside it: its notch would cut the river's own ground out from under its water)
+        for (int e = 0; e < 8; e++) {
+            const int64_t mi = i + kN8[e][0], mj = j + kN8[e][1];
+            if (isRiver(G, mi, mj)) lv = std::max(lv, std::min((double)creekLevelOf(G, i, j), riverLevelOf(G, mi, mj) + 0.3));
+        }
+        lv = std::min(lv, upMin);  // (and still never over the creeks above it)
+        // (never under the river it runs into: walk down to it)
+        int64_t ci = i, cj = j;
+        for (int k = 0; k < 4000; k++) {
+            if (isRiver(G, ci, cj)) {
+                lv = std::max(lv, riverLevelOf(G, ci, cj) + 0.01);
+                break;
+            }
+            const int d = down2Of(G, ci, cj);
+            if (d < 0) break;
+            ci += kN8[d][0], cj += kN8[d][1];
+        }
+    }
+    lv = (double)(float)lv;
+    blockFor(G, i, j, q)->level2[q].store((float)lv, std::memory_order_relaxed);
+    return lv;
+}
+
+}  // namespace
+
 // A valley lake's natural dam (a rock bar or a landslide across the valley) stands on the land before it's worn: a share of the sites.
 inline bool damOn(const ProcWorld& G, const Lake& L) { return L.kind == 3 && hash01(G.seed() ^ 0xDA3ull, L.ni, L.nj) < rules().erosion.lakeShare; }
 // The dam itself (-1e300: none here): a broad mound across the valley at the site's lip, 4-16 m over the channel there (by the site's
@@ -1930,6 +1996,9 @@ void applyErosion(const ProcWorld& G, double x, double z, Macro& m, bool wait = 
     if (m.creekOn > 0.5 && m.creekS < 35) keep = std::max(keep, m.creekLevel + 0.35);
     if (m.riverOn > 0.5 && m.riverS < 35) keep = std::max(keep, m.riverLevel + 0.35);
     m.h = std::max(m.h + D, std::min(m.h, keep));
+    // (A wet river never runs perched over its own valley: where the land under and beside its water lies under its level (a
+    // creek's notch or a valley cut beneath it), its banks are raised to hold it, falling off at 1 in 2 away from the water.)
+    if (m.riverOn > 0.5 && m.riverS < m.riverHW + 12) m.h = std::max(m.h, m.riverLevel + 0.35 - 0.5 * std::max(0.0, m.riverS - m.riverHW));
     // (A lake the worn land holds here: its own tile's, the nearest of its cells.)
     // (Each lake is its own tile's, but may run out over the blend band into the next: the tiles whose change grids hold the point.)
     const int64_t ti = (int64_t)std::floor(x / (double)kETile), tj = (int64_t)std::floor(z / (double)kETile);
@@ -2024,9 +2093,10 @@ bool creekPerchedRaw(const ProcWorld& G, int64_t i, int64_t j) {
     for (size_t k = 0; k < own.size() && !perched; k++) {  // (along its own curve: the middle of each straight piece)
         if (own[k].cls != 1) continue;
         const DrainSeg& e = own[k];
-        for (double t : {0.1, 0.5, 0.9}) {  // (a few points along each straight piece)
+        for (double t : {0.05, 0.3, 0.55, 0.8, 0.95}) {  // (points along each straight piece, 25-35 m out either side)
             const double cx = e.ax + (e.bx - e.ax) * t, cz = e.az + (e.bz - e.az) * t, lv = e.la + (e.lb - e.la) * t;
-            for (int sd = -1; sd <= 1 && !perched; sd += 2) perched = macroNoPerch(G, cx - e.dz * 30 * sd, cz + e.dx * 30 * sd).h < lv - 0.35;
+            for (double off : {25.0, 32.0})
+                for (int sd = -1; sd <= 1 && !perched; sd += 2) perched = macroNoPerch(G, cx - e.dz * off * sd, cz + e.dx * off * sd).h < lv + 0.15;
         }
     }
     blockFor(G, i, j, q)->perched[q].store(perched ? 1 : 0, std::memory_order_relaxed);
@@ -2308,7 +2378,7 @@ static void clearDrainCaches() {
     }
     {
         std::lock_guard<std::mutex> lock(tileMutex);
-        tileMap[0].clear(), tileMap[1].clear();
+        tileMap[0].clear(), tileMap[1].clear(), tileMap[2].clear();
     }
     clearGridCache();
     // (The erosion's tiles stay: a pure function of the seed and the rules, and dear to make (a test dropping the chunks beside another
@@ -3005,6 +3075,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         int8_t bed = 0;        // 1 river or creek bed, 2 a dry wash, 3 trail tread, 4 road tread
         float lat = 0, along = 0;
         bool roadNear = false;
+        bool fallRock = false;  // on a waterfall's step: bare rock
         bool bridge = false;   // under or by a bridge's deck or its approach: nothing at all grows or lies here
         double lakeW = -1e9;   // a worn-land lake's level, within its lattice's reach of here
     };
@@ -3046,6 +3117,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                         else dHere = 1e9;
                     } else
                         v = valleyAt(*s, d, lv, s->notch ? Vc : Mc, true, bh);
+                    if (s->fall && d < s->hw + 6) cl.fallRock = true;  // (a waterfall's step and its sides: rock, whichever channel cuts lowest here)
                     const double c = (h0c - v) * (1 - smoothstep(8.0, 18.0, e));
                     if (c > cut) cut = c;
                     if (v < h0c - cut + 1e-9 && e < 8 && (!arg || v < argV)) arg = s, argL = lv, argD = naturalBed(*s) ? (dHere < 1 ? 0.0 : 1e9) : d, argV = v, argHW = naturalBed(*s) ? 1.0 : hwHere;
@@ -3058,7 +3130,8 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                     // (Water never stands over the valley's land round it: where a creek crosses a bigger one's floor on its way in, the
                     // floor is lower than its water, and it's dry there.)
                     const double valley = blend(i, j, [](const Macro& m) { return m.h; });
-                    if (arg->wet > 0.5 && argD < argHW + 1.5 && h < argL - 0.02 && argL <= valley + 0.3 && !(arg->cls == 1 && creekPerched(*this, arg->ni, arg->nj)) &&
+                    const bool underLake = arg->cls >= 2 && rules().erosion.on > 0 && macroAt(x + arg->dx * 12, z + arg->dz * 12, false).lakeLevel > argL + 0.1;  // (just above a lake standing over it: the river's water gives way to the lake's, no step up)
+                    if (!underLake && arg->wet > 0.5 && argD < argHW + 1.5 && h < argL - 0.02 && argL <= valley + 0.3 && !(arg->cls == 1 && creekPerched(*this, arg->ni, arg->nj)) &&
                         (argL <= valley - 0.2 || argL <= macroAt(x, z, false).h + 0.3)) {  // (near the line, the land itself, not the 4 m lattice's blend: at a channel's sharp turn the blend stands over it)
                         cl.water = argL;
                         const double sp = arg->cls == 3 ? (arg->ford ? 1.9 : 1.5) : arg->cls == 2 ? 1.0 : 0.7;  // (big rivers fast: fastest over a ford's riffle)
@@ -3307,7 +3380,8 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                     break;
             }
             // Beds and treads over whatever the land is.
-            if (cl.bed == 1) s = SURF_GRAVEL, pt = PAINT_GRAVEL;
+            if (cl.fallRock && cl.water < -1e8) s = SURF_ROCK, pt = PAINT_ROCK;
+            else if (cl.bed == 1) s = SURF_GRAVEL, pt = PAINT_GRAVEL;
             else if (cl.bed == 2) s = SURF_SAND, pt = PAINT_SAND;
             else if (cl.bed == 4) s = SURF_GRAVEL, pt = PAINT_GRAVEL;
             else if (cl.bed == 5 && s != SURF_SNOW) {  // (a lake's shore: sand in the desert, gravel elsewhere)
