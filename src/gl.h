@@ -184,4 +184,7 @@ const char* load(void* (*getProc)(const char*));
 float maxTextureAnisotropy();
 // Uniform names are linked-program constants; avoid repeated driver lookups per wheel/pass.
 GLint uniformLocation(GLuint program, const char* name);
+// Tests: wraps every loaded function so each call is followed by getError; the first call that raises one goes to report
+// (the function's name and the error), so a failure names its call. Call after load; the game never does.
+void traceErrors(GLenum (*getError)(), void (*report)(const char* function, GLenum error));
 }  // namespace gl

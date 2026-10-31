@@ -18,6 +18,9 @@
 #include <memory>
 #include <thread>
 #include <stdexcept>
+#if !defined(_WIN32)
+#include <execinfo.h>
+#endif
 
 namespace {
 gl::PFN_CheckFramebufferStatus originalCheck;
@@ -28,6 +31,20 @@ void extensionCount(GLenum, GLint* count) { *count = 1; }
 const GLubyte* extensionName(GLenum, GLuint) { return (const GLubyte*)extension; }
 void anisotropyLimit(GLenum, GLfloat* value) { anisotropyReads++; *value = 16; }
 const GLubyte* noExtensions(GLenum, GLuint) { return (const GLubyte*)""; }
+// The first OpenGL error any call raised (gl::traceErrors), with the call's name: clean() fails on it.
+GLenum tracedError = 0;
+char tracedCall[160];
+void traceReport(const char* function, GLenum error) {
+    if (tracedError) return;
+    tracedError = error;
+    std::snprintf(tracedCall, sizeof tracedCall, "OpenGL error 0x%x from %s", error, function);
+    std::printf("%s; the stack:\n", tracedCall);
+#if !defined(_WIN32)
+    void* frames[32];
+    const int n = backtrace(frames, 32);
+    backtrace_symbols_fd(frames, n, 1);
+#endif
+}
 bool rejectMsaa = false;
 int rejected = 0;
 GLenum checkFramebuffer(GLenum target) {
@@ -64,7 +81,9 @@ int main() {
         auto getError = reinterpret_cast<GLenum(*)()>(SDL_GL_GetProcAddress("glGetError"));
         attachment = reinterpret_cast<decltype(attachment)>(SDL_GL_GetProcAddress("glGetFramebufferAttachmentParameteriv"));
         if (!getError || !attachment) throw std::runtime_error("missing core GL test function");
+        gl::traceErrors(getError, traceReport);
         auto clean = [&] {
+            if (tracedError) throw std::runtime_error(tracedCall);
             const GLenum error = getError();
             if (error) { char s[64]; std::snprintf(s, sizeof s, "OpenGL error 0x%x", error); throw std::runtime_error(s); }
         };
