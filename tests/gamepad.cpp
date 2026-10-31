@@ -106,7 +106,10 @@ SCENARIO(padBindings, "gamepad/bindings", "Button presses become the keys they s
     press(B_START);
     ctx.check("Start is Esc (the menu)", hasTap(l, SC_ESCAPE));
     press(B_BACK);
-    ctx.check("Back is the map (M)", hasTap(l, SC_M));
+    ctx.check("Back (VIEW) going down is nothing yet: it is also the third layer", !hasTap(l, SC_M));
+    r = Raw();
+    l.update(r, Mode::Drive, 0.016);
+    ctx.check("...let go alone, it is the map (M)", hasTap(l, SC_M));
     press(B_UP);
     ctx.check("D-pad up is the transfer case (L)", hasTap(l, SC_L));
     press(B_LEFT);

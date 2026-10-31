@@ -634,62 +634,54 @@ Result Shop::factory(Career& c) {
 Result Shop::key(int sc, Career& c) {
     careerRef_ = &c;
     Result r;
+    // The player's menu keys turned into the menu keys (keybinds.h uiKey: the arrows, Enter, Esc, UK_*). K_G is the GARAGE
+    // action itself (main.cpp hands it over as that, whatever key it is on): it closes the garage.
+    if (sc != K_G) sc = (binds ? *binds : defaultKeybinds()).uiKey(sc, false);
     if (focus == F_PICK) {  // the colour picker: up and down pick the control, left and right change it
         switch (sc) {
-            case K_LEFT:
-            case K_A: return pickAdjust(-1);
-            case K_RIGHT:
-            case K_D: return pickAdjust(1);
-            case K_R:
-            case K_B: {
+            case K_LEFT: return pickAdjust(-1);
+            case K_RIGHT: return pickAdjust(1);
+            case UK_FACTORY: {
                 bool& set = pickRow == PR_BODY ? paint.bodySet : paint.accentSet;
                 if (set) set = false, r.painted = true, r.toast = "FACTORY COLOUR BACK";
                 refresh(c);
                 return r;
             }
             case K_ENTER:
-            case K_KPENTER:
-            case K_SPACE: return back();
+            case K_KPENTER: return back();
             default: break;
         }
-    } else if (paintRow() == PR_FINISH && (sc == K_LEFT || sc == K_A || sc == K_RIGHT || sc == K_D)) {
-        return cycleFinish(sc == K_LEFT || sc == K_A ? -1 : 1);
-    } else if (category().group == G_PAINT && focus == F_ITEMS && (sc == K_R || sc == K_B)) {
+    } else if (paintRow() == PR_FINISH && (sc == K_LEFT || sc == K_RIGHT)) {
+        return cycleFinish(sc == K_LEFT ? -1 : 1);
+    } else if (category().group == G_PAINT && focus == F_ITEMS && sc == UK_FACTORY) {
         if (paint.factory()) r.toast = "IT'S ALREADY THE FACTORY PAINT";
         else paint = CarPaint(), r.painted = true, r.toast = "FACTORY PAINT BACK ON";
         refresh(c);
         return r;
     }
     switch (sc) {
-        case K_ESC:
-        case K_BACKSPACE: return back();
+        case K_ESC: return back();
         case K_G: return close();
-        case K_UP:
-        case K_W: move(-1); break;
-        case K_DOWN:
-        case K_S: move(1); break;
+        case K_UP: move(-1); break;
+        case K_DOWN: move(1); break;
         case K_RIGHT:
-        case K_D:
             if (focus == F_CATS) return activate(c);
             break;
         case K_LEFT:
-        case K_A:
             if (focus == F_ITEMS) return back();
             break;
         case K_ENTER:
-        case K_KPENTER:
-        case K_SPACE: return activate(c);
-        case K_Q: nextCat(-1); break;
-        case K_E: nextCat(1); break;
-        case K_T: return tryOn();
-        case K_R:
-        case K_B: return factory(c);
-        case K_C:
+        case K_KPENTER: return activate(c);
+        case UK_TAB_PREV: nextCat(-1); break;
+        case UK_TAB_NEXT: nextCat(1); break;
+        case UK_SECOND: return tryOn();
+        case UK_FACTORY: return factory(c);
+        case UK_OPTION:
             recal = !recal;
             r.toast = recal ? "SPEEDO: RECALIBRATED TO THE TIRES WHEN FITTED" : "SPEEDO: LEFT AS THE FACTORY SET IT";
             break;
-        case K_Z: zoomBy(1 / 1.15); break;
-        case K_X: zoomBy(1.15); break;
+        case UK_ZOOM_IN: zoomBy(1 / 1.15); break;
+        case UK_ZOOM_OUT: zoomBy(1.15); break;
         default: break;
     }
     return r;
@@ -765,21 +757,22 @@ std::string Shop::actionLabel(const Career& c) const {
 }
 
 std::string Shop::hint(bool pad) const {
-    if (focus == F_PICK)
-        return pad ? "D-PAD UP DOWN CONTROL   LEFT RIGHT CHANGE   A DONE   Y FACTORY COLOUR   B BACK"
-                   : "W S CONTROL   A D CHANGE   MOUSE CLICK OR DRAG   R FACTORY COLOUR   ENTER DONE";
-    if (paintRow() >= 0)
-        return pad ? "D-PAD MOVE   A PICK   LEFT RIGHT FINISH   Y FACTORY PAINT   RIGHT STICK TURN   B BACK"
-                   : "W S MOVE   ENTER PICK   A D FINISH   R FACTORY PAINT   DRAG TURN   WHEEL ZOOM   ESC BACK";
+    // (The keys and buttons as bound: keybinds.h's MENUS group.)
+    const Keybinds& kb = binds ? *binds : defaultKeybinds();
+    auto n = [&](KeyAction a) { return pad ? kb.padName(a) : kb.name(a); };
+    auto two = [&](KeyAction a, KeyAction b) { return n(a) + " " + n(b); };
+    const std::string ok = pad ? "A" : "ENTER", back = pad ? "B" : "ESC";
+    const std::string updown = pad ? "D-PAD" : two(KA_UI_UP, KA_UI_DOWN), sides = pad ? "LEFT RIGHT" : two(KA_UI_LEFT, KA_UI_RIGHT);
+    const std::string turn = pad ? "RIGHT STICK TURN   " + two(KA_UI_ZOOM_IN, KA_UI_ZOOM_OUT) + " ZOOM" : "DRAG TURN   WHEEL ZOOM";
+    if (focus == F_PICK) return updown + " CONTROL   " + sides + " CHANGE   " + (pad ? "" : "MOUSE CLICK OR DRAG   ") + n(KA_UI_FACTORY) + " FACTORY COLOUR   " + ok + " DONE";
+    if (paintRow() >= 0) return updown + " MOVE   " + ok + " PICK   " + sides + " FINISH   " + n(KA_UI_FACTORY) + " FACTORY PAINT   " + turn + "   " + back + " BACK";
     if (focus == F_CATS)
-        return pad ? "D-PAD MOVE   A OPEN   LB RB CATEGORY   Y FACTORY PART   B CLOSE" : "W S MOVE   ENTER OPEN   R FACTORY PART   C SPEEDO   ESC CLOSE";
-    if (category().group == G_VEHICLE)
-        return pad ? "D-PAD MOVE   A SWAP TO IT   LB RB CATEGORY   B BACK" : "W S MOVE   ENTER SWAP TO IT   Q E CATEGORY   ESC BACK";
+        return updown + " MOVE   " + ok + " OPEN   " + two(KA_UI_TAB_PREV, KA_UI_TAB_NEXT) + " CATEGORY   " + n(KA_UI_FACTORY) + " FACTORY PART   " + n(KA_UI_OPTION) + " SPEEDO   " + back + " CLOSE";
+    if (category().group == G_VEHICLE) return updown + " MOVE   " + ok + " SWAP TO IT   " + two(KA_UI_TAB_PREV, KA_UI_TAB_NEXT) + " CATEGORY   " + back + " BACK";
     const Item* it = item();
     const bool mod = it && it->group == G_MOD;
-    if (pad)
-        return std::string("D-PAD MOVE   A ") + (mod ? "BUY / FIT" : "BUY") + (mod ? "   X TRY ON TRUCK   Y FACTORY PART" : "") + "   RIGHT STICK TURN   B BACK";
-    return std::string("W S MOVE   ENTER ") + (mod ? "BUY / FIT" : "BUY") + (mod ? "   T TRY ON TRUCK   R FACTORY PART" : "") + "   DRAG TURN   WHEEL ZOOM   ESC BACK";
+    return updown + " MOVE   " + ok + " " + (mod ? "BUY / FIT" : "BUY") + (mod ? "   " + n(KA_UI_SECOND) + " TRY ON TRUCK   " + n(KA_UI_FACTORY) + " FACTORY PART" : std::string()) + "   " + turn + "   " +
+           back + " BACK";
 }
 
 std::string Shop::title() const { return std::string("GARAGE  ") + vehicleCatalog()[clampi(vehicle, 0, (int)vehicleCatalog().size() - 1)].name; }

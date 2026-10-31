@@ -42,8 +42,11 @@ enum Key : int {
 };
 // Every key free cam answers, for the clash test.
 const std::vector<int>& keys();
-// Keys free cam leaves to the game while it flies (the dev menu, the key mode, debug info, reload, photo, fullscreen).
+// Keys free cam leaves to the game while it flies (the dev menu, the key mode, debug info, reload, photo, fullscreen):
+// the default keys of those actions (the game looks at the actions, keybinds.h: passesThroughAction; free cam's own
+// actions are keybinds.h's FREE CAM group, defaulting to the K_* keys above).
 bool passesThrough(int scancode);
+bool passesThroughAction(int keyAction);
 
 // The vehicle (not a prop) the ray from `eye` along `dir` (unit) first hits, by its bounding box, within maxDist
 // (-1: none). `skip`: one to look through (the carried one). `at`: where along the ray it hit.

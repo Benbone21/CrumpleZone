@@ -28,6 +28,7 @@ SCEN     += tests/winchfoot.cpp tests/allocs.cpp tests/benchreport.cpp tests/tra
 SCEN     += tests/rivers.cpp tests/enginework.cpp tests/battery.cpp tests/places.cpp
 SCEN     += tests/people.cpp src/people.cpp
 SCEN     += tests/garageshop.cpp src/garageshop.cpp
+SCEN     += tests/controls.cpp
 PHYS     += src/careerworld.cpp
 SCEN     += tests/careerworld.cpp
 PHYS     += src/carsave.cpp src/careersession.cpp

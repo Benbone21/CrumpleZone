@@ -327,14 +327,15 @@ Result Nav::key(int sc, bool ctrl, bool shift) {
         else te::key(newName, nameEdit, sc, ctrl, shift, kNameRules);  // (the letters arrive as text(); a key the field doesn't use does nothing)
         return {};
     }
-    if (page == P_WORLDS && sc == K_DELETE && sel < (int)worlds.size()) {  // (the pad's X is mapped to this)
+    sc = (binds ? *binds : defaultKeybinds()).uiKey(sc, shift);  // (the player's menu keys: the arrows, Enter, Esc, UK_*)
+    if (page == P_WORLDS && (sc == K_DELETE || sc == UK_SECOND) && sel < (int)worlds.size()) {  // (Delete, or the second action: T, the pad's X)
         delIdx = sel;
         page = P_DELETE_WORLD, sel = 1;  // (on NO)
         return {};
     }
-    if (sc == K_ESC || sc == K_BACKSPACE) return back();
-    if (sc == K_ENTER || sc == K_KPENTER || sc == K_SPACE) return choose(sel);
-    const bool up = sc == K_W || sc == K_UP, down = sc == K_S || sc == K_DOWN, left = sc == K_A || sc == K_LEFT, right = sc == K_D || sc == K_RIGHT;
+    if (sc == K_ESC) return back();
+    if (sc == K_ENTER || sc == K_KPENTER) return choose(sel);
+    const bool up = sc == K_UP, down = sc == K_DOWN, left = sc == K_LEFT, right = sc == K_RIGHT;
     if (page == P_START_VEHICLE && (left || right || up || down)) {  // (the cards are a row: every way steps along it)
         move(left || up ? -1 : 1);
         return {};

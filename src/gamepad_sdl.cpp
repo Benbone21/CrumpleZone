@@ -67,6 +67,7 @@ bool Device::handleEvent(const SDL_Event& e, std::string& toast) {
             std::string up;
             for (char ch : name_) up += (char)std::toupper((unsigned char)ch);
             toast = "CONTROLLER CONNECTED: " + up;
+            if (d.pads.size() > 1) toast += " (" + std::to_string(d.pads.size()) + " CONNECTED: THE ONE LAST USED PLAYS)";
             return true;
         }
         case SDL_CONTROLLERDEVICEREMOVED: {
@@ -75,7 +76,7 @@ bool Device::handleEvent(const SDL_Event& e, std::string& toast) {
             SDL_GameControllerClose(d.pads[i].gc);
             d.pads.erase(d.pads.begin() + i);
             d.active = std::min(std::max(d.active - (d.active > i ? 1 : 0), 0), std::max(0, (int)d.pads.size() - 1));
-            toast = "CONTROLLER DISCONNECTED";
+            toast = !d.pads.empty() ? "CONTROLLER DISCONNECTED (" + std::to_string(d.pads.size()) + " STILL CONNECTED)" : std::string("CONTROLLER DISCONNECTED");  // (after the erase: the ones left)
             if (d.pads.empty()) name_.clear(), ui.last = false, rumbling_ = false;
             else name_ = d.pads[d.active].name, ui.style = styleFromName(name_);
             return true;

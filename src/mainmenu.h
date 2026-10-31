@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "careerworld.h"
+#include "keybinds.h"
 #include "textedit.h"
 
 namespace mainmenu {
@@ -108,7 +109,9 @@ public:
     // Opens on the front page, the pickers on the map and vehicle last used (a MapId, a catalog index).
     void open(int map, int vehicle);
     int count() const;     // rows of the current page
+    // A key: a physical one (turned into the menu key it's bound to, keybinds.h uiKey) or a pad press already one.
     Result key(int scancode, bool ctrl = false, bool shift = false);
+    const Keybinds* binds = nullptr;  // the player's bindings (null: the defaults)
     // Typed text (SDL's text input) while the NAME row is being edited; false when nothing takes it.
     bool text(const std::string& s);
     // A click or tap on row `i` (drawn rows; the front page's Front values).

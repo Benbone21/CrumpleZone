@@ -132,6 +132,7 @@ scenario finishes, you can drive around in the aftermath.
 | `surfaces/` | The side-by-side flat out through mud and sand; stopping from 40 km/h on pavement, wet, gravel, sand, mud, snow and ice; locked wheels vs ABS on pavement and gravel; sand sinking, floating aired down and digging in; all-terrains vs semi-slicks in mud; ice; the autopilot on sand and ice |
 | `freeway/` | Top speed per vehicle (flat out until it stops gaining; holds its lane, nothing scrapes), and seamless 400 m wraps at 200 km/h |
 | `handling/` | Keyboard steering at 130 km/h: a tap is a nudge, a hold is a hard sweeper without a spin (each per vehicle) |
+| `controls/` | Every action rebindable, keyboard and pad: defaults for every action, conflicts and swaps, the save round trip and old files, the menu keys and their fixed fallbacks, and the menus driven by pad input alone |
 | `gamepad/` | The controller logic with synthetic pad input: deadzone and curves, the speed-sensitive steering ratio, trigger pedals and reverse, the button bindings, rumble, a Bronco's lane change at 80 km/h and a 4L crawl on the pad |
 | `net/` | A host and a client over loopback: each sees the other's truck (node for node), a strap between them tows, leaving cleans up |
 | `ai/` | Laps (all vehicles and both directions), following, oncoming traffic, passing an obstacle, getting back on the road, getting unstuck, 8-car traffic |
@@ -180,7 +181,7 @@ scenario finishes, you can drive around in the aftermath.
 
 ### Keybinds
 
-Esc → Settings → Controls → Keyboard keybinds lists every keyboard action in groups (DRIVING, RECOVERY, ON FOOT, CAMERA AND VIEW, GAME, DEV): W S or the wheel scrolls, Enter or a click picks a row, then press the new key (Shift+key makes a combo like the lights' Shift+L; Esc cancels; Backspace clears it). A key another action has in the same place (the truck, or on foot) is swapped over to the old key; the same key may do different jobs in the truck and on foot (E, G, F) and a dev tool may share a key with a gameplay action (the key mode decides). RESET ALL TO DEFAULTS puts the game's keys back. Layouts are the `key_*` lines of `settings.txt` (Shift combos add 4096 to the key code). Every hint and the controls overlay (H) show the keys as you set them. The table with each action's default is `kInfo` in `src/keybinds.cpp`; to make a saved layout the new defaults, run F12 → TOOLS → EXPORT KEYBINDS AS DEFAULTS (it writes `build/keybinds-defaults.txt`, the first two fields of every row) and paste it over the table's.
+Esc → Settings → Controls lists every action in groups (DRIVING, RECOVERY, ON FOOT, CAMERA AND VIEW, GAME, MENUS, FREE CAM, DEV), each with its key and its pad binding (`W  /  RT`). OK (Enter, or A on the pad) on a row, then press a key or a pad button: a key becomes the key binding (Shift+key makes a combo like the lights' Shift+L), a pad button the pad binding (hold LB and / or VIEW with it for a chord like LB + A; VIEW tapped alone is a binding of its own). Esc or Start cancels; Backspace clears the key. On a row, R (Y on the pad) puts that action's defaults back and T (X on the pad) clears the key (the pad button, from the pad). A key or button another action has in the same place (the truck, on foot, a menu, the free cam) is swapped over to the old one, or left without one if that would clash elsewhere; the page says which. The same key may do different jobs in the truck and on foot (E, G, F) and a dev tool may share a key with a gameplay action (the key mode decides). RESET ALL TO DEFAULTS puts every key and button back. Layouts are the `key_*` and `pad_*` lines of `settings.txt` (Shift combos add 4096 to the key code; a file from before the pad bindings gets the default pad map). The MENUS group is the menus' own keys (up, down, left, right, OK, back, the tabs, the garage's extras, the repair dialog's two choices); Esc, Enter and the arrows, and the pad's A, B and Start, always work in the menus whatever is bound, so the menus can't be lost. Every hint and the controls overlay (H) show the keys as you set them, or the pad's buttons when the pad was the last thing used. The table with each action's default is `kInfo` in `src/keybinds.cpp`; to make a saved layout the new defaults, run F12 → TOOLS → EXPORT KEYBINDS AS DEFAULTS (it writes `build/keybinds-defaults.txt`, the first two fields of every row) and paste it over the table's.
 
 ### Dev menu and dev keys
 
@@ -196,34 +197,48 @@ Xbox, PlayStation and generic pads work through SDL2's game controller API: plug
 
 Driving is analog. The left stick is a real analog steering input: a radial deadzone (0.12 by default), a response curve, and a speed-sensitive ratio. Full stick is what the tires can hold at that speed (the same limit the keys use, a little more room), so it is full lock when parking or crawling and a few degrees at 130 km/h; half a stick is half of that. RT is the throttle and LT the brake, both analog; LT at a standstill puts the car in reverse (RT while rolling backwards brakes, then drives forward), exactly as holding S does.
 
+Every action has a pad binding (the defaults below), and every one can be rebound under Settings → Controls. The pad has three layers: buttons alone, LB + a button, and VIEW (Back / Select / Touchpad) + a button; LB + VIEW + a button are the dev tools (DEV KEYS mode). VIEW tapped on its own is the map.
+
 | Button | Action |
 | --- | --- |
-| Left stick | Steer |
-| RT / LT | Throttle / brake (LT at a stop: reverse) |
-| A or B | Handbrake (hold) |
-| X / Y | Shift down / up (switches to manual) |
+| Left stick | Steer (on foot: walk; the drone and free cam: fly) |
+| RT / LT | Throttle / brake (LT at a stop: reverse; the drone: up / down) |
+| A | Handbrake (hold; on foot: jump) |
+| X / Y | Shift down / up (switches to manual); on foot: hold X to work, Y the truck inventory |
+| B | On foot: put down what you carry |
 | Right stick | Look around (the chase camera recentres on its own) |
 | R3 (hold) | Look back; let go to reset the view |
 | RB | Camera: chase / orbit / cockpit / drone |
 | D-pad up | 4x4 mode (L) |
-| D-pad left / right | Front / rear locker |
-| D-pad down | Front sway bar disconnect |
+| D-pad left / right | Front / rear locker (on foot, left: pour the fuel can) |
+| D-pad down | Front sway bar disconnect (on foot: crouch) |
 | L3 | Headlights |
-| Back (View) | The map: sticks pan, RT / LT zoom, A sets the waypoint, Back or B closes |
-| Start (Menu) | Pause menu |
+| VIEW (tap) | The map: sticks or D-pad pan, RT / LT zoom, A sets the waypoint, X pings GO HERE at the centre, Y pings HELP at your truck, VIEW or B closes (keys: the menu keys, WASD, Z / X, Enter, T / R) |
+| Start (Menu) | Pause menu (always) |
 | LB + D-pad up / down | Winch / tow strap hints (the hook-up itself is on foot: hold X at the bumper) |
-| LB + RT / LT | Winch in / out (right stick up and down sets the winch speed) |
+| LB + RT / LT | Winch in / out |
+| LB + right stick up / down | Winch speed up / down |
 | LB + D-pad left / right | Air down / pump up the tires (hold, stopped) |
-| LB + A | Repair in place (twice quickly: back to the start) |
+| LB + A | Repair (twice quickly: back to the start; a career asks first) |
 | LB + B | Back on its wheels |
 | LB + X | Traction control on/off |
 | LB + Y | Get out / get in |
 | LB + RB | Manual / automatic gearbox |
 | LB + L3 | Autopilot on/off |
-| LB + Back | Next vehicle |
-| LB + Start | The controls list (shows the pad's map) |
+| LB + R3 (hold) | Horn |
+| LB + Start | The controls list (shows the pad's map as bound) |
+| VIEW + A | Parking brake |
+| VIEW + B | Garage |
+| VIEW + X | Steering assist |
+| VIEW + Y | Jobs on offer here |
+| VIEW + RB | Next vehicle |
+| VIEW + D-pad up / down | Throttle limit / autopilot: where to |
+| VIEW + D-pad left / right | Chat / hide the HUD |
+| VIEW + L3 (hold) / R3 | The full HUD / debug info |
+| VIEW + Start | Fullscreen |
+| VIEW + right stick | The dev menu (down), DEV KEYS / GAMEPLAY KEYS (left), back to the editor (right), load the new build (up) |
 
-Picking a winch anchor or tow-strap point: right stick aims the crosshair, A selects the highlighted point, B cancels. With a mouse, point and click; middle-drag looks and the wheel zooms. Menus, the title screen, the level list and the garage: D-pad or left stick move (hold to repeat), A selects, B or Start goes back (the garage: X tries a part on the truck, Y puts the factory part back, LB / RB change category, the right stick turns the model). On foot the left stick walks, A jumps, and the right stick looks; Y with LB gets back in. The drone camera flies with the left stick and looks with the right.
+Menus, the title screen, the level list, the garage, the inventory, the update card and the free cam's spawn picker: D-pad or left stick move (hold to repeat), A selects, B or Start goes back, LB / RB switch the settings tabs and the garage's categories (the garage: X tries a part on the truck, Y puts the factory part back, VIEW the speedo recalibration, RT / LT zoom, the right stick turns the model; the career worlds: X deletes one; the CONTROLS tab: Y defaults, X clears). The career repair dialog (R / LB + A): X repairs on the spot, Y respawns repaired at the nearest station, or the D-pad and A; B (or LB + A again) cancels (keys: 1, 2, the arrows and Enter, Esc or R again). The free cam (DEV KEYS: LB + VIEW + L3): A picks up / sets down, B lets go, X turns it (LB + X back), Y spawns, RB drives it, L3 through the ground, D-pad up / down the speed, Start leaves. Hot-plugging is live, and with several pads connected the one last used is the one that plays. With a mouse, point and click; middle-drag looks and the wheel zooms.
 
 **Rumble** (settings, CONTROLLER page: OFF / LOW / HIGH): a thump on impacts, a rumble over rough ground, a buzz from tires sliding and from the engine on its limiter. It only runs while the pad is the last thing you used and the window has the focus. The same page sets STEERING (SOFT / NORMAL / SHARP: how the stick maps to the wheels) and STICK DEADZONE (SMALL / MEDIUM / LARGE). Multiplayer needs nothing: each machine reads its own pad.
 

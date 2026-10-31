@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "career.h"
+#include "keybinds.h"
 #include "mods.h"
 #include "paint.h"
 
@@ -138,7 +139,10 @@ public:
     // What the truck should wear right now: the fitted parts, or with the focused part tried on.
     ModSet shown() const;
 
+    // A key: a physical one (turned into the menu key it's bound to, keybinds.h uiKey), a pad press already one, or K_G: the
+    // GARAGE action (closes it).
     Result key(int scancode, Career& c);
+    const Keybinds* binds = nullptr;  // the player's bindings (null: the defaults)
     Result activate(Career& c);        // ENTER on the focused row
     Result back();                     // ESC
     Result tryOn();                    // T: the focused part on the truck (again: off)

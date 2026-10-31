@@ -6,15 +6,19 @@
 //                    reverse), button bindings, rumble levels, glyph names.
 //   gamepad_sdl.cpp  the device: hot-plugging, polling, rumble (the game links it, the tests don't).
 //
-// main.cpp only talks to `Device` (raw state in) and `Logic` (intent and key presses out). A pad
-// button press becomes the same key press the keyboard would give, so every action is handled by
-// the one existing switch; sticks and triggers are analog and set the car directly.
+// main.cpp only talks to `Device` (raw state in) and `Logic` (intent and key presses out). The pad's
+// bindings are the keybinds table's (keybinds.h: every action has a pad binding, rebindable under
+// Settings > Controls). A pad press becomes the action it is bound to, fed in as that action's default
+// key, so every action is handled by the one existing switch; the held actions (pedals, steering, the
+// winch...) are read from the pad's state, analog where the input is (triggers, sticks).
 #pragma once
 #include <algorithm>
 #include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "keybinds.h"
 
 class Car;
 union SDL_Event;
@@ -84,9 +88,18 @@ enum class Mode {  // what the pad is for right now
     Aim,    // picking a winch anchor
 };
 
-struct Tap {  // a key the pad "pressed"
+struct Tap {  // a key the pad "pressed": the action's default key (in a menu: the menu key, keybinds.h uiCanon)
     int scancode;
     bool shift;
+    int action = -1;  // the KeyAction it is (-1: none)
+};
+
+// A press of one of the pad's inputs (the keybinds page takes the next one as a binding).
+struct Press {
+    int input;          // PadInput
+    int mods;           // PM_LB / PM_VIEW held with it
+    bool modifier;      // it is LB or VIEW going down (in the game they are layers, not buttons)
+    bool modifierTap;   // LB or VIEW let go with nothing pressed while it was held (VIEW alone: the map)
 };
 
 struct Intent {
@@ -108,20 +121,25 @@ struct Intent {
     float mapPanX = 0, mapPanY = 0;  // stick, + = right / down
     int mapZoom = 0;                  // +1 in, -1 out (per frame held)
     bool mapSelect = false;           // A pressed: set the waypoint at the centre
-    bool modifier = false;       // LB held
+    bool modifier = false;       // LB (or VIEW) held
     // On foot.
     bool interact = false;       // X held: the hold-E job in front of you
-    bool drop = false;           // B pressed: put down what you carry
-    bool inventory = false;      // Y pressed (on foot): the list of what's in the truck
-    bool crouchHeld = false;     // L3 held (on foot; driving it's the headlights tap)
+    bool crouchHeld = false;     // D-pad down held (on foot)
+    bool hudAll = false;         // VIEW + L3 held: the full HUD
 };
 
 class Logic {
 public:
     Tuning tune;
     Intent in;
-    bool onFoot = false;  // set by main before update(): L3 crouches instead of toggling the lights
+    // The bindings (null: the defaults) and where a press is looked up, set by main before update(): Drive mode in
+    // `contexts` (driving or on foot, a scenario, the free cam), then `fallback` (the free cam: the game's always-on
+    // keys); Menu mode in `menuContexts` (KCTX_DIALOG | KCTX_MENU over a dialog).
+    const Keybinds* binds = nullptr;
+    unsigned contexts = KCTX_DRIVE, fallback = 0, menuContexts = KCTX_MENU;
+    bool devKeys = false;
     std::vector<Tap> taps;  // pressed since the last update(); main feeds them in as key presses
+    std::vector<Press> presses;  // every input pressed this frame, whatever the mode (but Off)
 
     // `buttons` includes presses that came and went inside one frame. Fills `in` and `taps`.
     void update(const Raw& raw, Mode ctx, double dt);
@@ -134,7 +152,8 @@ private:
     uint32_t prev_ = 0;
     float held_[4] = {0, 0, 0, 0};  // menu auto-repeat timers (up, down, left, right)
     bool dir_[4] = {false, false, false, false};
-    bool flick_ = false;
+    bool analogOn_[PI_COUNT] = {};  // a trigger or stick direction counted as pressed (with some hysteresis)
+    bool lbClean_ = false, viewClean_ = false;  // LB / VIEW held with nothing else pressed yet
 };
 
 // ---- Rumble --------------------------------------------------------------------------------
@@ -193,7 +212,7 @@ extern Ui ui;
 // `keyboard` normally; the pad button's name when the pad was the last input used.
 const char* hint(const char* keyboard, Button b);
 // The button map for the help overlay: (button, what it does) rows.
-std::vector<std::pair<std::string, std::string>> helpRows(Style s);
+std::vector<std::pair<std::string, std::string>> helpRows(Style s, const Keybinds* kb = nullptr);
 
 // ---- The device (gamepad_sdl.cpp) ------------------------------------------------------------
 class Device {

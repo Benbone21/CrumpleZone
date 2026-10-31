@@ -15,6 +15,10 @@
 #include "throttle.h"
 #include "sdl_min.h"
 
+namespace pad {
+struct Press;
+}
+
 struct Settings {
     float ambience = 0.6f;      // outdoor wind, foliage, birds and night insects
     bool mph = false;           // speed in mph instead of km/h
@@ -182,7 +186,12 @@ public:
 
     void show(int currentVehicle, int currentMap);
     void close() { open = false; dragSlider = -1; }
+    // A key press (a physical key, or a pad press already a menu key: keybinds.h uiKey). `fromPad`: it came from the
+    // pad (the CONTROLS tab's clear then clears the pad binding, not the key).
     Result key(int scancode, Settings& s);
+    bool fromPad = false;
+    // A pad press while the CONTROLS tab waits for a binding (listeningForKey()): it becomes the action's pad binding.
+    Result padKey(const pad::Press& p, Settings& s);
     // Mouse, in drawable pixels.
     Result mouseMove(float x, float y, bool held, Settings& s);
     Result mouseDown(float x, float y, Settings& s);

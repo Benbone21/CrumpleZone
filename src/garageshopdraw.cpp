@@ -155,7 +155,11 @@ static void drawPaintCard(Renderer& r, Shop& s, int prow, float cx, float y0, fl
         s.hits.push_back({trackX, y - 4 * u, trackW, sliderH + 8 * u, 3, k});
         y += sliderH + gap;
     }
-    r.text(cx + 6 * u, y, small, fit(editing ? (padLast ? "UP DOWN PICK A CONTROL, LEFT RIGHT CHANGE IT, A DONE" : "W S PICK A CONTROL, A D CHANGE IT, ENTER DONE") : (padLast ? "A TO EDIT THE COLOUR" : "ENTER OR CLICK TO EDIT THE COLOUR"), pw - 12 * u, small), kGrey[0], kGrey[1], kGrey[2], a);
+    r.text(cx + 6 * u, y, small, fit(editing ? (padLast ? std::string("UP DOWN PICK A CONTROL, LEFT RIGHT CHANGE IT, A DONE")
+                                                       : [&] {
+                                                             const Keybinds& kb = s.binds ? *s.binds : defaultKeybinds();
+                                                             return kb.name(KA_UI_UP) + " " + kb.name(KA_UI_DOWN) + " PICK A CONTROL, " + kb.name(KA_UI_LEFT) + " " + kb.name(KA_UI_RIGHT) + " CHANGE IT, ENTER DONE";
+                                                         }()) : (padLast ? "A TO EDIT THE COLOUR" : "ENTER OR CLICK TO EDIT THE COLOUR"), pw - 12 * u, small), kGrey[0], kGrey[1], kGrey[2], a);
 }
 
 void draw(Renderer& r, Shop& s, const Career& c, const std::string& where, int W, int H, float a, bool padLast, bool pending, const std::string& toast, float toastA) {
@@ -327,7 +331,8 @@ void draw(Renderer& r, Shop& s, const Career& c, const std::string& where, int W
 
     // Trying a part on: say so over the truck.
     if (s.previewing && it) {
-        const std::string t = (pending ? "FITTING TO TRY: " : "TRYING ON: ") + it->name + (padLast ? "   X TAKE IT OFF" : "   T TAKE IT OFF");
+        const std::string t = (pending ? "FITTING TO TRY: " : "TRYING ON: ") + it->name + "   " +
+                              (padLast ? (s.binds ? *s.binds : defaultKeybinds()).padName(KA_UI_SECOND) : (s.binds ? *s.binds : defaultKeybinds()).name(KA_UI_SECOND)) + " TAKE IT OFF";
         const float ts = px(1.6f * u);
         const float w = r.textWidth(t, ts) + 28 * u, bx = std::min((float)W - x0 - w, std::max(px0, (W - w) * 0.5f + W * 0.15f)), by = H - 80 * u;
         pill(r, bx, by, w, 8 * ts + 16 * u, kPanel[0], kPanel[1], kPanel[2], 0.85f * a);

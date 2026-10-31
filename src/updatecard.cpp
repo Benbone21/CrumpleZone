@@ -153,11 +153,12 @@ bool key(int sc) {
     const update::Status st = update::status();
     if (st.phase == update::Phase::Idle) return false;
     const std::vector<Btn> bs = buttons(st);
-    enum { ESC = 41, ENTER = 40, KPENTER = 88, SPACE = 44, LEFT = 80, RIGHT = 79, UP = 82, DOWN = 81, TAB = 43, A = 4, D = 7 };
+    // (`sc` is a menu key: main.cpp turns the player's bindings into the arrows, Enter and Esc, keybinds.h uiKey.)
+    enum { ESC = 41, ENTER = 40, KPENTER = 88, LEFT = 80, RIGHT = 79, UP = 82, DOWN = 81, TAB = 43 };
     if (bs.empty()) return true;  // (installing: nothing to press, but the keys don't reach the game either)
-    if (sc == LEFT || sc == UP || sc == A) sel = (sel + (int)bs.size() - 1) % (int)bs.size();
-    else if (sc == RIGHT || sc == DOWN || sc == D || sc == TAB) sel = (sel + 1) % (int)bs.size();
-    else if (sc == ENTER || sc == KPENTER || sc == SPACE) press(bs[std::min(sel, (int)bs.size() - 1)], st);
+    if (sc == LEFT || sc == UP) sel = (sel + (int)bs.size() - 1) % (int)bs.size();
+    else if (sc == RIGHT || sc == DOWN || sc == TAB) sel = (sel + 1) % (int)bs.size();
+    else if (sc == ENTER || sc == KPENTER) press(bs[std::min(sel, (int)bs.size() - 1)], st);
     else if (sc == ESC) press(st.phase == update::Phase::Offer || st.phase == update::Phase::Checking ? B_LATER : st.phase == update::Phase::Downloading ? B_CANCEL : B_OK, st);
     return true;
 }
