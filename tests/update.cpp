@@ -848,9 +848,16 @@ SCENARIO(updGithub, "update/github", "GitHub Releases' layout on a local server:
     }
     // The .deb's card on the same release: the two ways, never a swap.
     {
+        // The marker where this platform's detectInstall reads it (on a Mac, inside the bundle's Resources), so the flow is the
+        // .deb's on every OS rather than a dev build's.
         TempDir d("github-deb");
-        put(d.path + "/cz-install.txt", "layout deb\n");
-        update::testSetup(cfg + "-deb", d.path, {pubOf(seed)});
+#ifdef __APPLE__
+        const std::string debExeDir = d.path + "/CrumpleZone.app/Contents/MacOS", debMarker = d.path + "/CrumpleZone.app/Contents/Resources/cz-install.txt";
+#else
+        const std::string debExeDir = d.path, debMarker = d.path + "/cz-install.txt";
+#endif
+        put(debMarker, "layout deb\n");
+        update::testSetup(cfg + "-deb", debExeDir, {pubOf(seed)});
         std::string a0 = "crumplezone", a1 = "--update-url", a2 = srv.url("/rel" + repo + "/latest/download/update-manifest.txt");
         char* argv[] = {&a0[0], &a1[0], &a2[0]};
         update::init(3, argv, 8);
@@ -862,9 +869,9 @@ SCENARIO(updGithub, "update/github", "GitHub Releases' layout on a local server:
                   st.message.find("INSTALLED FROM THE .DEB") != std::string::npos && st.message.find("PER-USER INSTALL") != std::string::npos &&
                       st.message.find("INSTALL.SH") != std::string::npos, st.message);
         ctx.check(".deb: the link is that release's .deb", st.link == srv.url("/rel" + repo + "/download/v9.9.9/CrumpleZone-9.9.9-linux.deb"), st.link);
-        ctx.check(".deb: its folder untouched", get(d.path + "/cz-install.txt") == "layout deb\n" && !fs::exists(d.path + ".previous"));
+        ctx.check(".deb: its folder untouched", get(debMarker) == "layout deb\n" && !fs::exists(d.path + ".previous"));
         update::dismiss();
-        update::testSetup(cfg + "-deb", d.path, {pubOf(seed)});
+        update::testSetup(cfg + "-deb", debExeDir, {pubOf(seed)});
         update::init(3, argv, 8);
         update::checkOnLaunch();
         waitFor({Phase::Info, Phase::Offer}, 2);

@@ -106,6 +106,10 @@ int main() {
         std::puts("PASS optional anisotropy: EXT, ARB and unsupported drivers");
         originalCheck = gl::CheckFramebufferStatus;
         gl::CheckFramebufferStatus = checkFramebuffer;
+        // The scanned rock hulls, as the game has them (main.cpp): the worlds' rocks are the scans, drawn as prop instances. Without
+        // them every rock is a code-made one meshed into the one scenery buffer: a procedural window's ~140k rocks came to over 10 GB of
+        // vertices (GL_OUT_OF_MEMORY on a GPU, a crash in llvmpipe).
+        props::setActiveRockScans(&props::sharedHullLibrary());
         Sim sim;
         sim.setupEmpty();
         sim.addCar(vehicleCatalog()[0], V3(-40, 0.05, -40), 0, V3(0.4, 0.5, 0.6));

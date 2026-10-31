@@ -169,15 +169,45 @@ void expandPaint(int paint, float w){
 }
 
 // ---- Sampling ----
-// One tap, or two of different size and turn blended by a noise and put back to the layer's contrast.
-vec4 planarTap(sampler2DArray s, float L, vec2 p, float scale, vec2 gx, vec2 gy, float m, vec4 avg, bool two){
-  vec4 a = textureGrad(s, vec3(p * scale, L), gx * scale, gy * scale);
-  if (!two) return a;
-  const mat2 R = mat2(0.8, 0.6, -0.6, 0.8);
-  float s2 = scale * 0.73;
-  vec4 b = textureGrad(s, vec3(R * p * s2 + vec2(0.37, 0.71), L), R * gx * s2, R * gy * s2);
-  float k = inversesqrt((1.0 - m) * (1.0 - m) + m * m);
-  return avg + (mix(a, b, m) - avg) * k;
+// Anti-tiling: hex tiling (Mikkelsen), with a random turn (0..360 degrees), flip and offset from a hash of each hex cell.
+// Three taps, blended by the triangle grid's weights (cells overlap, so no seam shows), and put back to the layer's contrast.
+// The turn is the same for a layer's albedo and its normal map: a normal map's xy is turned back (by the transpose of the
+// turn the lookup took, the flip included) so the lighting stays right. One tap further than 250 m (the layer eases to
+// its average there; LOW and POTATO take the plain tap).
+vec3 hexHash(vec2 c){
+  vec3 q = fract(vec3(c.x * 0.1031, c.y * 0.1030, c.x * 0.0973 + c.y * 0.1099));
+  q += dot(q, q.yzx + 33.33);
+  return fract((q.xxy + q.yzz) * q.zyx);
+}
+mat2 hexTurn(vec3 h){
+  float a = h.x * 6.2831853, c = cos(a), s = sin(a);
+  return mat2(c, s, -s, c) * mat2(h.y < 0.5 ? -1.0 : 1.0, 0.0, 0.0, 1.0);
+}
+vec4 hexOne(sampler2DArray s, float L, vec2 uv, vec2 gx, vec2 gy, vec2 vtx, bool nrm){
+  vec3 h = hexHash(vtx);
+  mat2 M = hexTurn(h);
+  vec4 t = textureGrad(s, vec3(M * uv + h.yz * 7.0, L), M * gx, M * gy);
+  if (nrm) t.xy = (vec2(0.5) + (t.xy - 0.5) * M) ;  // (row vector times M: Mᵀ of the column vector)
+  return t;
+}
+vec4 planarTap(sampler2DArray s, float L, vec2 p, float scale, vec2 gx, vec2 gy, vec4 avg, bool hex, bool nrm){
+  vec2 uv = p * scale, dx = gx * scale, dy = gy * scale;
+#if GQ >= 2
+  if (hex) {
+    vec2 st = uv * 0.8660254;  // (a hex cell about 1.15 of the image across)
+    vec2 sk = vec2(st.x, -0.57735027 * st.x + 1.15470054 * st.y) * 2.0;
+    vec2 base = floor(sk), fr = sk - base;
+    float z = 1.0 - fr.x - fr.y;
+    float sg = step(0.0, -z), s2 = 2.0 * sg - 1.0;
+    vec3 w = vec3(-z * s2, sg - fr.y * s2, sg - fr.x * s2);
+    vec4 a = hexOne(s, L, uv, dx, dy, base + vec2(sg), nrm) * w.x
+           + hexOne(s, L, uv, dx, dy, base + vec2(sg, 1.0 - sg), nrm) * w.y
+           + hexOne(s, L, uv, dx, dy, base + vec2(1.0 - sg, sg), nrm) * w.z;
+    float k = inversesqrt(dot(w, w));
+    return avg + (a - avg) * k;
+  }
+#endif
+  return textureGrad(s, vec3(uv, L), dx, dy);
 }
 // World direction of a tangent-space normal t (OpenGL: +y toward the top of the image) in a frame of
 // right R, up U, out N, whiteout-blended onto the surface normal g.
@@ -314,7 +344,6 @@ void main(){
 #endif
   // ---- Photo layers ----
   bool two = uGroundQ >= 2 && dist < 250.0;
-  float mix2 = 0.15 + 0.7 * smoothstep(0.25, 0.75, vnoise(p * 0.11 + 4.0));
   float wTop = smoothstep(0.55, 0.93, N0.y);  // how much the top-down mapping counts on a slope
   bool steepFace = uGroundQ >= 2 && wTop < 0.999 && dist < 400.0;
 #if GQ >= 2
@@ -328,7 +357,7 @@ void main(){
     int v = selV[k];
     Lr[k] = float(kVLayer[v]); scl[k] = 1.0 / kVTile[v];
     avgA[k] = textureLod(uGroundA, vec3(0.5, 0.5, Lr[k]), 12.0);
-    vec4 a = planarTap(uGroundA, Lr[k], p, scl[k], dPx.xz, dPy.xz, mix2, avgA[k], two);
+    vec4 a = planarTap(uGroundA, Lr[k], p, scl[k], dPx.xz, dPy.xz, avgA[k], two, false);
     if (steepFace) {
       vec4 sd = vec4(0.0);
       if (sideX.w > 0.02) sd += sideTap(uGroundA, Lr[k], sideX, scl[k]) * sideX.w;
@@ -362,7 +391,7 @@ void main(){
 #ifdef X_NONORM
     vec4 b = vec4(0.5, 0.5, 0.7, 1.0);
 #else
-    vec4 b = planarTap(uGroundB, Lr[k], p, scl[k], dPx.xz, dPy.xz, mix2, textureLod(uGroundB, vec3(0.5, 0.5, Lr[k]), 12.0), two);
+    vec4 b = planarTap(uGroundB, Lr[k], p, scl[k], dPx.xz, dPy.xz, textureLod(uGroundB, vec3(0.5, 0.5, Lr[k]), 12.0), two, true);
 #endif
     float st = kVBump[v] * distFade;
     vec3 nY = reorient(tangentNormal(b, st), vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, -1.0), vec3(0.0, 1.0, 0.0), N0);

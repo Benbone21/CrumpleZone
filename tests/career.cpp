@@ -12,6 +12,7 @@
 #include "../src/platform.h"
 #include "../src/walker.h"
 #include "../src/onemap.h"
+#include "../src/repairdeal.h"
 #include "harness.h"
 
 namespace {
@@ -318,4 +319,36 @@ SCENARIO(careerProfileBrokenOld, "career/profile-broken-old", "A broken or empty
     e.cash = 9;
     e.loadProfile();
     ctx.check("a failed load leaves the career as it was", e.cash == 9);
+}
+
+SCENARIO(careerRepairDeal, "career/repair-deal", "Career R costs: repairing on the spot is dearer than respawning at a station, both grow with the damage, and a player who can't pay (or has no station) is refused with the cash untouched") {
+    using namespace repairdeal;
+    ctx.check("on the spot costs more than the station at every damage",
+              price(SPOT, 0) > price(STATION, 0) && price(SPOT, 0.25) > price(STATION, 0.25) && price(SPOT, 0.5) > price(STATION, 0.5) && price(SPOT, 5) > price(STATION, 5));
+    ctx.check("both grow with the damage", price(SPOT, 0.1) < price(SPOT, 0.4) && price(STATION, 0.1) < price(STATION, 0.4));
+    ctx.check("capped at a full damage bar", price(SPOT, 0.5) == price(SPOT, 3) && price(STATION, 0.5) == price(STATION, 3));
+    ctx.check("bad damage values are priced as none", price(SPOT, -1) == price(SPOT, 0) && price(SPOT, NAN) == price(SPOT, 0));
+    ctx.check("nothing is free", price(STATION, 0) > 0);
+
+    Career c;
+    c.startFresh(DIFF_MEDIUM);
+    c.on = true;
+    std::string why;
+    const int spot = price(SPOT, 0.3), stat = price(STATION, 0.3);
+    ctx.check("paid on the spot", pay(c, SPOT, 0.3, true, why) && c.cash == 1000 - spot, std::to_string(c.cash) + " " + why);
+    ctx.check("paid at the station", pay(c, STATION, 0.3, true, why) && c.cash == 1000 - spot - stat, std::to_string(c.cash) + " " + why);
+
+    c.cash = stat;  // exactly enough for the station, short of the spot
+    ctx.check("can't afford the spot repair", !pay(c, SPOT, 0.3, true, why) && c.cash == stat && why.find("AFFORD") != std::string::npos, why);
+    ctx.check("exact cash is enough", pay(c, STATION, 0.3, true, why) && c.cash == 0, why);
+    ctx.check("broke: refused, still $0", !pay(c, STATION, 0.3, true, why) && c.cash == 0);
+
+    c.cash = 5000;
+    ctx.check("no station on the map: the respawn is refused, free", !pay(c, STATION, 0.3, false, why) && c.cash == 5000 && why.find("NO REPAIR STATION") != std::string::npos, why);
+    ctx.check("the spot repair needs no station", pay(c, SPOT, 0.3, false, why) && c.cash == 5000 - spot);
+
+    // Hardcore's $500: a wreck can still be towed, but not repaired by a mechanic on the trail.
+    c.startFresh(DIFF_HARDCORE);
+    ctx.check("hardcore, wrecked: the tow is affordable, the call-out is not", price(STATION, 0.5) <= c.cash && price(SPOT, 0.5) > c.cash);
+    ctx.check("the lines show the prices", lineSpot(0.3).find("$" + std::to_string(spot)) != std::string::npos && lineStation(0.3).find("$" + std::to_string(stat)) != std::string::npos);
 }

@@ -46,6 +46,7 @@
 #include "jobs.h"
 #include "career.h"
 #include "careersession.h"
+#include "repairdeal.h"
 #include "garageshop.h"
 #include "garageshopdraw.h"
 #include "interact.h"
@@ -1418,12 +1419,12 @@ void drawLevelHud(Renderer& r, const LevelRun& run, const Sim& sim, const View& 
     }
 }
 
-void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
+void drawHelp(Renderer& r, float u, int W, int H, bool mph, bool career) {
     // (The keys are the current bindings: what the player set under Settings > Controls > Keyboard keybinds.)
     const std::string sp = " ";
     const std::vector<std::pair<std::string, std::string>> keys = {
         {K(KA_THROTTLE) + sp + K(KA_BRAKE), "DRIVE / BRAKE / REVERSE"}, {K(KA_STEER_LEFT) + sp + K(KA_STEER_RIGHT), "STEER"},
-        {K(KA_HANDBRAKE), "HANDBRAKE"},                                  {K(KA_REPAIR), "REPAIR IN PLACE (TWICE: RESPAWN)"},
+        {K(KA_HANDBRAKE), "HANDBRAKE"},                                  {K(KA_REPAIR), career ? "PAID REPAIR: ON THE SPOT, OR RESPAWN AT A STATION" : "REPAIR IN PLACE (TWICE: RESPAWN)"},
         {K(KA_FLIP), "BACK ON ITS WHEELS"},                              {K(KA_NEXT_VEHICLE), "NEXT VEHICLE (ON FOOT: TRUCK INVENTORY, " + K(KA_INVENTORY) + ")"},
         {"HOLD " + K(KA_INTERACT), "ON FOOT: GRAB THE WINCH LINE, WALK IT OUT, HOOK IT (SAME TO UNHOOK)"},                           {K(KA_WINCH_IN) + " / " + K(KA_WINCH_OUT), "WINCH IN / OUT (" + K(KA_WINCH_SLOWER) + " " + K(KA_WINCH_FASTER) + " = SPEED)"},
         {K(KA_STRAP), "TOW STRAP: GET OUT, HOLD " + K(KA_INTERACT) + " AT A POINT"},       {K(KA_SWAY), "FRONT SWAY BAR DISCONNECT"},
@@ -1719,7 +1720,7 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
         const float ds = px(1.2f * u);
         centeredPill(r, 10 * u + (r.textWidth("DEV KEYS", ds) + 14 * ds) / 2, 8 * u, ds, "DEV KEYS", 0.35f, 0.18f, 0.0f, 1, 1.0f, 0.75f, 0.3f);
     }
-    if (hud.showHelp) pad::ui.last ? drawPadHelp(r, u, W, H) : drawHelp(r, u, W, H, mph);
+    if (hud.showHelp) pad::ui.last ? drawPadHelp(r, u, W, H) : drawHelp(r, u, W, H, mph, careerRun.profile.on);
 }
 
 }  // namespace
@@ -2037,6 +2038,7 @@ int main(int argc, char** argv) {
     auto saveCareer = [&]() {
         if (!careerQuiet && career.on && !profileDamaged) career.saveProfile();
     };
+    bool repairAsk = false;  // career: R's confirmation is up (repairdeal.h): 1 repairs on the spot, 2 respawns repaired at the nearest station, Esc cancels
     std::vector<CacheSpot> caches;  // this map's supply caches (a career's)
     int cachesMap = -1;
     AnchorStock anchorSeen;  // the career's anchor gear as the sim last had it
@@ -2275,6 +2277,26 @@ int main(int argc, char** argv) {
     };
     applySettings();
     gKeys = &settings.keys;
+    // Pays for the choice and does it; says what happened.
+    auto repairDeal = [&](repairdeal::Choice ch) {
+        repairAsk = false;
+        Car& pc = sim.cars[sim.player];
+        const int st = sim.nearestStation(pc.frame().com);
+        std::string why;
+        if (!repairdeal::pay(career, ch, pc.damage, st >= 0, why)) {
+            hud.toast(why);
+            return;
+        }
+        if (ch == repairdeal::STATION) {
+            const Station& s = sim.world.stations[st];
+            sim.teleportPlayer(s.p.x, s.p.z, s.yaw);
+            sim.repairCar(sim.player);
+        } else {
+            sim.recoverPlayer();
+        }
+        saveCareer();
+        hud.toast(why);
+    };
     // The garage: in a career only at a repair station; in sandbox anywhere. False (and says why) if it didn't open.
     auto openGarage = [&]() {
         const Car& c = sim.cars[sim.player];
@@ -2562,11 +2584,38 @@ int main(int argc, char** argv) {
         fx.clear();
         cam.initialized = false;
     };
+    auto removeRemotes = [&]() {
+        for (int i = (int)sim.cars.size() - 1; i >= 0; i--)
+            if (sim.cars[i].remote) {
+                sim.carRemoved(i);
+                sim.cars.erase(sim.cars.begin() + i);
+                if (sim.player > i) sim.player--;
+            }
+    };
+    // Out of the multiplayer session (docs/plans/notes-backlog.md, "Multiplayer: badly broken"). A host ends it for everyone
+    // (each guest is told `why` and goes back to the menu; the code goes); a guest just leaves. Nothing of it stays: the others'
+    // vehicles go, and a guest's world was the host's, so the next one is its own again (its seed, its edits: a fresh build).
+    auto leaveSession = [&](const std::string& why) {
+        const bool wasGuest = net.role == NetSession::CLIENT || !net.ended.empty();
+        if (net.active()) net.close(why);
+        removeRemotes();
+        if (wasGuest) {
+            World::setSessionSections({});
+            World::procSeed = settings.procSeed, World::procOriginSet = false;
+            worldPick = -1;  // (not the pick it looks like: starting anything builds this player's own)
+        }
+    };
     auto loadMap = [&](int m, bool standalone = false) {
         endCareer();  // (another map, or another place on this one: the world's saved as it stands now)
         World::useLocalEdits = net.role != NetSession::CLIENT;  // (a guest builds the host's: its edited sections came with the welcome, World::setSessionSections)
         const int model = std::max(0, sim.cars[sim.player].spec->model);
         const bool same = !campWorld && onBigMapAlready(bigHome, sim.world, m, standalone);
+        // A session is one world: the host going to another ends it (the guests are told and go back to the menu; hosting
+        // again is a fresh session with a new code), so nobody is left in the old world sharing pings and the map with this one.
+        if (!same && net.role == NetSession::HOST) {
+            leaveSession("the host went to another world");
+            hud.toast("MULTIPLAYER SESSION CLOSED: ANOTHER WORLD");
+        }
         campWorld = false;
         procStream.reset();  // (its worker builds a window of its own: dropped before the world goes)
         renderer.waitStreaming();  // (its background streaming reads the world)
@@ -2591,14 +2640,6 @@ int main(int argc, char** argv) {
         wrapSeen = sim.wrapShift = 0;
         fx.clear();
         cam.initialized = false;
-    };
-    auto removeRemotes = [&]() {
-        for (int i = (int)sim.cars.size() - 1; i >= 0; i--)
-            if (sim.cars[i].remote) {
-                sim.carRemoved(i);
-                sim.cars.erase(sim.cars.begin() + i);
-                if (sim.player > i) sim.player--;
-            }
     };
     auto startHost = [&](int port, bool quietFail = false) {
         const std::string session = !settings.sessionName.empty() ? settings.sessionName
@@ -2681,7 +2722,7 @@ int main(int argc, char** argv) {
         }
         World::setSessionSections(net.sections);
         if (net.map == MAP_PROCEDURAL && net.proc.on) World::procSeed = net.proc.seed, World::procOriginSet = true, World::procOriginX = net.proc.ox, World::procOriginZ = net.proc.oz;  // (the host's window)
-        if (net.map != sim.world.map || net.map == MAP_PROCEDURAL || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map), World::procOriginSet = false;
+        loadMap(net.map), World::procOriginSet = false;  // (always the host's world as it is now, built afresh: never one this machine had up, from an earlier session or its own edits)
         if (net.map == MAP_PROCEDURAL && net.proc.sliding && sim.world.map == MAP_PROCEDURAL) {  // (joined in the 3 s before a slide: make it too)
             net.scheduleShift(net.proc.due, V3((double)(net.proc.ox - net.proc.tx), 0, (double)(net.proc.oz - net.proc.tz)));
             procStream.want(net.proc.seed, net.proc.tx, net.proc.tz);
@@ -3326,9 +3367,8 @@ int main(int argc, char** argv) {
                 break;
             case PauseMenu::LEAVE:
                 closeMenu();
-                net.close();
-                removeRemotes();
-                hud.toast("LEFT THE SESSION");
+                hud.toast(net.role == NetSession::HOST ? "STOPPED HOSTING: EVERYONE WAS SENT BACK TO THE MENU" : "LEFT THE SESSION");
+                leaveSession("");
                 break;
             case PauseMenu::FREE_DRIVE: {
                 closeMenu();
@@ -3469,7 +3509,14 @@ int main(int argc, char** argv) {
                 endCareer();  // (back to the menu: the world's saved; continuing it puts everything back)
                 run.stop();
                 levelHours = -1;
-                if (net.role == NetSession::HOST) net.setLevel("");
+                // Leaving the world leaves its session: a host's ends for everyone (they're told and sent back to the menu, the
+                // code goes), so a world started from the menu is hosted afresh, with a new code, never the old session's.
+                if (net.role == NetSession::HOST) {
+                    hud.toast("MULTIPLAYER SESSION CLOSED");
+                    leaveSession("the host left the game");
+                } else if (net.active() && !net.joining()) {
+                    leaveSession("");
+                }
                 refreshLevels();
                 if (campMenu && !net.active() && !editor.active && !mapLoad.active()) enterCamp();
                 menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), campWorld ? settings.map : sim.world.map);
@@ -4747,6 +4794,12 @@ int main(int argc, char** argv) {
                         shopResult(garageShop.key(sc, career));
                         break;
                     }
+                    if (repairAsk) {  // (career R's confirmation: its own keys; anything else carries on)
+                        const bool pick = gsc == SC_1 || gsc == SC_2, cancel = gsc == SC_ESCAPE || kh.action == KA_REPAIR;
+                        if (pick) repairDeal(gsc == SC_1 ? repairdeal::SPOT : repairdeal::STATION);
+                        else if (cancel) repairAsk = false;
+                        if (pick || cancel) break;
+                    }
                     if (kh.action == KA_CHAT) {
                         coop.typing = true;
                         coop.draft.clear(), coop.draftEd.reset();
@@ -4781,6 +4834,11 @@ int main(int argc, char** argv) {
                                                          : "STEERING ASSIST OFF (FULL LOCK AT ALL SPEEDS)");
                             break;
                         case SC_R:
+                            if (career.on && !run.active()) {  // career: nothing for free; ask what to pay for (repairdeal.h). Sandbox and level runs carry on below
+                                const Car& pc = sim.cars[sim.player];
+                                if (!pc.remote && !pc.isProp() && !walker.active) repairAsk = true;
+                                break;
+                            }
                             // R: fixed up where it stands. R twice quickly: back to where it started
                             // (in a level: back to the grid, the attempt starts again).
                             if (hud.confirmReset > 0) {
@@ -5458,7 +5516,7 @@ int main(int argc, char** argv) {
                     run.stop();
                     World::setSessionSections(net.sections);
                     if (net.map == MAP_PROCEDURAL && net.proc.on) World::procSeed = net.proc.seed, World::procOriginSet = true, World::procOriginX = net.proc.ox, World::procOriginZ = net.proc.oz;  // (the host's window)
-                    if (net.map != sim.world.map || net.map == MAP_PROCEDURAL || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map), World::procOriginSet = false;
+                    loadMap(net.map), World::procOriginSet = false;  // (always the host's world as it is now, built afresh: never one this machine had up, from an earlier session or its own edits)
                     if (net.map == MAP_PROCEDURAL && net.proc.sliding && sim.world.map == MAP_PROCEDURAL) {  // (joined in the 3 s before a slide: make it too)
                         net.scheduleShift(net.proc.due, V3((double)(net.proc.ox - net.proc.tx), 0, (double)(net.proc.oz - net.proc.tz)));
                         procStream.want(net.proc.seed, net.proc.tx, net.proc.tz);
@@ -5482,6 +5540,15 @@ int main(int argc, char** argv) {
                 }
             }
             if (!net.joining()) net.receive(sim, netNow);
+            if (!net.ended.empty() && !net.active()) {  // the session ended under this guest (the host left or went, a kick, the line died): back to the menu, told why
+                const std::string why = net.ended;
+                leaveSession("");
+                net.ended.clear();
+                if (!menu.open) openMenu();
+                handleMenu(PauseMenu::Result{PauseMenu::MAIN_MENU});
+                hud.toast(why + ": BACK TO THE MAIN MENU");
+                std::printf("net: session ended: %s\n", why.c_str());
+            }
             // Vehicles that changed hands (NetSession::requestTake): the one you asked for, yours someone took, the ride you're on.
             for (const NetSession::CarEvent& e : net.carEvents) {
                 if (rideId && e.oldId == rideId) rideId = e.newId;
@@ -7575,6 +7642,20 @@ int main(int argc, char** argv) {
             const bool padNow = pad::ui.last && padDev.connected();
             invLay = inv.layout(W, H, u, padNow);
             drawInvMenu(renderer, inv, invLay, W, H, padNow);
+        }
+        if (repairAsk && (menu.open || garageShop.open || walker.active)) repairAsk = false;
+        if (repairAsk && !hud.photo) {  // career R: the two paid choices, with the prices and the cash
+            const float u = std::max(0.75f, H / 720.0f);
+            const double dmg = sim.cars[sim.player].damage;
+            const bool haveSt = sim.nearestStation(sim.cars[sim.player].frame().com) >= 0;
+            const int cash = std::max(0, career.cash);
+            auto col = [&](bool ok, float& r, float& g, float& b) { r = ok ? 0.6f : 0.75f, g = ok ? 1.0f : 0.45f, b = ok ? 0.6f : 0.4f; };
+            float r1, g1, b1, r2, g2, b2;
+            col(cash >= repairdeal::price(repairdeal::SPOT, dmg), r1, g1, b1);
+            col(haveSt && cash >= repairdeal::price(repairdeal::STATION, dmg), r2, g2, b2);
+            drawPrompt(renderer, u, W, H, 3, "REPAIR - YOUR CASH $" + std::to_string(cash) + "   " + K(KA_REPAIR) + " OR ESC: CANCEL", 0, 0, 0, 0.7f, 0.9f, 0.92f, 0.95f);
+            drawPrompt(renderer, u, W, H, 2, repairdeal::lineSpot(dmg), 0.02f, 0.08f, 0.04f, 0.9f, r1, g1, b1);
+            drawPrompt(renderer, u, W, H, 1, haveSt ? repairdeal::lineStation(dmg) : std::string("2: NO REPAIR STATION ON THIS MAP"), 0.02f, 0.08f, 0.04f, 0.9f, r2, g2, b2);
         }
         if (garageShop.open && !menu.open) {
             const int at = sim.stationAt(sim.cars[sim.player].frame().com);
