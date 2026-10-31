@@ -193,7 +193,9 @@ SCENARIO(procChunkBudget, "procworld/chunk-budget", "A chunk is made within its 
     const auto t0 = std::chrono::steady_clock::now();
     World w = windowAt(2024, 5000, 5000);
     const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    ctx.metric("a whole window, from nothing cached", s, "s", 0, 20);
+    // (v8: the creeks' second levels read the land their first levels made: a second set of the channels' tiles, ~20% more for a
+    // window from nothing (built on the streaming thread, not in a frame). So 25 s.)
+    ctx.metric("a whole window, from nothing cached", s, "s", 0, 25);
     const auto t1 = std::chrono::steady_clock::now();
     World w2 = windowAt(2024, 5512, 5000);
     const double s2 = std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count();
@@ -777,7 +779,9 @@ SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the
                     const double gx = x - fz * sd * 30, gz = z + fx * sd * 30;
                     if (std::fabs(gx) > half || std::fabs(gz) > half) continue;
                     const double over = lv - w.height(gx, gz);
-                    if (over > 0.1 && w.waterLevel(gx, gz) < lv - 0.1) above++, worstAbove = std::max(worstAbove, over);  // (not where it's a lake's water beside)
+                    // (not where it's a lake's water beside, nor a river's a hand lower: v8, a creek running the last of its way into the river
+                    // beside it, its level kept over the river's at the join, stands up to half a metre over it there)
+                    if (over > 0.1 && w.waterLevel(gx, gz) < lv - 0.5) above++, worstAbove = std::max(worstAbove, over);
                 }
                 // 4 m on downstream: the water is no higher.
                 const double dx = x + fx * 4, dz = z + fz * 4, lv2 = w.waterLevel(dx, dz);

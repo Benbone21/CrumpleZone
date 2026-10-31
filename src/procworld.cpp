@@ -2082,9 +2082,10 @@ bool creekPerchedRaw(const ProcWorld& G, int64_t i, int64_t j) {
     for (size_t k = 0; k < own.size() && !perched; k++) {  // (along its own curve: the middle of each straight piece)
         if (own[k].cls != 1) continue;
         const DrainSeg& e = own[k];
-        for (double t : {0.1, 0.5, 0.9}) {  // (a few points along each straight piece)
+        for (double t : {0.05, 0.3, 0.55, 0.8, 0.95}) {  // (points along each straight piece, 25-35 m out either side)
             const double cx = e.ax + (e.bx - e.ax) * t, cz = e.az + (e.bz - e.az) * t, lv = e.la + (e.lb - e.la) * t;
-            for (int sd = -1; sd <= 1 && !perched; sd += 2) perched = macroNoPerch(G, cx - e.dz * 30 * sd, cz + e.dx * 30 * sd).h < lv - 0.35;
+            for (double off : {25.0, 32.0})
+                for (int sd = -1; sd <= 1 && !perched; sd += 2) perched = macroNoPerch(G, cx - e.dz * off * sd, cz + e.dx * off * sd).h < lv - 0.1;
         }
     }
     blockFor(G, i, j, q)->perched[q].store(perched ? 1 : 0, std::memory_order_relaxed);
@@ -3116,7 +3117,8 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                     // (Water never stands over the valley's land round it: where a creek crosses a bigger one's floor on its way in, the
                     // floor is lower than its water, and it's dry there.)
                     const double valley = blend(i, j, [](const Macro& m) { return m.h; });
-                    if (arg->wet > 0.5 && argD < argHW + 1.5 && h < argL - 0.02 && argL <= valley + 0.3 && !(arg->cls == 1 && creekPerched(*this, arg->ni, arg->nj)) &&
+                    const bool underLake = arg->cls >= 2 && rules().erosion.on > 0 && macroAt(x + arg->dx * 12, z + arg->dz * 12, false).lakeLevel > argL + 0.1;  // (just above a lake standing over it: the river's water gives way to the lake's, no step up)
+                    if (!underLake && arg->wet > 0.5 && argD < argHW + 1.5 && h < argL - 0.02 && argL <= valley + 0.3 && !(arg->cls == 1 && creekPerched(*this, arg->ni, arg->nj)) &&
                         (argL <= valley - 0.2 || argL <= macroAt(x, z, false).h + 0.3)) {  // (near the line, the land itself, not the 4 m lattice's blend: at a channel's sharp turn the blend stands over it)
                         cl.water = argL;
                         const double sp = arg->cls == 3 ? (arg->ford ? 1.9 : 1.5) : arg->cls == 2 ? 1.0 : 0.7;  // (big rivers fast: fastest over a ford's riffle)
