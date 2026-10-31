@@ -17,6 +17,13 @@ namespace {
 // ---- Tires and ground -------------------------------------------------------
 const double kTireK = Wheel::radialStiffness, kTireC = 1500;
 const double kRimK = 3.0e6;          // stiffness once the tire is squashed onto the rim
+// The carcass's hysteresis squashed far (wheelStep): the share of its spring lost unloading, from
+// and to what share of the sidewall's height it's squashed, eased in between these rebound speeds
+// (m/s: a landing's rebound is 1-3 m/s; settling and the step's jitter are far slower).
+const double kTireFoldLoss = 0.7, kTireFoldFrom = 0.15, kTireFoldFull = 0.55, kTireFoldEase0 = 0.1, kTireFoldEase1 = 0.6;
+// Tire load sensitivity: mu falls this much per 100 % of load over the tire's static share
+// (real tires: ~5-15 % from their rated load to twice it).
+const double kTireLoadSens = 0.08;
 const double kRimPopSpeed = 7.0;     // rim strike faster than this (m/s) pinches the tire -> blowout
 const double kStickK = 1.2e5, kStickC = 4000;  // contact-patch static friction (parking, slopes)
 const double kNodeRadius = 0.04;
@@ -1823,7 +1830,19 @@ void Car::wheelStep(double h, const World& w) {
             // Rim contact: once the sidewall is squashed flat, the rim takes the load. (Flat, the
             // folded rubber under the rim is all there is: past it, the rim strikes steel-hard.)
             double rimPen = pen - (R - wh.rimR) * 0.85;
-            double N = pen > 0 ? std::max(0.0, tireK * pen + kRimK * std::max(0.0, rimPen) - kTireC * vn) : 0.0;
+            // The carcass folding: squashed well past its ride deflection (a hard landing, a rock
+            // hit), the sidewall buckles and the rubber and cords scrub on themselves, and it springs
+            // back with much less than it took (rubber's hysteresis at large strain). Coming back up
+            // faster than a slow settle, the carcass gives back up to kTireFoldLoss less, from
+            // kTireFoldFrom of the sidewall's height squashed to kTireFoldFull of it. (A tire at its
+            // ride load sits at ~10-14 % and rolls on as before; slow settling, on a slope or parked,
+            // isn't touched. With the elastic carcass alone, a truck dropped 1 m flat bounced off
+            // its own tires: all four left the ground for ~0.35 s and came up 21-27 cm.)
+            // (On the rubber only: the rim's steel strike stays elastic.)
+            double Fcarcass = tireK * pen;
+            if (vn > kTireFoldEase0)
+                Fcarcass *= 1 - kTireFoldLoss * smoothstep(kTireFoldFrom, kTireFoldFull, pen / std::max(0.01, R - wh.rimR)) * smoothstep(kTireFoldEase0, kTireFoldEase1, vn);
+            double N = pen > 0 ? std::max(0.0, Fcarcass + kRimK * std::max(0.0, rimPen) - kTireC * vn) : 0.0;
             // Soft ground gives way under a hard landing: past what it can bear, the sand
             // (mud, snow) is shoved aside and packed down instead of the tire squashing
             // further, so the tire digs a crater rather than slamming onto its rim, and
@@ -1847,6 +1866,11 @@ void Car::wheelStep(double h, const World& w) {
             V3 fdir = cross(axis, n);
             double fl = len(fdir);
             if (fl > 0.25 && N > 0) {
+                // Load sensitivity: a tire grips with a little less mu the harder it's pressed
+                // (against its share of the car's weight), so weight transfer in a corner or under
+                // the brakes costs some grip, and a heavier truck isn't just a scaled-up light one.
+                const double N0 = mass * 9.81 / std::max<size_t>(wheels.size(), 1);
+                const double loadMu = clampd(1 - kTireLoadSens * (N / std::max(N0, 1.0) - 1), 0.8, 1 + kTireLoadSens);
                 fdir = fdir / fl;
                 V3 sdir = cross(n, fdir);
                 double vx = dot(vc, fdir), vy = dot(vc, sdir);
@@ -1856,7 +1880,7 @@ void Car::wheelStep(double h, const World& w) {
                 double sm = std::sqrt(sx * sx + sy * sy);
                 double fx = 0, fy = 0;
                 if (sm > 1e-9) {
-                    double Fm = mu * grip * N * tireCurve(sm, bite, si.keep);
+                    double Fm = mu * grip * loadMu * N * tireCurve(sm, bite, si.keep);
                     fx = Fm * sx / sm;
                     // Low pressure: the sidewall rolls over in a fast turn.
                     const double roll = clampd((psiDrop - 12) * 0.025, 0, 0.4) * clampd((std::fabs(vx) - 8) / 12, 0, 1);
@@ -1873,7 +1897,7 @@ void Car::wheelStep(double h, const World& w) {
                     wh.stickX = wh.stickX * relax + slipX * h;
                     wh.stickY = wh.stickY * relax + slipY * h;
                     double sxF = -kStickK * wh.stickX - kStickC * slipX, syF = -kStickK * wh.stickY - kStickC * slipY;
-                    double cap = mu * grip * N, mag = std::sqrt(sxF * sxF + syF * syF);
+                    double cap = mu * grip * loadMu * N, mag = std::sqrt(sxF * sxF + syF * syF);
                     if (mag > cap) {  // breaking loose: the patch slides, deflection stays at the limit
                         sxF *= cap / mag;
                         syF *= cap / mag;
