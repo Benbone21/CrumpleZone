@@ -204,3 +204,78 @@ SCENARIO(loadSensitivity, "tires/load-sensitivity", "A tire's grip coefficient f
     std::printf("LOADMU Bronco slides on locked wheels at %.2f g, %.2f g 60 %% heavier (x%.3f)\n", mu1, mu2, mu2 / std::max(mu1, 1e-6));
     ctx.metric("grip 60 % heavier, against its own (x)", mu2 / std::max(mu1, 1e-6), "", 0.85, 0.97);
 }
+
+// Low-speed traction: a Bronco in 4L first with both lockers, flat out against a strap to a load
+// cell behind it, tires spinning: what it pulls, over its weight. That's about the steepest bank
+// it can walk up (its tangent). Real all-terrains at street
+// pressure pull ~0.65-0.75 of their weight on dry dirt and ~0.55-0.65 on loose gravel (what
+// the soil shears at); aired down a little more on loose ground, not much (the patch is
+// longer, the soil isn't stronger). (Before: 0.83 on dirt, 0.98 aired down, gravel 0.72 and 0.88: it walked up dirt
+// banks no real truck climbs.)
+namespace {
+double drawbar(Ctx& ctx, const VehicleSpec& spec, V3 at, double psi) {
+    ctx.sim.cars.clear();
+    Car& c = ctx.add(spec, at.x, at.z, 0);
+    ctx.focus(c);
+    ctx.run(1.0);
+    c.tirePsi = psi;
+    for (int m = (int)driveModes(spec.transfer).size() - 1; m >= 0; m--)
+        if (driveModes(spec.transfer)[m].low) {
+            c.setDriveMode(m);
+            break;
+        }
+    c.setLocker(true, true);
+    c.setLocker(false, true);
+    c.tractionControl = false;
+    c.manualShift = true;
+    c.gear = 1;
+    // A strap from the tail to a load cell behind it: slack for the first 0.3 m, then a stiff
+    // spring (damped, so it doesn't bounce) pulling back on every node by its mass. The most it
+    // holds for half a second, over its weight.
+    const Frame f0 = c.frame();
+    const V3 fwd = norm(V3(f0.fwd.x, 0, f0.fwd.z));
+    c.extForce.assign(c.nodes.size(), V3());
+    double sum = 0;
+    int n = 0;
+    const double t0 = ctx.t;
+    ctx.run(6.0, [&] {
+        c.throttle = 1, c.brake = 0, c.handbrake = 0, c.steer = 0;
+        const Frame f = c.frame();
+        const double x = dot(f.com - f0.com, fwd) - 0.3, v = dot(f.vel, fwd);
+        const double F = x > 0 ? std::max(0.0, 6e4 * x + 1.5e4 * v) : 0.0;
+        for (size_t i = 0; i < c.nodes.size(); i++) c.extForce[i] = -fwd * (F * c.nodes[i].m / c.mass);
+        if (ctx.t - t0 > 3.0) sum += F, n++;  // (steady: the tires spinning against the strap)
+    });
+    c.extForce.clear();
+    return sum / std::max(1, n) / (c.mass * 9.81);
+}
+}  // namespace
+
+SCENARIO(lowSpeedPull, "offroad/drawbar-pull", "Bronco in 4L with lockers, crawling, pulled back until it's dragged: on dry dirt it pulls ~0.65-0.75 of its weight, on loose gravel ~0.55-0.65; airing down to 15 psi adds only a little on loose ground") {
+    const VehicleSpec& spec = vehicleCatalog()[2];
+    const V3 gravel = ctx.sim.world.courseStart(SURF_GRAVEL) + V3(10, 0, 0);
+    const double g35 = drawbar(ctx, spec, gravel, spec.tirePsi), g15 = drawbar(ctx, spec, gravel, 15);
+    // Flat dry dirt: on the mountain map, the first patch of it ~12 m across that's level.
+    ctx.sim.cars.clear();
+    ctx.sim.world = World(MAP_MOUNTAIN);
+    const World& w = ctx.sim.world;
+    V3 dirt;
+    bool found = false;
+    for (double r = 0; r < 600 && !found; r += 8)
+        for (double a = 0; a < 6.28 && !found; a += 8 / std::max(r, 8.0)) {
+            const double x = r * std::cos(a), z = r * std::sin(a);
+            bool ok = true;
+            for (int i = -1; i <= 1 && ok; i++)
+                for (int j = -1; j <= 1 && ok; j++)
+                    ok = w.surfaceAt(x + 6 * i, z + 6 * j) == SURF_DIRT && w.normal(x + 6 * i, z + 6 * j).y > 0.995 &&
+                         std::fabs(w.height(x + 6 * i, z + 6 * j) - w.height(x, z)) < 0.3;
+            if (ok) dirt = V3(x - 3, 0, z), found = true;
+        }
+    ctx.check("found a level patch of dirt on the mountain map", found);
+    const double d35 = found ? drawbar(ctx, spec, dirt, spec.tirePsi) : 0, d15 = found ? drawbar(ctx, spec, dirt, 15) : 0;
+    std::printf("PULL Bronco 4L lockers: dirt %.2f (15 psi %.2f), gravel %.2f (15 psi %.2f) of its weight\n", d35, d15, g35, g15);
+    ctx.metric("dry dirt at 35 psi: pull over weight", d35, "", 0.62, 0.78);
+    ctx.metric("loose gravel at 35 psi: pull over weight", g35, "", 0.50, 0.66);
+    ctx.metric("dirt aired down to 15 psi: pull against 35 psi (x)", d15 / std::max(d35, 1e-6), "", 1.0, 1.15);
+    ctx.metric("gravel aired down to 15 psi: pull against 35 psi (x)", g15 / std::max(g35, 1e-6), "", 1.0, 1.15);
+}

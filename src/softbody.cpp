@@ -24,6 +24,9 @@ const double kTireFoldLoss = 0.7, kTireFoldFrom = 0.15, kTireFoldFull = 0.55, kT
 // Tire load sensitivity: mu falls this much per 100 % of load over the tire's static share
 // (real tires: ~5-15 % from their rated load to twice it).
 const double kTireLoadSens = 0.08;
+// Airing down on loose ground (dirt, gravel, scree, grass, sand, mud, snow): the most extra grip
+// the longer, softer patch gets there (~8 psi down).
+const double kAirDownLooseMax = 0.10;
 const double kRimPopSpeed = 7.0;     // rim strike faster than this (m/s) pinches the tire -> blowout
 const double kStickK = 1.2e5, kStickC = 4000;  // contact-patch static friction (parking, slopes)
 const double kNodeRadius = 0.04;
@@ -1806,7 +1809,10 @@ void Car::wheelStep(double h, const World& w) {
                 const double depth = w.waterLevel(c.x, c.z) - (c.y - R);
                 if (depth > 0) grip *= 1 - 0.3 * smoothstep(0, 0.4, depth);
             }
-            if (ct.surface != SURF_PAVED && ct.surface != SURF_WET && ct.surface != SURF_ICE) grip *= (1 + 0.012 * psiDrop) * spec->looseGrip;
+            // (On loose ground the longer patch only helps up to what the soil itself holds: the
+            // bonus stops at kAirDownLooseMax. On rock the soft tread keeps wrapping the edges.)
+            if (ct.surface != SURF_PAVED && ct.surface != SURF_WET && ct.surface != SURF_ICE)
+                grip *= (1 + (hardGround(ct.surface) ? 0.012 * psiDrop : std::min(0.012 * psiDrop, kAirDownLooseMax))) * spec->looseGrip;
             // Mud packed into the tread turns it into a slick.
             grip *= 1 - (tread == TIRE_MUD_TERRAIN ? 0.25 : tread == TIRE_CHAINS ? 0.15 : tread == TIRE_RACE_SLICK ? 0.5 : 0.4) * wh.clog;
             // Standing water: past ~80 km/h the tread can't push it out of the way fast
