@@ -259,7 +259,16 @@ public:
     bool beginJoin(const std::string& address, const std::string& name, double timeout = 5.0);
     int pollJoin();
     bool joining() const { return joinStage != 0; }
-    void close();
+    // Ends the session, for everyone in it when this is the host: every guest is told `why` ("" = "the host closed the game")
+    // and leaves (their game takes them back to the menu: `ended`), and the join code goes. A session is one world: a host that
+    // goes to another (or to the main menu) closes it, and hosting again makes a fresh one, with a new code. Nothing of it is
+    // kept: the next session, hosted or joined, has its own host's map, procedural window, level and code.
+    void close(const std::string& why = "");
+    // Client: why the session ended under us (the host closed it or went, we were removed, the connection died), in plain
+    // words, once we were in; "" while it's on or when we left ourselves. The game takes the player back to the main menu and
+    // says this, then clears it.
+    std::string ended;
+    uint32_t sessionKey() const { return sessionId; }  // host: this session's random id (a fresh one each host(); 0: none)
     bool active() const { return role != OFF; }
     int playerCount() const;
     int port() const { return hostPort; }  // host: the game port it listens on (0: not hosting)
@@ -269,6 +278,10 @@ public:
     // host's parked trucks and crash props are the shared ones) and parks it beside the
     // spawn.
     void adopt(Sim& sim);
+    // Where player `self` starts in a session: at the world's spawn area like everyone, on a spot of its own that's clear of
+    // every vehicle there but sim.cars[skip] (its own): the spawn pad's places first (from its own round), else rings round the
+    // spawn, on open ground (not in water, not on a rock or a prop). False: nowhere clear was found (p is beside the spawn).
+    static bool spawnSpot(const Sim& sim, int self, int skip, V3& p, double& yaw);
     // Every frame before the physics: reads the network and applies other players'
     // vehicles, lines and states.
     void receive(Sim& sim, double now);
