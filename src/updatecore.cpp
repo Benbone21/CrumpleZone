@@ -36,8 +36,9 @@ struct Ver {
     std::vector<long> nums;
     std::string suffix;
 };
-Ver parseVer(const std::string& v) {
+Ver parseVer(const std::string& tag) {
     Ver r;
+    const std::string v = !tag.empty() && (tag[0] == 'v' || tag[0] == 'V') ? tag.substr(1) : tag;  // (a tag's name, v0.4.10, is that version)
     const size_t dash = v.find('-');
     const std::string head = v.substr(0, dash);
     r.suffix = dash == std::string::npos ? "" : v.substr(dash + 1);

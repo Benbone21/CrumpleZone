@@ -393,10 +393,11 @@ SCENARIO(updVersions, "update/versions", "release versions compare by number, a 
     ctx.check("0.4.1 > 0.4.0", compareVersions("0.4.1", "0.4.0") > 0);
     ctx.check("0.10.0 > 0.9.9 (numbers, not text)", compareVersions("0.10.0", "0.9.9") > 0);
     ctx.check("1.0 == 1.0.0", compareVersions("1.0", "1.0.0") == 0);
+    ctx.check("a tag's v: v0.4.10 == 0.4.10, and newer than 0.0.0-a", compareVersions("v0.4.10", "0.4.10") == 0 && compareVersions("0.0.0-a", "v0.4.10") < 0);
     ctx.check("0.4.1-rc1 < 0.4.1", compareVersions("0.4.1-rc1", "0.4.1") < 0 && compareVersions("0.4.1-rc1", "0.4.0") > 0);
     ctx.check("0.0.0-dev < 0.4.0", compareVersions("0.0.0-dev", "0.4.0") < 0);
     ctx.check("junk < anything", compareVersions("x.y", "0.0.1") < 0 && compareVersions("0.0.1", "") > 0);
-    ctx.check("valid", validVersion("0.4.1") && validVersion("1.2.3-beta.2") && !validVersion("v0.4.1") && !validVersion("0..1") && !validVersion("1.2.3-") &&
+    ctx.check("valid", validVersion("0.4.1") && validVersion("1.2.3-beta.2") && validVersion("v0.4.1") && !validVersion("0..1") && !validVersion("1.2.3-") &&
                            !validVersion("1.2.3.4.5"));
 }
 
