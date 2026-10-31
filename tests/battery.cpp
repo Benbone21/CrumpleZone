@@ -173,7 +173,7 @@ SCENARIO(batteryNet, "net/battery-cables", "Jumper cables between two players' v
     Sim sim2;
     sim2.world = World(MAP_PROVING_GROUND);
     sim2.setupEmpty();
-    sim2.addCar(vehicleCatalog()[2], V3(13.2, 0.5, -8), 0, V3(0.2, 0.2, 0.2));
+    sim2.addCar(vehicleCatalog()[2], V3(10, 0.5, -11.2), 0, V3(0.2, 0.2, 0.2));
     sim2.player = 0;
     NetSession client;
     bool joined = false, joinDone = false;
@@ -221,7 +221,10 @@ SCENARIO(batteryNet, "net/battery-cables", "Jumper cables between two players' v
     ctx.check("each sees the other's vehicle", hostCopy >= 0 && guestCopy >= 0 && ctx.sim.cars[hostCopy].remote && sim2.cars[guestCopy].remote);
     if (hostCopy < 0 || guestCopy < 0) return;
     Car& guestCar = sim2.cars[0];
-    guestCar.respawn(V3(13.2, sim2.world.height(13.2, -8) + 0.5, -8), 0);  // (parked beside the host's, a cable's length apart)
+    // (Parked beside the host's, side by side and a cable's length apart. Both face +x: 3.2 m on along x put its tail inside the
+    // host's nose, and the two shoved each other up on end, a different tumble on each OS's physics: on the Mac the host's copy of
+    // it went under the pavement, or ended where the clamps couldn't be reached.)
+    guestCar.respawn(V3(10, sim2.world.height(10, -11.2) + 0.5, -11.2), 0);
     guestCar.handbrake = 1;
     guestCar.hood.share = 1, guestCar.hood.dir = 0;
     hostCar.hood.share = 1, hostCar.hood.dir = 0;
@@ -250,7 +253,7 @@ SCENARIO(batteryNet, "net/battery-cables", "Jumper cables between two players' v
     const V3 b2 = battery::aim(ctx.sim.cars[hostCopy]);
     standAt(ctx.sim.world, ctx.sim.cars[hostCopy], wk, b2, 1.2);
     said = holdOn(ctx.sim, ia, wk, b2, 6, frame);
-    ctx.check("host takes them off", said == "CABLES OFF", said);
+    ctx.check("host takes them off", said == "CABLES OFF", said + " (cables on: " + std::to_string(ctx.sim.cables.size()) + ")");
     ctx.run(1.0, frame);
     ctx.check("...and the guest's copy goes", sim2.cables.empty());
     // And the pack on the guest's vehicle from the host.
