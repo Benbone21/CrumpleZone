@@ -15,6 +15,7 @@
 #include "../src/net.h"
 #include "../src/netsock.h"
 #include "../src/nettunnel.h"
+#include "../src/procworld.h"
 #include "../src/rendezvous.h"
 #include "../src/sectionfile.h"
 #include "../src/world.h"
@@ -183,9 +184,9 @@ struct Rig {
         while (net::clockNow() - t0 < secs) ctx.step(), frame();
     }
     // Opens the host to friends (with a NAT in front, if asked): the code.
-    std::string open(int slot, bool nat) {
+    std::string open(int slot, bool nat, int map = MAP_PROVING_GROUND) {
         const int port = basePort() + slot * 800 + 2;
-        if (!ctx.check("the host hosts", host.host(port, "HOSTY", MAP_PROVING_GROUND), host.error)) return "";
+        if (!ctx.check("the host hosts", host.host(port, "HOSTY", map), host.error)) return "";
         host.adopt(ctx.sim);
         if (nat) SimNat::get().add(NetSessionCodeTest::udp(host), false);
         ctx.check("and opens to friends", host.openToFriends(), host.codeError);
@@ -424,4 +425,204 @@ SCENARIO(netCodeLive, "net/code-live", "(with CZ_TEST_RENDEZVOUS) a host, a punc
     rig.host.close();
     rig.wall(0.5);
     ctx.check("the host closes: both guests are told", !g.active() && !r.active());
+}
+
+// ---- The owner's report, step by step (docs/plans/notes-backlog.md, "Multiplayer: badly broken", 0.4.9) ----
+// A session is one world. The host leaving it (quitting, the main menu, another world) ends it for everyone: each guest is told
+// why and goes back to the menu (NetSession::ended), and the code goes. Hosting again is a fresh session with a fresh code, and
+// a guest that joins it takes that host's world as it is now (map, procedural seed and window), nothing of an earlier session's.
+namespace {
+bool toldOf(const NetSession& g, const std::string& what) {
+    for (const std::string& e : g.events)
+        if (e.find(what) != std::string::npos) return true;
+    return false;
+}
+// The host on the procedural world, seed `seed`, its window at (ox, oz): what the game sets every frame (main.cpp).
+void procHost(NetSession& h, uint64_t seed, int64_t ox, int64_t oz) {
+    h.proc.on = true, h.proc.gen = proc::genStamp(), h.proc.seed = seed, h.proc.ox = ox, h.proc.oz = oz;
+}
+// A guest joining by the host's address (the LAN list, a typed address) while the rig runs.
+int joinByAddress(Rig& rig, NetSession& g) {
+    if (!g.beginJoin("127.0.0.1:" + std::to_string(rig.host.port()), "ADDRESSY")) return -1;
+    int st = 0;
+    rig.ctx.runUntil(8, [&] { return st != 0; }, [&] {
+        st = g.pollJoin();
+        rig.frame();
+    });
+    if (st > 0) g.adopt(rig.simOf(g));
+    return st;
+}
+bool heardPing(const NetSession& s) {
+    for (const NetSession::GameMsg& m : s.gameIn)
+        if (m.text.rfind("ping", 0) == 0) return true;
+    return false;
+}
+}  // namespace
+
+SCENARIO(netMpHostQuits, "net/mp-host-quits", "step 1: the host quits (or goes to the main menu): every guest, by code or by address, is told and sent back to the menu; the code goes") {
+    ctx.add(vehicleCatalog()[2], 10, -8, 0);
+    Rig rig(ctx, 6);
+    const std::string code = rig.open(6, false);
+    NetSession& a = rig.guest();
+    NetSession& b = rig.guest();
+    NetSession& c = rig.guest();
+    ctx.check("a guest joins by code", rig.join(a, code, 0) > 0, a.error);
+    ctx.check("one by address", joinByAddress(rig, b) > 0, b.error);
+    ctx.check("and one more by code", rig.join(c, code, 0) > 0, c.error);
+    rig.wall(1.5);
+    ctx.check("everyone sees everyone", rig.remotes(ctx.sim) == 3 && rig.remotes(rig.simOf(a)) == 3 && rig.remotes(rig.simOf(b)) == 3);
+    // One guest leaves by itself: no "session ended" for it (its game isn't sent anywhere).
+    c.close();
+    rig.wall(0.5);
+    ctx.check("a guest leaving by itself: nothing to send it back for", c.ended.empty() && !c.active());
+    ctx.check("the others see it go", rig.remotes(ctx.sim) == 2 && rig.remotes(rig.simOf(a)) == 2);
+    // The host quits (main.cpp: MAIN MENU, QUIT and STOP HOSTING all end it).
+    rig.host.close("the host left the game");
+    rig.wall(1.0);
+    ctx.check("the guest by code is out, told the host left (the game sends it to the menu)", !a.active() && a.ended == "THE HOST LEFT THE GAME", a.ended);
+    ctx.check("the guest by address too", !b.active() && b.ended == "THE HOST LEFT THE GAME", b.ended);
+    ctx.check("and both were told in the events", toldOf(a, "THE HOST LEFT THE GAME") && toldOf(b, "THE HOST LEFT THE GAME"));
+    ctx.check("nobody's vehicles linger on a guest", rig.remotes(rig.simOf(a)) == 0 && rig.remotes(rig.simOf(b)) == 0);
+    ctx.check("the code is gone at the backend", rig.backend.codes() == 0, std::to_string(rig.backend.codes()) + " codes");
+    ctx.check("the host keeps nothing of it: no code, no session", rig.host.joinCode.empty() && rig.host.codeState == NetSession::CODE_OFF && rig.host.sessionKey() == 0);
+    NetSession& late = rig.guest();
+    ctx.check("the old code finds no game", rig.join(late, code, 0) < 0 && late.joinFail == NetSession::JF_NOT_FOUND, late.error);
+}
+
+SCENARIO(netMpRehostProc, "net/mp-rehost-proc", "step 2: the host hosts again, on a procedural world: a fresh session and code; the guest takes its seed and window, and host and guest see each other") {
+    ctx.add(vehicleCatalog()[2], 10, -8, 0);
+    Rig rig(ctx, 7);
+    const std::string first = rig.open(7, false);
+    const uint32_t firstSession = rig.host.sessionKey();
+    NetSession& g = rig.guest();
+    ctx.check("a guest in the first session", rig.join(g, first, 0) > 0, g.error);
+    rig.host.close();
+    rig.wall(0.5);
+    ctx.check("the first session ends for it", !g.active() && !g.ended.empty());
+    // Hosting again (the game reopened, or the menu's HOST): the procedural world, seed 4242, its window away from the start.
+    const std::string second = rig.open(7, false, MAP_PROCEDURAL);
+    procHost(rig.host, 4242, 2048, -1024);
+    ctx.check("a new code", !second.empty() && second != first, rv::formatCode(first) + " then " + rv::formatCode(second));
+    ctx.check("a new session", rig.host.sessionKey() != 0 && rig.host.sessionKey() != firstSession);
+    ctx.check("the guest gets in with the new code", rig.join(g, second, 0) > 0, g.error);
+    ctx.check("and is no longer 'ended'", g.ended.empty());
+    ctx.check("it takes the host's procedural world: map, seed, window", g.map == MAP_PROCEDURAL && g.proc.on && g.proc.seed == 4242 && g.proc.ox == 2048 && g.proc.oz == -1024,
+              "map " + std::to_string(g.map) + " seed " + std::to_string(g.proc.seed));
+    rig.wall(1.5);
+    ctx.check("the host sees the guest, the guest sees the host", rig.remotes(ctx.sim) == 1 && rig.remotes(rig.simOf(g)) == 1 && rig.host.players[1].active);
+}
+
+SCENARIO(netMpRehostMap, "net/mp-rehost-map", "step 3: from a procedural session to a built map: the old session ends, the new hosting hands out a new code, the guests load the built map (no procedural window, no old level)") {
+    ctx.add(vehicleCatalog()[2], 10, -8, 0);
+    Rig rig(ctx, 8);
+    const std::string procCode = rig.open(8, false, MAP_PROCEDURAL);
+    procHost(rig.host, 777, 0, 0);
+    rig.host.setLevel("# the procedural session's level\n");
+    NetSession& a = rig.guest();
+    NetSession& b = rig.guest();
+    ctx.check("two guests in the procedural session", rig.join(a, procCode, 0) > 0 && rig.join(b, procCode, 0) > 0, a.error + " / " + b.error);
+    rig.wall(1.0);
+    ctx.check("(they have its world and level)", a.map == MAP_PROCEDURAL && a.proc.seed == 777 && !a.levelText.empty());
+    // The host quits to the main menu and starts a built map: going to another world ends the session (main.cpp, loadMap).
+    rig.host.close("the host went to another world");
+    rig.wall(1.0);
+    ctx.check("both guests are told and out", !a.active() && !b.active() && a.ended == "THE HOST WENT TO ANOTHER WORLD" && b.ended == a.ended, a.ended);
+    ctx.check("the host keeps no procedural window or level for the next session", !rig.host.proc.on && rig.host.levelText.empty());
+    const std::string mapCode = rig.open(8, false, MAP_PROVING_GROUND);
+    ctx.check("starting multiplayer again hands out a NEW code", !mapCode.empty() && mapCode != procCode, rv::formatCode(procCode) + " then " + rv::formatCode(mapCode));
+    NetSession& late = rig.guest();
+    ctx.check("the old code no longer works", rig.join(late, procCode, 0) < 0 && late.joinFail == NetSession::JF_NOT_FOUND, late.error);
+    ctx.check("both guests rejoin with the new one", rig.join(a, mapCode, 0) > 0 && rig.join(b, mapCode, 0) > 0, a.error + " / " + b.error);
+    ctx.check("they load the built map: no procedural world kept from before", a.map == MAP_PROVING_GROUND && b.map == MAP_PROVING_GROUND && !a.proc.on && !b.proc.on);
+    ctx.check("and no level from the old session", a.levelText.empty() && b.levelText.empty());
+    rig.wall(1.5);
+    ctx.check("everyone shows up for everyone", rig.remotes(ctx.sim) == 2 && rig.remotes(rig.simOf(a)) == 2 && rig.remotes(rig.simOf(b)) == 2);
+}
+
+SCENARIO(netMpSeparateWorlds, "net/mp-separate-worlds", "step 4: players no longer in one session share nothing: no pings or vehicles cross between the host's new world and a guest left behind") {
+    ctx.add(vehicleCatalog()[2], 10, -8, 0);
+    Rig rig(ctx, 9);
+    const std::string code = rig.open(9, false);
+    NetSession& g = rig.guest();
+    ctx.check("a guest in", rig.join(g, code, 0) > 0, g.error);
+    rig.wall(1.0);
+    g.sendGame("ping 0 12 34");
+    rig.wall(1.0);
+    ctx.check("(in one session, a ping gets through)", heardPing(rig.host));
+    rig.host.gameIn.clear();
+    // The host goes to another world and hosts it; the guest hasn't rejoined.
+    rig.host.close("the host went to another world");
+    rig.wall(0.5);
+    const std::string code2 = rig.open(9, false, MAP_FRONTIER);
+    g.sendGame("ping 0 56 78");
+    rig.wall(1.0);
+    ctx.check("the guest left behind can't ping the host's new world", !heardPing(rig.host) && !g.active());
+    ctx.check("the host's new session has only the host", rig.host.playerCount() == 1 && !rig.host.players[1].active);  // (the game drops the old session's vehicles: main.cpp leaveSession)
+    rig.host.sendGame("ping 1 1 1");
+    rig.wall(0.5);
+    ctx.check("nor the host the guest", !heardPing(g));
+    ctx.check("the new session is on the new map, with a new code", rig.host.map == MAP_FRONTIER && !code2.empty() && code2 != code);
+}
+
+SCENARIO(netMpFollowHost, "net/mp-follow-host", "step 5: guests always follow the host's CURRENT world: after a procedural session and a built-map one, a rejoin takes the new seed, never the old one, and no guest becomes a host") {
+    ctx.add(vehicleCatalog()[2], 10, -8, 0);
+    Rig rig(ctx, 10);
+    const std::string c1 = rig.open(10, false, MAP_PROCEDURAL);
+    procHost(rig.host, 1111, 0, 0);
+    NetSession& a = rig.guest();
+    NetSession& b = rig.guest();
+    ctx.check("two guests in procedural seed 1111", rig.join(a, c1, 0) > 0 && rig.join(b, c1, 0) > 0 && a.proc.seed == 1111);
+    rig.host.close("the host went to another world");
+    rig.wall(0.8);
+    ctx.check("the guests are out, and neither carries on as a host of the old world", !a.active() && !b.active() && a.role == NetSession::OFF && b.role == NetSession::OFF);
+    ctx.check("their old world's window went with the session", !a.proc.on && !b.proc.on && a.map == 0);
+    const std::string c2 = rig.open(10, false, MAP_PROVING_GROUND);
+    ctx.check("a guest on the built map", rig.join(a, c2, 0) > 0 && a.map == MAP_PROVING_GROUND && !a.proc.on, a.error);
+    rig.host.close("the host went to another world");
+    rig.wall(0.8);
+    const std::string c3 = rig.open(10, false, MAP_PROCEDURAL);
+    procHost(rig.host, 2222, 512, 512);
+    ctx.check("three hostings, three codes", c1 != c2 && c2 != c3 && c1 != c3);
+    ctx.check("both rejoin the new procedural world", rig.join(a, c3, 0) > 0 && rig.join(b, c3, 0) > 0, a.error + " / " + b.error);
+    ctx.check("with the host's new seed and window, not the old 1111", a.proc.seed == 2222 && b.proc.seed == 2222 && a.proc.ox == 512 && b.proc.oz == 512,
+              std::to_string(a.proc.seed) + " / " + std::to_string(b.proc.seed));
+    rig.wall(1.5);
+    ctx.check("all three together", rig.remotes(ctx.sim) == 2 && rig.remotes(rig.simOf(a)) == 2 && rig.remotes(rig.simOf(b)) == 2);
+}
+
+SCENARIO(netMpSpawnSpots, "net/mp-spawn-spots", "spawning: every player at the same spawn area, each on a clear spot of their own (the pad's places, else a ring round the spawn), never on top of another") {
+    for (int pads = 1; pads >= 0; pads--) {
+        const std::string tag = pads ? "on the pad" : "no pad (a ring)";
+        Sim s;
+        s.world = World(MAP_PROVING_GROUND);
+        if (!pads) s.world.spawnPads.clear();
+        s.setupEmpty();
+        const World& w = s.world;
+        s.addCar(vehicleCatalog()[2], V3(w.spawn.x, w.clearY(w.spawn.x, w.spawn.z) + 0.5, w.spawn.z), w.spawnYaw, V3(0.2, 0.2, 0.2));  // (the host, where it started)
+        std::vector<V3> at = {s.cars[0].frame().com};
+        bool allClear = true;
+        for (int self = 1; self < net::kMaxPeers; self++) {
+            // Each guest's own truck: built off to one side, then placed (as adopt() does on its machine, with everyone before it there).
+            s.addCar(vehicleCatalog()[3], V3(300 + 20.0 * self, 5, 300), 0, V3(0.3, 0.3, 0.3));
+            const int mine = (int)s.cars.size() - 1;
+            V3 p;
+            double yaw = 0;
+            allClear &= NetSession::spawnSpot(s, self, mine, p, yaw);
+            s.cars[mine].respawn(V3(p.x, w.clearY(p.x, p.z) + 0.05, p.z), yaw);
+            at.push_back(V3(p.x, 0, p.z));
+        }
+        double nearest = 1e9, farthest = 0;
+        for (size_t i = 0; i < at.size(); i++) {
+            farthest = std::max(farthest, std::hypot(at[i].x - w.spawn.x, at[i].z - w.spawn.z));
+            for (size_t j = i + 1; j < at.size(); j++) nearest = std::min(nearest, std::hypot(at[i].x - at[j].x, at[i].z - at[j].z));
+        }
+        ctx.check(tag + ": a clear spot for each of 8 players", allClear);
+        ctx.metric(tag + ": closest two players", nearest, "m", 5.0, 1e9);
+        ctx.metric(tag + ": farthest from the spawn", farthest, "m", 0, 40);
+        if (!pads) {
+            int dry = 0;
+            for (size_t i = 1; i < at.size(); i++) dry += w.waterLevel(at[i].x, at[i].z) < w.height(at[i].x, at[i].z) + 0.2;
+            ctx.check(tag + ": every spot on dry ground", dry == (int)at.size() - 1);
+        }
+    }
 }

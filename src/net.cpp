@@ -342,12 +342,12 @@ std::string NetSession::ownerName(uint32_t netId) const {
     return o >= 0 && o < net::kMaxPeers && players[o].active ? players[o].name : std::string("?");
 }
 
-void NetSession::close() {
+void NetSession::close(const std::string& why) {
     // Saying goodbye: the guests hear the host is gone (not 15 or 30 s of silence later), the
     // host hears a guest left, and the backend lets the code go.
     if (role == HOST) {
         Writer w;
-        w.str("the host closed the game");
+        w.str(why.empty() ? std::string("the host closed the game") : why);
         const auto bye = frame(MSG_REJECT, w);
         for (Conn* c : conns)
             if (c->hello && !c->kill) sendTo(*c, bye);
@@ -362,6 +362,13 @@ void NetSession::close() {
     if (rvKey && udpFd >= 0) {
         rv::Msg m;
         m.type = rv::RV_CLOSE, m.code = joinCode.empty() ? codeWanted : joinCode, m.key = rvKey;
+        sendBackend(rv::encode(m));
+        sendBackend(rv::encode(m));  // (twice: a lost one would leave the code alive at the backend for 45 s)
+    }
+    if (rvOldKey && udpFd >= 0 && role == HOST) {  // (a code closed to friends earlier, kept for its guests' relay: it goes too)
+        rv::Msg m;
+        m.type = rv::RV_CLOSE, m.code = codeWanted, m.key = rvOldKey;
+        sendBackend(rv::encode(m));
         sendBackend(rv::encode(m));
     }
     for (Conn* c : conns) {
@@ -418,11 +425,29 @@ void NetSession::close() {
     sectionsIn.clear();
     sectionsNext = 0;
     sectionsPending = false;
+    // Nothing of this session's world is kept for the next (docs/plans/notes-backlog.md, "Multiplayer: badly broken"): a game
+    // hosted or joined later has its own host's map, seed and window, level and code, never these.
+    rvOldKey = 0, rvOldNext = 0;
+    codeWanted.clear();
+    keptAs = -1;
+    map = 0;
+    proc = ProcWindow();
+    shiftOn = false;
+    pendingShift = WorldShift();
+    pastShifts.clear();
+    levelText.clear();
+    levelFresh = false;
+    levelIn.clear();
+    levelInSerial = 0, levelInNext = 0;
+    gameIn.clear();
+    sessionId = 0;
+    hostPort = 0;
 }
 
 bool NetSession::host(int port, const std::string& name, int m, int maxP, const std::string& session) {
     close();
     portInUse = false;
+    ended.clear();
     netInit();
     listenFd = newSocket(SOCK_STREAM);
     udpFd = newSocket(SOCK_DGRAM);
@@ -471,7 +496,7 @@ bool NetSession::host(int port, const std::string& name, int m, int maxP, const 
     strikes.clear();
     log.clear();
     refused = 0;
-    sessionId = (uint32_t)std::chrono::steady_clock::now().time_since_epoch().count() * 2654435761u ^ (uint32_t)port;
+    sessionId = (uint32_t)net::random64();  // (a fresh session each time: never the last one's)
     if (!sessionId) sessionId = 1;
     nextBeacon = 0;
     role = HOST;
@@ -501,6 +526,7 @@ bool NetSession::beginJoin(const std::string& address, const std::string& name, 
     passwordIssue = PW_OK;
     joinFail = JF_NONE;
     lostWhy.clear();
+    ended.clear();
     netInit();
     std::string hostName, why;
     int port = 0;
@@ -1695,6 +1721,7 @@ void NetSession::dropConn(size_t i) {
     }
     if (role == CLIENT) {
         events.push_back(lostWhy.empty() ? "LOST THE CONNECTION TO THE HOST" : lostWhy);
+        if (self >= 0) ended = lostWhy.empty() ? "LOST THE CONNECTION TO THE HOST" : lostWhy;  // (it was in: the game takes this player back to the menu)
         if (lastSim) {
             for (int k = 0; k < net::kMaxPeers; k++)
                 if (k != self) removeCars(*lastSim, k);
@@ -1729,32 +1756,70 @@ void NetSession::adopt(Sim& sim) {
         // of everything already there (the host's parked trucks, the other players): two
         // trucks built inside each other fight it out.
         Car& me = sim.cars[sim.player];
-        const V3 side = V3(std::sin(sim.world.spawnYaw), 0, std::cos(sim.world.spawnYaw));
-        const V3 back = V3(-std::cos(sim.world.spawnYaw), 0, std::sin(sim.world.spawnYaw));
-        V3 p = sim.world.spawn + side * (6.5 * self);
-        double yaw = sim.world.spawnYaw;
-        for (int k = 0; k < 40; k++) {
-            // (The places on the spawn pad first, from mine round; then side by side along it.)
-            V3 q;
-            double qyaw = yaw;
-            if (!sim.world.spawnSlot((self + k) % net::kMaxPeers, q, qyaw))
-                q = sim.world.spawn + side * (6.5 * (self + k % 8)) + back * (9.0 * (k / 8)), qyaw = sim.world.spawnYaw;
-            bool clear = true;
-            for (int i = 0; i < (int)sim.cars.size() && clear; i++) {
-                if (i == sim.player) continue;
-                const Car& o = sim.cars[i];
-                const V3 d = o.frame().com - q;
-                const double r = std::max(o.spec->length, o.spec->width) / 2 + 3.0;
-                if (d.x * d.x + d.z * d.z < r * r) clear = false;
-            }
-            if (clear) {
-                p = q, yaw = qyaw;
-                break;
-            }
-        }
+        V3 p;
+        double yaw = 0;
+        spawnSpot(sim, self, sim.player, p, yaw);
         me.respawn(V3(p.x, sim.world.clearY(p.x, p.z) + 0.05, p.z), yaw);
         me.setDown(sim.world);
     }
+}
+
+bool NetSession::spawnSpot(const Sim& sim, int self, int skip, V3& p, double& yaw) {
+    const World& w = sim.world;
+    const int me = std::max(0, self);
+    const double myR = skip >= 0 && skip < (int)sim.cars.size() ? std::max(sim.cars[skip].spec->length, sim.cars[skip].spec->width) / 2 : 2.5;
+    auto clearOfCars = [&](const V3& q) {
+        for (int i = 0; i < (int)sim.cars.size(); i++) {
+            if (i == skip) continue;
+            const Car& o = sim.cars[i];
+            const V3 d = o.frame().com - q;
+            const double r = std::max(o.spec->length, o.spec->width) / 2 + myR + 1.0;
+            if (d.x * d.x + d.z * d.z < r * r) return false;
+        }
+        return true;
+    };
+    // (A spot off the pad: on the map, out of the water, and not on a rock, a prop or a trunk: the ground itself is the top there.)
+    auto clearGround = [&](const V3& q) {
+        const double lim = w.halfSize() - 30;
+        if (std::fabs(q.x) > lim || std::fabs(q.z) > lim) return false;
+        const double g = w.height(q.x, q.z);
+        if (w.waterLevel(q.x, q.z) > g + 0.2) return false;
+        for (int k = 0; k < 5; k++) {  // (the middle and round it, a body's half-width out)
+            const double a = k * 1.5707963267948966, rr = k ? 1.6 : 0.0;
+            const double x = q.x + rr * std::cos(a), z = q.z + rr * std::sin(a);
+            if (w.clearY(x, z) - w.height(x, z) > 0.45) return false;
+        }
+        return true;
+    };
+    // The places on the spawn pad first, from mine round.
+    for (int k = 0; k < net::kMaxPeers; k++) {
+        V3 q;
+        double qyaw = w.spawnYaw;
+        if (!w.spawnSlot((me + k) % net::kMaxPeers, q, qyaw)) continue;
+        if (clearOfCars(q)) {
+            p = q, yaw = qyaw;
+            return true;
+        }
+    }
+    // Then rings round the spawn, 8 m apart, everyone starting at their own place on each (two guests never pick one spot),
+    // facing the way the spawn does.
+    for (int ring = 1; ring <= 6; ring++) {
+        const int n = 6 * ring;
+        const double R = 8.0 * ring;
+        for (int j = 0; j < n; j++) {
+            const int idx = (j + me * n / net::kMaxPeers) % n;
+            const double a = w.spawnYaw + 6.283185307179586 * idx / n;
+            const V3 q = w.spawn + V3(std::sin(a), 0, std::cos(a)) * R;
+            if (clearOfCars(q) && clearGround(q)) {
+                p = q, yaw = w.spawnYaw;
+                return true;
+            }
+        }
+    }
+    // (Nowhere clear near: at least not on anyone, if that can be had.)
+    const V3 side = V3(std::sin(w.spawnYaw), 0, std::cos(w.spawnYaw));
+    p = w.spawn + side * (6.5 * me), yaw = w.spawnYaw;
+    return false;
 }
 
 // ---- Vehicle states --------------------------------------------------------------------
@@ -3456,6 +3521,7 @@ bool NetSession::beginJoinCode(const std::string& code, const std::string& name,
     passwordIssue = PW_OK;
     joinFail = JF_NONE;
     lostWhy.clear();
+    ended.clear();
     error.clear();
     netInit();
     codeWanted = rv::normalizeCode(code);

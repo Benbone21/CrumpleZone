@@ -2584,11 +2584,38 @@ int main(int argc, char** argv) {
         fx.clear();
         cam.initialized = false;
     };
+    auto removeRemotes = [&]() {
+        for (int i = (int)sim.cars.size() - 1; i >= 0; i--)
+            if (sim.cars[i].remote) {
+                sim.carRemoved(i);
+                sim.cars.erase(sim.cars.begin() + i);
+                if (sim.player > i) sim.player--;
+            }
+    };
+    // Out of the multiplayer session (docs/plans/notes-backlog.md, "Multiplayer: badly broken"). A host ends it for everyone
+    // (each guest is told `why` and goes back to the menu; the code goes); a guest just leaves. Nothing of it stays: the others'
+    // vehicles go, and a guest's world was the host's, so the next one is its own again (its seed, its edits: a fresh build).
+    auto leaveSession = [&](const std::string& why) {
+        const bool wasGuest = net.role == NetSession::CLIENT || !net.ended.empty();
+        if (net.active()) net.close(why);
+        removeRemotes();
+        if (wasGuest) {
+            World::setSessionSections({});
+            World::procSeed = settings.procSeed, World::procOriginSet = false;
+            worldPick = -1;  // (not the pick it looks like: starting anything builds this player's own)
+        }
+    };
     auto loadMap = [&](int m, bool standalone = false) {
         endCareer();  // (another map, or another place on this one: the world's saved as it stands now)
         World::useLocalEdits = net.role != NetSession::CLIENT;  // (a guest builds the host's: its edited sections came with the welcome, World::setSessionSections)
         const int model = std::max(0, sim.cars[sim.player].spec->model);
         const bool same = !campWorld && onBigMapAlready(bigHome, sim.world, m, standalone);
+        // A session is one world: the host going to another ends it (the guests are told and go back to the menu; hosting
+        // again is a fresh session with a new code), so nobody is left in the old world sharing pings and the map with this one.
+        if (!same && net.role == NetSession::HOST) {
+            leaveSession("the host went to another world");
+            hud.toast("MULTIPLAYER SESSION CLOSED: ANOTHER WORLD");
+        }
         campWorld = false;
         procStream.reset();  // (its worker builds a window of its own: dropped before the world goes)
         renderer.waitStreaming();  // (its background streaming reads the world)
@@ -2613,14 +2640,6 @@ int main(int argc, char** argv) {
         wrapSeen = sim.wrapShift = 0;
         fx.clear();
         cam.initialized = false;
-    };
-    auto removeRemotes = [&]() {
-        for (int i = (int)sim.cars.size() - 1; i >= 0; i--)
-            if (sim.cars[i].remote) {
-                sim.carRemoved(i);
-                sim.cars.erase(sim.cars.begin() + i);
-                if (sim.player > i) sim.player--;
-            }
     };
     auto startHost = [&](int port, bool quietFail = false) {
         const std::string session = !settings.sessionName.empty() ? settings.sessionName
@@ -2703,7 +2722,7 @@ int main(int argc, char** argv) {
         }
         World::setSessionSections(net.sections);
         if (net.map == MAP_PROCEDURAL && net.proc.on) World::procSeed = net.proc.seed, World::procOriginSet = true, World::procOriginX = net.proc.ox, World::procOriginZ = net.proc.oz;  // (the host's window)
-        if (net.map != sim.world.map || net.map == MAP_PROCEDURAL || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map), World::procOriginSet = false;
+        loadMap(net.map), World::procOriginSet = false;  // (always the host's world as it is now, built afresh: never one this machine had up, from an earlier session or its own edits)
         if (net.map == MAP_PROCEDURAL && net.proc.sliding && sim.world.map == MAP_PROCEDURAL) {  // (joined in the 3 s before a slide: make it too)
             net.scheduleShift(net.proc.due, V3((double)(net.proc.ox - net.proc.tx), 0, (double)(net.proc.oz - net.proc.tz)));
             procStream.want(net.proc.seed, net.proc.tx, net.proc.tz);
@@ -3348,9 +3367,8 @@ int main(int argc, char** argv) {
                 break;
             case PauseMenu::LEAVE:
                 closeMenu();
-                net.close();
-                removeRemotes();
-                hud.toast("LEFT THE SESSION");
+                hud.toast(net.role == NetSession::HOST ? "STOPPED HOSTING: EVERYONE WAS SENT BACK TO THE MENU" : "LEFT THE SESSION");
+                leaveSession("");
                 break;
             case PauseMenu::FREE_DRIVE: {
                 closeMenu();
@@ -3491,7 +3509,14 @@ int main(int argc, char** argv) {
                 endCareer();  // (back to the menu: the world's saved; continuing it puts everything back)
                 run.stop();
                 levelHours = -1;
-                if (net.role == NetSession::HOST) net.setLevel("");
+                // Leaving the world leaves its session: a host's ends for everyone (they're told and sent back to the menu, the
+                // code goes), so a world started from the menu is hosted afresh, with a new code, never the old session's.
+                if (net.role == NetSession::HOST) {
+                    hud.toast("MULTIPLAYER SESSION CLOSED");
+                    leaveSession("the host left the game");
+                } else if (net.active() && !net.joining()) {
+                    leaveSession("");
+                }
                 refreshLevels();
                 if (campMenu && !net.active() && !editor.active && !mapLoad.active()) enterCamp();
                 menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), campWorld ? settings.map : sim.world.map);
@@ -5491,7 +5516,7 @@ int main(int argc, char** argv) {
                     run.stop();
                     World::setSessionSections(net.sections);
                     if (net.map == MAP_PROCEDURAL && net.proc.on) World::procSeed = net.proc.seed, World::procOriginSet = true, World::procOriginX = net.proc.ox, World::procOriginZ = net.proc.oz;  // (the host's window)
-                    if (net.map != sim.world.map || net.map == MAP_PROCEDURAL || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map), World::procOriginSet = false;
+                    loadMap(net.map), World::procOriginSet = false;  // (always the host's world as it is now, built afresh: never one this machine had up, from an earlier session or its own edits)
                     if (net.map == MAP_PROCEDURAL && net.proc.sliding && sim.world.map == MAP_PROCEDURAL) {  // (joined in the 3 s before a slide: make it too)
                         net.scheduleShift(net.proc.due, V3((double)(net.proc.ox - net.proc.tx), 0, (double)(net.proc.oz - net.proc.tz)));
                         procStream.want(net.proc.seed, net.proc.tx, net.proc.tz);
@@ -5515,6 +5540,15 @@ int main(int argc, char** argv) {
                 }
             }
             if (!net.joining()) net.receive(sim, netNow);
+            if (!net.ended.empty() && !net.active()) {  // the session ended under this guest (the host left or went, a kick, the line died): back to the menu, told why
+                const std::string why = net.ended;
+                leaveSession("");
+                net.ended.clear();
+                if (!menu.open) openMenu();
+                handleMenu(PauseMenu::Result{PauseMenu::MAIN_MENU});
+                hud.toast(why + ": BACK TO THE MAIN MENU");
+                std::printf("net: session ended: %s\n", why.c_str());
+            }
             // Vehicles that changed hands (NetSession::requestTake): the one you asked for, yours someone took, the ride you're on.
             for (const NetSession::CarEvent& e : net.carEvents) {
                 if (rideId && e.oldId == rideId) rideId = e.newId;
