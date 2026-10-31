@@ -46,6 +46,7 @@
 #include "jobs.h"
 #include "career.h"
 #include "careersession.h"
+#include "repairdeal.h"
 #include "garageshop.h"
 #include "garageshopdraw.h"
 #include "interact.h"
@@ -1418,12 +1419,12 @@ void drawLevelHud(Renderer& r, const LevelRun& run, const Sim& sim, const View& 
     }
 }
 
-void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
+void drawHelp(Renderer& r, float u, int W, int H, bool mph, bool career) {
     // (The keys are the current bindings: what the player set under Settings > Controls > Keyboard keybinds.)
     const std::string sp = " ";
     const std::vector<std::pair<std::string, std::string>> keys = {
         {K(KA_THROTTLE) + sp + K(KA_BRAKE), "DRIVE / BRAKE / REVERSE"}, {K(KA_STEER_LEFT) + sp + K(KA_STEER_RIGHT), "STEER"},
-        {K(KA_HANDBRAKE), "HANDBRAKE"},                                  {K(KA_REPAIR), "REPAIR IN PLACE (TWICE: RESPAWN)"},
+        {K(KA_HANDBRAKE), "HANDBRAKE"},                                  {K(KA_REPAIR), career ? "PAID REPAIR: ON THE SPOT, OR RESPAWN AT A STATION" : "REPAIR IN PLACE (TWICE: RESPAWN)"},
         {K(KA_FLIP), "BACK ON ITS WHEELS"},                              {K(KA_NEXT_VEHICLE), "NEXT VEHICLE (ON FOOT: TRUCK INVENTORY, " + K(KA_INVENTORY) + ")"},
         {"HOLD " + K(KA_INTERACT), "ON FOOT: GRAB THE WINCH LINE, WALK IT OUT, HOOK IT (SAME TO UNHOOK)"},                           {K(KA_WINCH_IN) + " / " + K(KA_WINCH_OUT), "WINCH IN / OUT (" + K(KA_WINCH_SLOWER) + " " + K(KA_WINCH_FASTER) + " = SPEED)"},
         {K(KA_STRAP), "TOW STRAP: GET OUT, HOLD " + K(KA_INTERACT) + " AT A POINT"},       {K(KA_SWAY), "FRONT SWAY BAR DISCONNECT"},
@@ -1719,7 +1720,7 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
         const float ds = px(1.2f * u);
         centeredPill(r, 10 * u + (r.textWidth("DEV KEYS", ds) + 14 * ds) / 2, 8 * u, ds, "DEV KEYS", 0.35f, 0.18f, 0.0f, 1, 1.0f, 0.75f, 0.3f);
     }
-    if (hud.showHelp) pad::ui.last ? drawPadHelp(r, u, W, H) : drawHelp(r, u, W, H, mph);
+    if (hud.showHelp) pad::ui.last ? drawPadHelp(r, u, W, H) : drawHelp(r, u, W, H, mph, careerRun.profile.on);
 }
 
 }  // namespace
@@ -2037,6 +2038,7 @@ int main(int argc, char** argv) {
     auto saveCareer = [&]() {
         if (!careerQuiet && career.on && !profileDamaged) career.saveProfile();
     };
+    bool repairAsk = false;  // career: R's confirmation is up (repairdeal.h): 1 repairs on the spot, 2 respawns repaired at the nearest station, Esc cancels
     std::vector<CacheSpot> caches;  // this map's supply caches (a career's)
     int cachesMap = -1;
     AnchorStock anchorSeen;  // the career's anchor gear as the sim last had it
@@ -2275,6 +2277,26 @@ int main(int argc, char** argv) {
     };
     applySettings();
     gKeys = &settings.keys;
+    // Pays for the choice and does it; says what happened.
+    auto repairDeal = [&](repairdeal::Choice ch) {
+        repairAsk = false;
+        Car& pc = sim.cars[sim.player];
+        const int st = sim.nearestStation(pc.frame().com);
+        std::string why;
+        if (!repairdeal::pay(career, ch, pc.damage, st >= 0, why)) {
+            hud.toast(why);
+            return;
+        }
+        if (ch == repairdeal::STATION) {
+            const Station& s = sim.world.stations[st];
+            sim.teleportPlayer(s.p.x, s.p.z, s.yaw);
+            sim.repairCar(sim.player);
+        } else {
+            sim.recoverPlayer();
+        }
+        saveCareer();
+        hud.toast(why);
+    };
     // The garage: in a career only at a repair station; in sandbox anywhere. False (and says why) if it didn't open.
     auto openGarage = [&]() {
         const Car& c = sim.cars[sim.player];
@@ -4747,6 +4769,12 @@ int main(int argc, char** argv) {
                         shopResult(garageShop.key(sc, career));
                         break;
                     }
+                    if (repairAsk) {  // (career R's confirmation: its own keys; anything else carries on)
+                        const bool pick = gsc == SC_1 || gsc == SC_2, cancel = gsc == SC_ESCAPE || kh.action == KA_REPAIR;
+                        if (pick) repairDeal(gsc == SC_1 ? repairdeal::SPOT : repairdeal::STATION);
+                        else if (cancel) repairAsk = false;
+                        if (pick || cancel) break;
+                    }
                     if (kh.action == KA_CHAT) {
                         coop.typing = true;
                         coop.draft.clear(), coop.draftEd.reset();
@@ -4781,6 +4809,11 @@ int main(int argc, char** argv) {
                                                          : "STEERING ASSIST OFF (FULL LOCK AT ALL SPEEDS)");
                             break;
                         case SC_R:
+                            if (career.on && !run.active()) {  // career: nothing for free; ask what to pay for (repairdeal.h). Sandbox and level runs carry on below
+                                const Car& pc = sim.cars[sim.player];
+                                if (!pc.remote && !pc.isProp() && !walker.active) repairAsk = true;
+                                break;
+                            }
                             // R: fixed up where it stands. R twice quickly: back to where it started
                             // (in a level: back to the grid, the attempt starts again).
                             if (hud.confirmReset > 0) {
@@ -7575,6 +7608,20 @@ int main(int argc, char** argv) {
             const bool padNow = pad::ui.last && padDev.connected();
             invLay = inv.layout(W, H, u, padNow);
             drawInvMenu(renderer, inv, invLay, W, H, padNow);
+        }
+        if (repairAsk && (menu.open || garageShop.open || walker.active)) repairAsk = false;
+        if (repairAsk && !hud.photo) {  // career R: the two paid choices, with the prices and the cash
+            const float u = std::max(0.75f, H / 720.0f);
+            const double dmg = sim.cars[sim.player].damage;
+            const bool haveSt = sim.nearestStation(sim.cars[sim.player].frame().com) >= 0;
+            const int cash = std::max(0, career.cash);
+            auto col = [&](bool ok, float& r, float& g, float& b) { r = ok ? 0.6f : 0.75f, g = ok ? 1.0f : 0.45f, b = ok ? 0.6f : 0.4f; };
+            float r1, g1, b1, r2, g2, b2;
+            col(cash >= repairdeal::price(repairdeal::SPOT, dmg), r1, g1, b1);
+            col(haveSt && cash >= repairdeal::price(repairdeal::STATION, dmg), r2, g2, b2);
+            drawPrompt(renderer, u, W, H, 3, "REPAIR - YOUR CASH $" + std::to_string(cash) + "   " + K(KA_REPAIR) + " OR ESC: CANCEL", 0, 0, 0, 0.7f, 0.9f, 0.92f, 0.95f);
+            drawPrompt(renderer, u, W, H, 2, repairdeal::lineSpot(dmg), 0.02f, 0.08f, 0.04f, 0.9f, r1, g1, b1);
+            drawPrompt(renderer, u, W, H, 1, haveSt ? repairdeal::lineStation(dmg) : std::string("2: NO REPAIR STATION ON THIS MAP"), 0.02f, 0.08f, 0.04f, 0.9f, r2, g2, b2);
         }
         if (garageShop.open && !menu.open) {
             const int at = sim.stationAt(sim.cars[sim.player].frame().com);
