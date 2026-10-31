@@ -6639,7 +6639,15 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             // (the far forest's canopy colour on the far ground: the procedural world's)
             static const bool noCanopy = std::getenv("CZ_NO_CANOPY") != nullptr;
             if (farForestOn && !noCanopy && farForest_.ready()) farForest_.bindGround(prog, 12, kCanopyFrom, kCanopyFull);
-            else Uniform2f(uniformLocation(prog, "uFFFade"), 0, 0);
+            else {
+                // (Off, the canopy sampler still gets its own unit: left on unit 0 it shares it with the sampler2DShadow uShadow0,
+                // and macOS's GL refuses the draw (GL_INVALID_OPERATION) when two kinds of sampler read one unit.)
+                ActiveTexture(GL_TEXTURE0 + 12);
+                BindTexture(GL_TEXTURE_2D, terrainCoarseTex);
+                ActiveTexture(GL_TEXTURE0);
+                Uniform1i(uniformLocation(prog, "uFFCover"), 12);
+                Uniform2f(uniformLocation(prog, "uFFFade"), 0, 0);
+            }
             if (cheap || groundTier(gq) <= 1) {  // (the cheap tiers read their noise from a texture)
                 ActiveTexture(GL_TEXTURE0 + 5);
                 BindTexture(GL_TEXTURE_2D, noiseTex);

@@ -34,6 +34,7 @@ const GLubyte* noExtensions(GLenum, GLuint) { return (const GLubyte*)""; }
 // The first OpenGL error any call raised (gl::traceErrors), with the call's name: clean() fails on it.
 GLenum tracedError = 0;
 char tracedCall[160];
+void (*validateProgram)(GLuint) = nullptr;
 void traceReport(const char* function, GLenum error) {
     if (tracedError) return;
     tracedError = error;
@@ -44,6 +45,16 @@ void traceReport(const char* function, GLenum error) {
     const int n = backtrace(frames, 32);
     backtrace_symbols_fd(frames, n, 1);
 #endif
+    // (A draw's GL_INVALID_OPERATION is mostly the program's state: the driver's validation log says what, e.g. two kinds of sampler on one unit.)
+    GLint program = 0;
+    gl::GetIntegerv(GL_CURRENT_PROGRAM, &program);
+    if (program && validateProgram) {
+        validateProgram((GLuint)program);
+        char log[2048] = {0};
+        GLsizei length = 0;
+        gl::GetProgramInfoLog((GLuint)program, sizeof log - 1, &length, log);
+        std::printf("program %d validation: %s\n", program, length ? log : "(no log)");
+    }
 }
 bool rejectMsaa = false;
 int rejected = 0;
@@ -81,6 +92,7 @@ int main() {
         auto getError = reinterpret_cast<GLenum(*)()>(SDL_GL_GetProcAddress("glGetError"));
         attachment = reinterpret_cast<decltype(attachment)>(SDL_GL_GetProcAddress("glGetFramebufferAttachmentParameteriv"));
         if (!getError || !attachment) throw std::runtime_error("missing core GL test function");
+        validateProgram = reinterpret_cast<void (*)(GLuint)>(SDL_GL_GetProcAddress("glValidateProgram"));
         gl::traceErrors(getError, traceReport);
         auto clean = [&] {
             if (tracedError) throw std::runtime_error(tracedCall);
