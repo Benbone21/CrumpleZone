@@ -1,0 +1,11 @@
+source https://freesound.org/people/Chippy569/packs/9658/
+author Chippy569 (recorded by David of Track Time Audio): The Dyno Sessions: 190E
+license CC0-1.0
+loop 1085 0 0.416 coast-1085-0.wav
+loop 1355 1 1 load-1355-1.wav
+loop 2551 0 0.544 coast-2551-2.wav
+loop 2685 1 1.28 load-2685-3.wav
+loop 4730 0 0.64 coast-4730-4.wav
+loop 4821 1 1.52 load-4821-5.wav
+loop 6364 0 0.76 coast-6364-6.wav
+loop 6535 1 1.8 load-6535-7.wav

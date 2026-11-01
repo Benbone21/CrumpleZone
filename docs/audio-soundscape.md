@@ -17,7 +17,7 @@ This audio pass is isolated in `wip/audio-soundscape`, in `/home/bread/Documents
 
 ## Recorded engine sounds
 
-**No real vehicle recordings were imported.** Existing banks still take precedence over procedural voices, and missing banks still use procedural fallback. Shell downloads are blocked by DNS in this session. Reference research and licensing status are in `docs/engine-recordings.md`; the CC0-only rule remains in effect.
+**Three recorded banks exist:** `honda_d16a6`, `honda_b16a` and `honda_b18c`, all cut from one CC0 recording of a Mercedes 190E inline-4 on a dyno (see `docs/engine-recordings.md`). Banks take precedence over procedural voices; every other engine still uses its procedural voice. `tools/prepare_190e_banks.py` rebuilds the three plans from the ignored originals in `assets/source/190e/`. The CC0-only rule remains in effect.
 
 `tools/import_engine_audio.py` now cuts documented local PCM recordings into startup banks. A plan supplies the verified source/author/license plus measured RPM, coast/load state, start time and duration for each clip. It retains the original recording, preserves format, refuses existing banks and invalid/partial plans, and writes a provenance manifest. It never invents missing recordings or RPMs. The runtime validates a bank before using it.
 
@@ -25,6 +25,7 @@ This audio pass is isolated in `wip/audio-soundscape`, in `/home/bread/Documents
 python3 tools/import_engine_audio.py path/to/bank-plan.json
 make build/engine_preview
 ./build/engine_preview build/review/engine-audio path/to/engine-bank-root
+./build/engine_preview build/review/engine-190e assets/audio/engines honda   # only the engines on banks whose key starts with "honda"
 ```
 
 Example plan structure (replace all example metadata and filenames with real authorized sources):

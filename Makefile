@@ -133,7 +133,7 @@ meshaudit: build/meshaudit
 build/modelsheet: build/tools/modelsheet.o build/src/modelkit.o build/src/meshopt.o build/src/platform.o build/src/meshcache.o build/src/loadprof.o $(patsubst %.cpp,build/%.o,$(MODELS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lm
 
-# Silent audition files: build/engine_preview [output directory].
+# Silent audition files: build/engine_preview [output directory [bank root [bank key prefix]]].
 build/soundscape_preview: build/tools/soundscape_preview.o build/src/music.o build/src/ambience.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lm
 

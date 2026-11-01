@@ -1,0 +1,121 @@
+{
+  "engine": "honda_b18c",
+  "source": "https://freesound.org/people/Chippy569/packs/9658/",
+  "author": "Chippy569 (recorded by David of Track Time Audio): The Dyno Sessions: 190E",
+  "license": "CC0-1.0",
+  "note": "Mercedes 190E inline-4 on a dyno standing in for the honda_b18c: Type R 1.8: the distant mic with the d6 kick mic's low end, formants 3% down. Made by tools/prepare_190e_banks.py.",
+  "clips": [
+    {
+      "file": "coast-963.wav",
+      "start": 0,
+      "duration": 2.991979166666667,
+      "rpm": 963,
+      "load": 0,
+      "gain": 0.416,
+      "from": "21_500 (distant+d6_low), https://freesound.org/s/162514/, 0.30-3.30 s",
+      "measured_rpm": [
+        889,
+        1061
+      ],
+      "formant_shift": 0.97
+    },
+    {
+      "file": "coast-2357.wav",
+      "start": 0,
+      "duration": 2.9025833333333333,
+      "rpm": 2357,
+      "load": 0,
+      "gain": 0.544,
+      "from": "21_2500 (distant+d6_low), https://freesound.org/s/162517/, 0.30-3.30 s",
+      "measured_rpm": [
+        2413,
+        2453
+      ],
+      "formant_shift": 0.97
+    },
+    {
+      "file": "coast-4525.wav",
+      "start": 0,
+      "duration": 0.6895,
+      "rpm": 4525,
+      "load": 0,
+      "gain": 0.64,
+      "from": "17_medsweep (distant+d6_low), https://freesound.org/s/162503/, 2.20-2.90 s",
+      "measured_rpm": [
+        4391,
+        5023
+      ],
+      "formant_shift": 0.97
+    },
+    {
+      "file": "coast-5763.wav",
+      "start": 0,
+      "duration": 0.5622083333333333,
+      "rpm": 5763,
+      "load": 0,
+      "gain": 0.76,
+      "from": "17_medsweep (distant+d6_low), https://freesound.org/s/162503/, 0.90-1.50 s",
+      "measured_rpm": [
+        5696,
+        6242
+      ],
+      "formant_shift": 0.97
+    },
+    {
+      "file": "load-1252.wav",
+      "start": 0,
+      "duration": 1.4378958333333334,
+      "rpm": 1252,
+      "load": 1,
+      "gain": 1.0,
+      "from": "19_500 (distant+d6_low), https://freesound.org/s/162505/, 0.10-1.80 s",
+      "measured_rpm": [
+        1276,
+        1312
+      ],
+      "formant_shift": 0.97
+    },
+    {
+      "file": "load-2481.wav",
+      "start": 0,
+      "duration": 3.2409166666666667,
+      "rpm": 2481,
+      "load": 1,
+      "gain": 1.28,
+      "from": "19_2500 (distant+d6_low), https://freesound.org/s/162508/, 0.50-3.80 s",
+      "measured_rpm": [
+        2534,
+        2597
+      ],
+      "formant_shift": 0.97
+    },
+    {
+      "file": "load-3959.wav",
+      "start": 0,
+      "duration": 0.39408333333333334,
+      "rpm": 3959,
+      "load": 1,
+      "gain": 1.52,
+      "from": "17_shortsweep (distant+d6_low), https://freesound.org/s/162500/, 0.85-1.30 s",
+      "measured_rpm": [
+        3556,
+        4704
+      ],
+      "formant_shift": 0.97
+    },
+    {
+      "file": "load-6037.wav",
+      "start": 0,
+      "duration": 1.4709791666666667,
+      "rpm": 6037,
+      "load": 1,
+      "gain": 1.8,
+      "from": "20_6500 (distant+d6_low), https://freesound.org/s/162511/, 0.05-1.55 s",
+      "measured_rpm": [
+        6181,
+        6265
+      ],
+      "formant_shift": 0.97
+    }
+  ]
+}

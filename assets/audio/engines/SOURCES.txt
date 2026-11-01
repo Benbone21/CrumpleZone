@@ -1,0 +1,22 @@
+Recorded engine banks (src/engine_samples.cpp loads <engine-key>/bank.txt at startup; a missing bank stays procedural).
+
+honda_d16a6, honda_b16a, honda_b18c
+  From "The Dyno Sessions: 190E" by Chippy569 on Freesound, recorded by David of Track Time Audio:
+  https://freesound.org/people/Chippy569/packs/9658/
+  License: Creative Commons 0 (public domain): http://creativecommons.org/publicdomain/zero/1.0/
+  (stated for the pack and for every sound in it in the pack's own readme). Retrieved 2026-11-01; the originals
+  stay in the ignored assets/source/190e/.
+  It is a Mercedes 190E inline-4 on a dyno, not a Honda: one real inline-4 standing in for all three Hondas.
+  Takes used (each sound's page is https://freesound.org/s/<id>/):
+    162505-162507  19_500    loaded hold, measured 1290 rpm (named 500; the rpm is measured, not read off the names)
+    162508-162510  19_2500   loaded hold, 2556 rpm
+    162511-162513  20_6500   loaded hold, 6210 rpm
+    162514-162516  21_500    unloaded: idle, 1010-1060 rpm (also named 500)
+    162517-162519  21_2500   unloaded hold, 2430 rpm
+    162500, 162501 17_shortsweep (distant, d6)  free rev up
+    162503, 162504 17_medsweep (distant, d6)    lift from 6900 rpm, coasting down
+    162502         18_medsweep (4062)           lift from 6800 rpm, coasting down
+    162499         acceleration-sweep (4062)    loaded pull 1200-7100 rpm
+  Made with tools/prepare_190e_banks.py (measured windows, steadied to one rpm, whole engine cycles, 48 kHz
+  16-bit mono) and tools/import_engine_audio.py. Each bank's import-plan.json lists every loop's take, mic,
+  window and measured rpm. docs/engine-recordings.md explains the choices.

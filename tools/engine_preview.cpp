@@ -1,4 +1,5 @@
 // Offline engine audition: write WAV files, never open a sound device.
+// Usage: build/engine_preview [output directory] [engine bank root] [bank key prefix]
 #include "../src/engineaudio.h"
 #include "../src/engine_samples.h"
 #include "../src/mods.h"
@@ -41,6 +42,8 @@ int main(int argc, char** argv) {
             const VehicleSpec& s = tunedSpec(vi, ms);
             bool seen = false;
             for (const VehicleSpec& e : engines) seen |= std::string(e.engineName) == s.engineName;
+            // (a third argument keeps only the engines whose recorded-bank key starts with it, e.g. "honda")
+            if (argc > 3 && std::string(engineSamples::key(engineSamples::forVehicle(s))).rfind(argv[3], 0) != 0) seen = true;
             if (!seen) engines.push_back(s);
         }
     // Each engine three ways: idling (4 s), revved in neutral (three blips), and a pull through
@@ -54,7 +57,8 @@ int main(int argc, char** argv) {
         std::string name = std::string(v.id) + "-" + v.engineName;
         for (char& ch : name) ch = std::isalnum((unsigned char)ch) ? (char)std::tolower((unsigned char)ch) : '-';
         const EngineTone tone = voiceFor(v);
-        std::printf("%s (%s)\n", name.c_str(), engineKindName(tone.kind));
+        const int bankId = engineSamples::forVehicle(v);
+        std::printf("%s (%s, %s %s)\n", name.c_str(), engineKindName(tone.kind), engineSamples::key(bankId), recordings.bank(bankId) ? "recorded" : "procedural");
         if (index) std::fprintf(index, "%s | %s | %s-idle.wav %s-rev.wav %s-pull.wav\n", v.engineName, engineKindName(tone.kind), name.c_str(), name.c_str(), name.c_str());
         for (const Clip& clip : clips) {
             EngineVoice synth;

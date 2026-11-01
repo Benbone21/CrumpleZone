@@ -75,8 +75,10 @@ Set **PHYSICS THREADS** in **Esc → Settings** to AUTO or any count up to all l
 
 Audio includes adjustable outdoor ambience (wind, foliage, bird phrases and night insects),
 with its own **AMBIENCE** level in Settings. Backcountry has a distinct arrangement of warm
-keys and picked strings. Master volume controls every layer. Exact recorded vehicle banks
-are still pending; absent banks use procedural engine sounds. See
+keys and picked strings. Master volume controls every layer. The EF Civic's three engines
+(D16A6, B16A, B18C) play real recordings: a CC0 Mercedes 190E inline-4 on a dyno, cut into
+coast and throttle loops (`assets/audio/engines/`, credits in its `SOURCES.txt`). The other
+engines still use procedural sounds. See
 [audio changes and silent auditions](docs/audio-soundscape.md).
 
 ## Testing
