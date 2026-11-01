@@ -1227,8 +1227,10 @@ std::string slug(const std::string& s) {
     return out;
 }
 
-// Every other vehicle's parts on this one (the universal garage): each builds, settles on its
-// wheels in one piece and drives off. (The full drive-to-80 check is for the car's own parts.)
+// The parts every vehicle shares (the wheel sizes and the treads, other vehicles' wheels among them)
+// on this one: each builds, settles on its wheels in one piece and drives off. (The full drive-to-80
+// check is for the car's own parts. Until parts list 2 this was every other vehicle's engines,
+// gearboxes and suspension too.)
 void swapScenario(Ctx& ctx, int vehicle, int slot) {
     int bad = 0, total = 0;
     std::string worst;
@@ -1275,9 +1277,10 @@ void swapScenario(Ctx& ctx, int vehicle, int slot) {
 int modScenarios = [] {
     for (int v = 0; v < (int)vehicleCatalog().size(); v++)
         for (int k = 0; k < MOD_SLOTS; k++)
-            scenarioRegistry().push_back({std::string("garage/swaps/") + vehicleCatalog()[v].id + "/" + slug(modSlotName(k)),
-                                          "Every other vehicle's parts in this slot: each builds, settles in one piece and drives",
-                                          [v, k](Ctx& c) { swapScenario(c, v, k); }});
+            if (modOptions(v, k).size() > (size_t)modOwnCount(v, k))  // (wheels and tires: the slots with shared parts)
+                scenarioRegistry().push_back({std::string("garage/swaps/") + vehicleCatalog()[v].id + "/" + slug(modSlotName(k)),
+                                              "The shared parts in this slot (wheel sizes, treads): each builds, settles in one piece and drives",
+                                              [v, k](Ctx& c) { swapScenario(c, v, k); }});
     for (int v = 0; v < (int)vehicleCatalog().size(); v++)
         for (int k = 0; k < MOD_SLOTS; k++)
             for (int o = 1; o < modOwnCount(v, k); o++)  // (its own parts; everyone else's: garage/swaps)

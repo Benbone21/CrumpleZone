@@ -23,6 +23,14 @@ int vehicleIndex(const char* id) {
     return -1;
 }
 
+// A vehicle's own option by its garage name ("": its factory part); -1 if it has none.
+int optionNamed(int v, int slot, const char* name) {
+    if (!*name) return 0;
+    for (int o = 0; o < modOwnCount(v, slot); o++)
+        if (modOptions(v, slot)[o].name == name) return o;
+    return -1;
+}
+
 std::string lookText(const PartLook& L) {
     std::string s = std::string(L.id) + "/" + std::to_string(L.variant);
     for (int i = 0; i < L.n; i++) s += std::string(" ") + L.set[i].key + "=" + std::to_string((int)L.set[i].value);
@@ -48,35 +56,34 @@ const char* const kBoxes[] = {"gearbox_manual", "gearbox_auto", "gearbox_cvt", "
 SCENARIO(drivetrainEngineLooks, "drivetrain/engine-looks", "Every vehicle's own engine options are drawn as that engine: the 350 small block, the 454, the ZZ4, the LS family, the Honda SOHC and VTEC heads, the EcoBoosts, the Toyota sixes with and without the blower, the flat fours") {
     struct Want {
         const char* vehicle;
-        int option;
+        const char* option;  // its name in the garage ("" the factory engine)
         const char* id;
         int variant;
         const char* key;  // a param it must have set ("" none)
         double value;
     };
     const Want wants[] = {
-        {"civic", 0, "crate_engine_i4", I4_HONDA_SOHC, "header", 0}, {"civic", 1, "crate_engine_i4", I4_HONDA_SOHC, "header", 1},
-        {"civic", 2, "crate_engine_i4", I4_HONDA_VTEC, "typer", 0}, {"civic", 3, "crate_engine_i4", I4_HONDA_VTEC, "typer", 1},
-        {"jesko", 0, "crate_engine_v8_dohc", V8D_FLAT_PLANE, "", 0},
-        {"bronco", 0, "crate_engine_v6", V6_ECOBOOST, "raptor", 0}, {"bronco", 1, "crate_engine_i4", I4_ECOBOOST, "", 0},
-        {"bronco", 3, "crate_engine_v6", V6_ECOBOOST, "raptor", 1},
-        {"4runner", 0, "crate_engine_v6", V6_5VZ, "blower", 1}, {"4runner", 1, "crate_engine_v6", V6_5VZ, "blower", 0},
-        {"4runner", 2, "crate_engine_v6", V6_GR, "blower", 0}, {"4runner", 3, "crate_engine_v6", V6_GR, "blower", 1},
-        {"buggy", 0, "crate_engine_v8", V8_LS, "blower", 0}, {"buggy", 1, "crate_engine_v8", V8_LS, "ls7", 1}, {"buggy", 2, "crate_engine_v8", V8_LS, "blower", 1},
-        {"tacoma", 0, "crate_engine_v6", V6_GR, "gen", 1}, {"tacoma", 1, "crate_engine_v6", V6_GR, "intake", 1}, {"tacoma", 2, "crate_engine_v6", V6_GR, "blower", 1},
-        {"utv", 0, "crate_engine_i3", I3_TURBO, "stage", 0},
-        {"blazer", 0, "crate_engine_v8", V8_SMALL_BLOCK, "carb", 0}, {"blazer", 1, "crate_engine_v8", V8_SMALL_BLOCK, "carb", 1},
-        {"blazer", 2, "crate_engine_v8", V8_BIG_BLOCK, "", 0}, {"blazer", 3, "crate_engine_v8", V8_SMALL_BLOCK, "zz4", 1},
-        {"baja", 0, "crate_engine_flat4", F4_DUAL_CARBS, "", 0}, {"baja", 1, "crate_engine_flat4", F4_SINGLE_CARB, "", 0}, {"baja", 2, "crate_engine_flat4", F4_STROKER, "", 0},
+        {"civic", "", "crate_engine_i4", I4_HONDA_SOHC, "header", 0},
+        {"civic", "SPORT ENGINE", "crate_engine_i4", I4_HONDA_VTEC, "typer", 0}, {"civic", "RACE ENGINE", "crate_engine_i4", I4_HONDA_VTEC, "typer", 1},
+        {"jesko", "", "crate_engine_v8_dohc", V8D_FLAT_PLANE, "", 0},
+        {"bronco", "", "crate_engine_v6", V6_ECOBOOST, "raptor", 0}, {"bronco", "BIG V6", "crate_engine_v6", V6_ECOBOOST, "raptor", 1},
+        {"4runner", "", "crate_engine_v6", V6_5VZ, "blower", 1},
+        {"4runner", "BIG V6", "crate_engine_v6", V6_GR, "blower", 0}, {"4runner", "BIG V6 SUPERCHARGED", "crate_engine_v6", V6_GR, "blower", 1},
+        {"buggy", "", "crate_engine_v8", V8_LS, "blower", 0}, {"buggy", "BIG V8", "crate_engine_v8", V8_LS, "ls7", 1}, {"buggy", "SUPERCHARGED V8", "crate_engine_v8", V8_LS, "blower", 1},
+        {"tacoma", "", "crate_engine_v6", V6_GR, "gen", 1}, {"tacoma", "TUNED V6", "crate_engine_v6", V6_GR, "intake", 1}, {"tacoma", "SUPERCHARGED V6", "crate_engine_v6", V6_GR, "blower", 1},
+        {"utv", "", "crate_engine_i3", I3_TURBO, "stage", 0},
+        {"blazer", "", "crate_engine_v8", V8_SMALL_BLOCK, "carb", 0},
+        {"blazer", "BIG V8", "crate_engine_v8", V8_BIG_BLOCK, "", 0}, {"blazer", "HOT ROD V8", "crate_engine_v8", V8_SMALL_BLOCK, "zz4", 1},
+        {"baja", "", "crate_engine_flat4", F4_DUAL_CARBS, "", 0}, {"baja", "QUIET ENGINE", "crate_engine_flat4", F4_SINGLE_CARB, "", 0}, {"baja", "BIG ENGINE", "crate_engine_flat4", F4_STROKER, "", 0},
     };
     for (const Want& w : wants) {
-        const int v = vehicleIndex(w.vehicle);
-        if (v < 0 || w.option >= modOwnCount(v, MOD_ENGINE)) {
-            ctx.check(std::string(w.vehicle) + " engine option " + std::to_string(w.option) + " exists", false);
+        const int v = vehicleIndex(w.vehicle), o = v < 0 ? -1 : optionNamed(v, MOD_ENGINE, w.option);
+        if (o < 0) {
+            ctx.check(std::string(w.vehicle) + " engine option " + w.option + " exists", false);
             continue;
         }
         ModSet ms;
-        ms.pick[MOD_ENGINE] = w.option;
+        ms.pick[MOD_ENGINE] = o;
         const VehicleSpec& s = tunedSpec(v, ms);
         const PartLook L = engineLook(s);
         const std::string tag = std::string(w.vehicle) + " " + s.engineName + ": ";
@@ -100,29 +107,29 @@ SCENARIO(drivetrainEngineLooks, "drivetrain/engine-looks", "Every vehicle's own 
 SCENARIO(drivetrainGearboxLooks, "drivetrain/gearbox-looks", "Every vehicle's own gearbox and transfer case is drawn as that box: the SM465 and NP205, the TH350 and TH400, the 4L80E and the Atlas, the A340F and its full-time case, the modern multi-speeds, the transaxles and the CVT") {
     struct Want {
         const char* vehicle;
-        int option;
+        const char* option;  // its name in the garage ("" the factory gearbox)
         const char* id;
         int variant;
         const char* key;
         double value;
     };
     const Want wants[] = {
-        {"blazer", 0, "gearbox_manual", MT_TOPLOADER, "", 0}, {"blazer", 1, "gearbox_auto", AT_THM, "th400", 0},
-        {"buggy", 0, "gearbox_auto", AT_OVERDRIVE, "toyota", 0}, {"buggy", 1, "gearbox_auto", AT_THM, "th400", 1},
-        {"4runner", 0, "gearbox_auto", AT_OVERDRIVE, "toyota", 1},
-        {"tacoma", 0, "gearbox_auto", AT_MULTI, "speeds", 0}, {"bronco", 0, "gearbox_auto", AT_MULTI, "speeds", 1},
-        {"bronco", 3, "gearbox_manual", MT_ALLOY, "sequential", 0},
-        {"civic", 0, "gearbox_manual", MT_FWD_TRANSAXLE, "sequential", 0}, {"civic", 3, "gearbox_manual", MT_FWD_TRANSAXLE, "sequential", 1},
-        {"jesko", 0, "gearbox_manual", MT_HYPERCAR, "", 0}, {"baja", 0, "gearbox_manual", MT_TYPE1, "", 0}, {"utv", 0, "gearbox_cvt", CVT_BELT, "", 0},
+        {"blazer", "", "gearbox_manual", MT_TOPLOADER, "", 0}, {"blazer", "AUTOMATIC", "gearbox_auto", AT_THM, "th400", 0},
+        {"buggy", "", "gearbox_auto", AT_OVERDRIVE, "toyota", 0}, {"buggy", "3-SPEED AUTO", "gearbox_auto", AT_THM, "th400", 1},
+        {"4runner", "", "gearbox_auto", AT_OVERDRIVE, "toyota", 1},
+        {"tacoma", "", "gearbox_auto", AT_MULTI, "speeds", 0}, {"bronco", "", "gearbox_auto", AT_MULTI, "speeds", 1},
+        {"bronco", "MANUAL GEARBOX", "gearbox_manual", MT_ALLOY, "sequential", 0},
+        {"civic", "", "gearbox_manual", MT_FWD_TRANSAXLE, "sequential", 0}, {"civic", "RACE GEARBOX", "gearbox_manual", MT_FWD_TRANSAXLE, "sequential", 1},
+        {"jesko", "", "gearbox_manual", MT_HYPERCAR, "", 0}, {"baja", "", "gearbox_manual", MT_TYPE1, "", 0}, {"utv", "", "gearbox_cvt", CVT_BELT, "", 0},
     };
     for (const Want& w : wants) {
-        const int v = vehicleIndex(w.vehicle);
-        if (v < 0 || w.option >= modOwnCount(v, MOD_TRANSMISSION)) {
-            ctx.check(std::string(w.vehicle) + " transmission option " + std::to_string(w.option) + " exists", false);
+        const int v = vehicleIndex(w.vehicle), o = v < 0 ? -1 : optionNamed(v, MOD_TRANSMISSION, w.option);
+        if (o < 0) {
+            ctx.check(std::string(w.vehicle) + " transmission option " + w.option + " exists", false);
             continue;
         }
         ModSet ms;
-        ms.pick[MOD_TRANSMISSION] = w.option;
+        ms.pick[MOD_TRANSMISSION] = o;
         const VehicleSpec& s = tunedSpec(v, ms);
         const PartLook L = gearboxLook(s);
         const std::string tag = std::string(w.vehicle) + " " + s.gearboxName + ": ";

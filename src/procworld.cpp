@@ -106,10 +106,20 @@ struct ProcWorld::Params {
     double windX = 1, windZ = 0;  // the dunes' crests run across this
     double grainX = 1, grainZ = 0;  // the ranges run along this (the world's grain)
     double relief = 1;         // how tall the mountains
+    uint64_t seed = 0;
+    // Home country (owner: plains, desert and mesa within a few km of the start): where the world starts (the routing's first pick,
+    // before any of this), and round it the middles of a desert, a mesa country and plains, each its own way off.
+    bool homeOn = false;
+    double homeX = 0, homeZ = 0;
+    double blobX[3] = {}, blobZ[3] = {};  // desert, mesa, plains
 };
+namespace {
+void setHome(ProcWorld::Params& p, double angle);  // (below: needs the routing's fields)
+}
 
 ProcWorld::ProcWorld(uint64_t seed) : seed_(seed), params_(std::make_shared<Params>()) {
     Params& p = *params_;
+    p.seed = seed;
     for (int k = 0; k < S_COUNT; k++) p.s[k] = mix64(seed * 0x9E3779B97F4A7C15ull + (uint64_t)k * 0xA24BAED4963EE407ull + 0x1234567ull);
     auto u = [&](int k) { return to01(mix64(seed ^ (0xC0FFEEull + (uint64_t)k * 0x9E3779B97F4A7C15ull))); };
     p.scale = 0.85 + 0.35 * u(1);
@@ -122,6 +132,7 @@ ProcWorld::ProcWorld(uint64_t seed) : seed_(seed), params_(std::make_shared<Para
     double gx = u(8) - 0.5, gz = u(9) - 0.5;
     const double gl = std::sqrt(gx * gx + gz * gz);
     if (gl > 1e-6) p.grainX = gx / gl, p.grainZ = gz / gl;
+    setHome(p, 2 * M_PI * u(20));
 }
 
 const ProcWorld& ProcWorld::forSeed(uint64_t seed) {
@@ -234,7 +245,7 @@ double summitShare(const ProcWorld::Params& P, double ga, double gc, double mass
 }
 }  // namespace
 namespace {
-Route routeAt(const ProcWorld::Params& P, double x, double z, double wet, double heat) {  // (x, z: copies, warped below)
+Route routeAt(const ProcWorld::Params& P, double x, double z, double wet, double heat, double sink = 0) {  // (x, z: copies, warped below; sink: country that sinks the ranges, countryAt)
     const double S = P.scale;
     const RangeRule& RR = rules().range;
     Route r;
@@ -256,26 +267,124 @@ Route routeAt(const ProcWorld::Params& P, double x, double z, double wet, double
         lowWeights(P, wet, heat, 0, lw0);
         belt -= RR.desertSink * smoothstep(0.25, 0.6, lw0[PB_BADLANDS] + lw0[PB_DUNES]);
     }
-    r.mk = smoothstep(RR.beltFrom - 0.06 * P.relief, RR.beltFull, belt);
+    // (Country that lowers the ranges (countryAt: a desert, mesa country, plains): they're scaled down toward the lowland, the share
+    // `sink` of them gone, so a range ends in a mountain front as gentle as the sink's fade is wide, never a wall.)
+    const double keep = 1 - std::min(1.0, std::max(0.0, sink));
+    r.mk = smoothstep(RR.beltFrom - 0.06 * P.relief, RR.beltFull, belt) * keep;
     // (The range rises all the way to its axis, the belt field's crest: no flat-topped plateau with a rim.)
-    r.massif = smoothstep(0.0, 1.0, (belt - RR.beltFrom) / std::max(0.05, RR.beltTop - RR.beltFrom));
+    const double massif = smoothstep(0.0, 1.0, (belt - RR.beltFrom) / std::max(0.05, RR.beltTop - RR.beltFrom));
+    r.massif = massif * keep;
     r.R = base + RR.passHeight * P.relief * r.massif;
     double w[PB_COUNT];
     lowWeights(P, wet, heat, r.mk, w);
     r.bad = smoothstep(0.25, 0.6, w[PB_BADLANDS]) * (1 - smoothstep(0.15, 0.55, r.mk));
-    const double lowU = 30 + 110 * r.bad;
-    r.U = lowU + (RR.peakHeight * P.relief - lowU) * r.massif * r.massif * r.massif;  // (the mass gathers on the axis: the tops)
+    const double lowU = 30 + 20 * r.bad;  // (v9: mesa country's floor is open low desert; its mesas stand up out of it, evalMacro)
+    r.U = lowU + (RR.peakHeight * P.relief - lowU) * massif * massif * massif * keep;  // (the mass gathers on the axis: the tops)
     // The summits: broad domes rising over km in massifs here and there on the axis (the peaks, 1.5-2.5 km). In the uplift, so the
     // channels see them: the creeks run down off them and climb up onto them, rather than cut through them.
-    r.summit = RR.summitHeight * P.relief * summitShare(P, ga + wa, gc + wc, r.massif, 0);
+    r.summit = RR.summitHeight * P.relief * summitShare(P, ga + wa, gc + wc, massif, 0) * keep;
     r.U += r.summit;
     return r;
 }
-double wetAt(const ProcWorld::Params& P, double x, double z) {
+double wetRaw(const ProcWorld::Params& P, double x, double z) {
     return stretch(fbm(P.s[S_WET], x * 0.00022 / P.scale + 0.3, z * 0.00022 / P.scale - 0.7, 3), P.wetShift);
 }
-double heatAt(const ProcWorld::Params& P, double x, double z) {
+double heatRaw(const ProcWorld::Params& P, double x, double z) {
     return stretch(fbm(P.s[S_HEAT], x * 0.00017 / P.scale + 2.2, z * 0.00017 / P.scale + 1.3, 2), P.heatShift);
+}
+// Country that overrides the climate (procrules.h MesaRule; owner, v9: "mesa country, whole regions several km across" and "plains,
+// desert and mesa near the start"): the regions of mesa country, and round a world's start its desert, mesa and plains. Each is a
+// core where the climate is wholly its biome's (so the biome is clearly itself) and a short fade round it (a short natural edge), and
+// sinks the ranges under it (a desert's and a mesa country's floor is open lowland, the plains a broad basin).
+struct Country {
+    double k = 0;            // how much of the climate is the country's (0..1)
+    double wet = 0, heat = 0;  // ...and the climate it makes
+    double sink = 0;         // how much it sinks the ranges' belt field
+};
+Country countryAt(const ProcWorld::Params& P, double x, double z) {
+    const MesaRule& MR = rules().mesa;
+    Country c;
+    double sw = 0, swW = 0, swH = 0;
+    auto add = [&](double k, double wet, double heat, double sink) {
+        if (k <= 0) return;
+        sw += k, swW += k * wet, swH += k * heat;
+        c.k = std::max(c.k, k), c.sink = std::max(c.sink, sink * k);
+    };
+    if (MR.countryFrom < 1) {  // (mesa country: hot and dry, the climate's own badlands spot)
+        const double f = fbm(P.s[S_MESA] + 51, x / (MR.countrySize * P.scale) + 0.31, z / (MR.countrySize * P.scale) - 0.17, 2);
+        add(smoothstep(MR.countryFrom, MR.countryFrom + 0.035, f), kLowAt[PB_BADLANDS][0], kLowAt[PB_BADLANDS][1], 0);
+        // (The ranges sink a little under it, over a wider band than the climate's edge: a mountain front, not a wall. Where a range
+        // still stands, the mesas give way to it (lowWeights: no desert in the ranges).)
+        c.sink = std::max(c.sink, 0.9 * smoothstep(MR.countryFrom - 0.18, MR.countryFrom + 0.035, f));
+    }
+    if (P.homeOn) {  // (round the start: a desert, a mesa country beside it, plains the other way)
+        static const int kind[3] = {PB_DUNES, PB_BADLANDS, PB_MEADOW};
+        static const double grow[3] = {1.0, 1.3, 0.9}, sinks[3] = {1.0, 1.0, 0.0};
+        // (Their outlines bent by a warp a few km across: lobes and bays, not circles.)
+        const double wx = x + 2400 * (fbm(P.s[S_MESA] + 61, x / 2600.0, z / 2600.0, 2) - 0.5), wz = z + 2400 * (fbm(P.s[S_MESA] + 62, x / 2600.0, z / 2600.0, 2) - 0.5);
+        for (int b = 0; b < 3; b++) {
+            const double d = std::sqrt(sqr(wx - P.blobX[b]) + sqr(wz - P.blobZ[b])), r = MR.homeSize * grow[b];
+            add(1 - smoothstep(r, r + 800, d), kLowAt[kind[b]][0], kLowAt[kind[b]][1], 0);
+            // (The ranges sink under it over a far wider band than its edge, out to the start but never under it: a mountain front
+            // over a km or two, not a wall.)
+            const double dc = std::sqrt(sqr(x - P.blobX[b]) + sqr(z - P.blobZ[b])), reach = std::sqrt(sqr(P.homeX - P.blobX[b]) + sqr(P.homeZ - P.blobZ[b])) - 100;
+            c.sink = std::max(c.sink, sinks[b] * (1 - smoothstep(std::min(r - 600, reach - 1500), reach, dc)));
+        }
+    }
+    if (sw > 0) c.wet = swW / sw, c.heat = swH / sw;
+    return c;
+}
+struct Climate {
+    double wet, heat, sink;
+};
+Climate climateAt(const ProcWorld::Params& P, double x, double z) {
+    Climate cl{wetRaw(P, x, z), heatRaw(P, x, z), 0};
+    const Country c = countryAt(P, x, z);
+    if (c.k > 0) cl.wet += (c.wet - cl.wet) * c.k, cl.heat += (c.heat - cl.heat) * c.k;
+    cl.sink = c.sink;  // (its sinking reaches further than its climate)
+    return cl;
+}
+Route routeHere(const ProcWorld::Params& P, double x, double z, Climate* out = nullptr) {
+    const Climate cl = climateAt(P, x, z);
+    if (out) *out = cl;
+    return routeAt(P, x, z, cl.wet, cl.heat, cl.sink);
+}
+// Where the world starts, first pick: an outpost's cell near the origin in the foothills (procworld.cpp ProcWorld::start), from the
+// routing's field alone (cheap). The home country lies round it, never under it, so the pick stands with it.
+void setHome(ProcWorld::Params& p, double angle) {
+    p.homeOn = false;
+    const MesaRule& MR = rules().mesa;
+    const int64_t pi = (int64_t)(hashIJ(p.seed ^ 0x0F0Full, 0, 0) % 3), pj = (int64_t)(hashIJ(p.seed ^ 0x0F0Full, 1, 1) % 3);
+    double best = 1e18;
+    for (int64_t i = -8; i <= 7; i++)
+        for (int64_t j = -8; j <= 7; j++) {
+            if (((i - pi) % 3 + 3) % 3 || ((j - pj) % 3 + 3) % 3) continue;
+            const double cx = (i + 0.5) * kCell, cz = (j + 0.5) * kCell;
+            const double massif = routeHere(p, cx, cz).massif;
+            const double off = std::max(0.0, std::fabs(massif - 0.3) - 0.15);
+            const double d = std::sqrt(cx * cx + cz * cz) + 10000 * off;
+            if (d < best) best = d, p.homeX = cx, p.homeZ = cz;
+        }
+    // (Which way round: of twelve turns from the seed's, the one with the lowest land under the desert and the mesas (and the plains,
+    // less): they sink the ranges under them, gently where there's little range to sink.)
+    const double dist[3] = {1.0, 1.25, 0.95}, wgt[3] = {1, 1, 0.5};
+    double bestCost = 1e18, bestA = angle;
+    for (int t = 0; t < 12; t++) {
+        const double a0 = angle + t * (M_PI / 6), ang[3] = {a0, a0 + 1.2, a0 + M_PI};
+        double cost = 0;
+        for (int b = 0; b < 3; b++)
+            for (double f : {0.6, 1.0, 1.4}) {  // (along each one's middle, the near side to the far)
+                const double r = MR.homeDistance * dist[b] * f;
+                cost += wgt[b] * routeHere(p, p.homeX + r * dm::cos(ang[b]), p.homeZ + r * dm::sin(ang[b])).massif;
+            }
+        if (cost < bestCost - 1e-9) bestCost = cost, bestA = a0;
+    }
+    const double ang[3] = {bestA, bestA + 1.2, bestA + M_PI};
+    for (int b = 0; b < 3; b++) {
+        p.blobX[b] = p.homeX + MR.homeDistance * dist[b] * dm::cos(ang[b]);
+        p.blobZ[b] = p.homeZ + MR.homeDistance * dist[b] * dm::sin(ang[b]);
+    }
+    p.homeOn = MR.homeDistance > 0;
 }
 void lowWeights(const ProcWorld::Params& P, double wet, double heat, double mk, double w[PB_COUNT]) {
     const double nearRange = smoothstep(0.05, 0.45, mk);
@@ -347,8 +456,9 @@ std::shared_ptr<DBlock> makeBlock(const ProcWorld& G, int64_t bi, int64_t bj) {
             const int64_t i = bi * kB + a - 1, j = bj * kB + c - 1;
             const int k = a * kAp + c;
             nodePos(P, i, j, b->x[k], b->z[k]);
-            const double wet = wetAt(P, b->x[k], b->z[k]), heat = heatAt(P, b->x[k], b->z[k]);
-            const Route r = routeAt(P, b->x[k], b->z[k], wet, heat);
+            Climate cl;
+            const Route r = routeHere(P, b->x[k], b->z[k], &cl);
+            const double wet = cl.wet, heat = cl.heat;
             b->R[k] = r.R;
             if (a >= 1 && c >= 1 && a <= kB && c <= kB) {
                 const int q = (a - 1) * kB + (c - 1);
@@ -1328,8 +1438,10 @@ Mass massAt(const ProcWorld::Params& P, double x, double z) {
     const double S = P.scale;
     const RangeRule& RR = rules().range;
     Mass ms;
-    ms.wet = wetAt(P, x, z), ms.heat = heatAt(P, x, z);
-    const Route& r = ms.r = routeAt(P, x, z, ms.wet, ms.heat);
+    Climate cl;
+    ms.r = routeHere(P, x, z, &cl);
+    ms.wet = cl.wet, ms.heat = cl.heat;
+    const Route& r = ms.r;
     double M = r.R + r.U;
     double rough = 0;
     if (r.mk > 0.01) {
@@ -1352,7 +1464,7 @@ Mass massAt(const ProcWorld::Params& P, double x, double z) {
     if (bench > 0) {  // (the mesas stepped in benches with steep risers: continuous)
         const double step = 9.0, f = M / step + 0.35 * (fbm(P.s[S_TERR], x * 0.006, z * 0.006, 2) - 0.5), fl = std::floor(f);
         const double q = step * (fl + smoothstep(0.5, 1.0, f - fl));
-        M += (q - M) * bench;
+        M += (q - M) * bench * 0.3;  // (v9: low steps on the floor, a trace of the old benches: the floor between the mesas is open flats, evalMacro's mesas the steps)
     }
     if (dunes > 0) {  // (sand ridges across the wind)
         const double u = (x * P.windX + z * P.windZ) / 52.0 + 2.2 * fbm(P.s[S_DUNE], x * 0.0035, z * 0.0035, 2);
@@ -1388,7 +1500,7 @@ double valeAt(const ProcWorld& G, double x, double z) {
 // ...the same with the mass smooth (no crags or knolls): the land the creeks and gullies drain down (second pass).
 double valeSmoothAt(const ProcWorld& G, double x, double z) {
     const ProcWorld::Params& P = G.params();
-    const Route r = routeAt(P, x, z, wetAt(P, x, z), heatAt(P, x, z));
+    const Route r = routeHere(P, x, z);
     const double M = r.R + r.U;
     const auto T = tileAt(G, x, z, true);
     const int a = std::min(kTC - 1, std::max(0, (int)std::floor((x - T->ox) / kTCell))), b = std::min(kTC - 1, std::max(0, (int)std::floor((z - T->oz) / kTCell)));
@@ -1494,7 +1606,11 @@ static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, c
         double d, t, bh;
         segNear(s, px, pz, d, t, bh);
         if (d > s.reach) continue;
-        const double L = s.la + (s.lb - s.la) * t;
+        double L = s.la + (s.lb - s.la) * t;
+        // (v9: a creek's or gully's notch on a wet river's floor, beside it (its last stretch running down alongside the river to where it
+        // joins it lower down), never under the river's own bank there: it cut the river's ground out from under its water, which the worn
+        // land's raised banks held in until now. (The rivers come first in a tile's pieces: the nearest is known by the notches.))
+        if (s.notch && rs && rs->wet > 0.5 && rd < rs->hw + rs->F + 12) L = std::max(L, rs->la + (rs->lb - rs->la) * rt + rs->bank);
         const double v = valleyAt(s, d, L, s.notch ? vale : M, false, bh);
         if (v < env) env = v, Lmin = L, m.floorArea = s.A, fi = s.ni, fj = s.nj, hasFloor = true;
         if (s.cls >= 2 && d < rd) rd = d, rs = &s, rt = t;
@@ -1544,27 +1660,59 @@ static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, c
         // (rising gently from the bank: no steep step up beside the water; a river's floor, where its lakes stand, wider)
         const double wpos = std::max(smoothstep(0.0, KR.floorClear, over), 0.5 * smoothstep(4.0, KR.channelClear, bank)) * smoothstep(1.0, 25.0, bank) *
                             smoothstep(0.0, 70.0, rs ? rd - rs->hw : 1e9);
-        const double k = bm * (K >= 0 ? K * wpos : K * wneg);
+        // (Mesa country's floor flatter still: open red flats between the mesas, Monument Valley's)
+        const double k = bm * (1 - 0.6 * smoothstep(0.3, 0.6, m.w[PB_BADLANDS])) * (K >= 0 ? K * wpos : K * wneg);
         m.h = std::max(Lmin + 0.5 * std::max(0.0, over), env + k);
     }
     // ---- The mesas (procrules.h MesaRule; Monument Valley): over the land the valleys left, flat-topped at the desert floor's level
     // and a mesa's height over it, a sheer band on a talus slope, lone spires; the rivers and creeks cut canyons through them ----
     {
-        const double bench = smoothstep(0.3, 0.6, m.w[PB_BADLANDS]);  // (wherever the mesa biome holds, in the ranges' foothills too)
+        // (Where the mesa biome holds: by how near the climate is to mesa country's, which changes over hundreds of metres, not by the
+        // biome's weight, which can flip in a few: toward its edge the mesas sink, never cut off in a wall. None up in the ranges.)
+        const double dcl = std::sqrt(sqr(m.wet - kLowAt[PB_BADLANDS][0]) + sqr(m.heat - kLowAt[PB_BADLANDS][1]));
+        const double bench = (1 - smoothstep(0.05, 0.17, dcl)) * (1 - smoothstep(0.15, 0.5, m.rug));
         if (bench > 0) {
             const MesaRule& MR = rules().mesa;
             const ProcWorld::Params& P = G.params();
-            const double f = fbm(P.s[S_MESA] + 3, x / (MR.size * P.scale), z / (MR.size * P.scale), 3);
-            const double talus = smoothstep(0.46, 0.56, f);
-            // (Breaks in the band here and there: a steep ramp up through it, the way onto the top (the trails find them))
-            const double brk = smoothstep(0.72, 0.8, vnoise(P.s[S_MESA] + 21, x / 90.0, z / 90.0));
-            const double band = smoothstep(0.565, 0.58, f) * (1 - brk) + smoothstep(0.5, 0.62, f) * brk;
-            double shape = (1 - MR.cliff) * talus + MR.cliff * band;
-            const double sp = ridgedMF(P.s[S_MESA] + 9, x / 140.0, z / 140.0, 2);  // (spires: needles where the ridged field peaks)
-            shape = std::max(shape, 0.6 * MR.spires * smoothstep(0.82, 0.9, sp) * (1 - talus) * 1.6);
-            const double top = ms.r.R + 30 + MR.height * P.relief * shape;  // (the desert floor, 30 m of fill, then the mesa)
+            const double S = P.scale;
+            // (Each mesa and butte its own height: neighbours from two thirds to over a third more than the rule's.)
+            const double hv = 0.65 + 0.7 * vnoise(P.s[S_MESA] + 33, x / (2.2 * MR.size * S), z / (2.2 * MR.size * S));
+            const double Hm = MR.height * P.relief * hv;
+            // (A field and how far a point is from where it passes a value, in metres: the field's excess over its slope, so a cliff's
+            // steepness is the rule's wherever the field is steep or gentle.)
+            auto field = [&](auto fn, double a, double& v) {
+                v = fn(x, z);
+                const double gx = fn(x + 2, z) - v, gz = fn(x, z + 2) - v;
+                return (v - a) * 2 / std::max(1e-6, std::sqrt(gx * gx + gz * gz));
+            };
+            // (Breaks in the bands here and there: a ramp up through them, the way onto the top (the trails find them), wide enough to
+            // switchback up.)
+            const double brk = smoothstep(0.62, 0.7, vnoise(P.s[S_MESA] + 21, x / 170.0, z / 170.0));
+            // A mesa's profile by how far in from its edge (d, m; the edge where the talus meets the cliffs): the talus skirt under it
+            // (~1:1.7), then two sheer bands of sandstone with a ledge between (the lower the taller: De Chelly under its caprock; ~2.4:1
+            // at their steepest, what a 1 m grid holds as a cliff), flat on top. Through a break, one long ramp (~1:2.5).
+            auto profile = [&](double d, double H) {
+                const double rT = (1 - MR.cliff) * H, r1 = 0.72 * MR.cliff * H, r2 = 0.28 * MR.cliff * H;
+                const double T = rT, C1 = 0.62 * r1, C2 = 0.62 * r2, L = 25;
+                const double h = rT * smoothstep(-T, 0, d) + r1 * smoothstep(0, C1, d) + r2 * smoothstep(C1 + L, C1 + L + C2, d);
+                return (h * (1 - brk) + H * smoothstep(-T, 2.5 * H, d) * brk) / std::max(1.0, H);
+            };
+            double f;
+            const double df = field([&](double px, double pz) { return fbm(P.s[S_MESA] + 3, px / (MR.size * S), pz / (MR.size * S), 3); }, 0.56, f);
+            const double mesa = df > -800 ? profile(df, Hm) : 0.0;
+            // (Lone buttes out on the flats between: a smaller field's peaks, away from the mesas' skirts.)
+            double fb;
+            const double dfb = field([&](double px, double pz) { return fbm(P.s[S_MESA] + 5, px / (0.36 * MR.size * S), pz / (0.36 * MR.size * S), 2); }, 0.71 - 0.1 * MR.buttes, fb);
+            const double butte = dfb > -600 ? 0.8 * profile(dfb, 0.8 * Hm) * (1 - smoothstep(0.4, 0.48, f)) : 0.0;
+            double shape = std::max(mesa, butte);
+            // (Spires: needles where a ridged field peaks, out on the flats; taller the more the rule wants, ~2.4:1 sides)
+            double sp;
+            const double dsp = field([&](double px, double pz) { return ridgedMF(P.s[S_MESA] + 9, px / 140.0, pz / 140.0, 2); }, 0.84 - 0.06 * MR.spires, sp);
+            const double Hs = (0.15 + 0.3 * MR.spires) * Hm;
+            if (dsp > 0) shape = std::max(shape, Hs / std::max(1.0, Hm) * smoothstep(0, 0.62 * Hs, dsp) * (1 - smoothstep(0.45, 0.53, f)));
+            const double top = ms.r.R + 30 + Hm * shape;  // (the desert floor, 30 m of fill, then the mesa)
             const double bank = std::min(rs ? rd - rs->hw : 1e9, cs ? cd - cs->hw : 1e9);
-            const double wch = smoothstep(6.0, 45.0, bank);  // (the canyons: a channel's water cuts down through it)
+            const double wch = smoothstep(5.0, 5.0 + std::max(0.0, top - m.h) / 1.6, bank);  // (the canyons: a channel's water cuts down through it, its walls ~2.4:1 at their steepest, as the bands)
             if (top > m.h) m.h += (top - m.h) * bench * wch * smoothstep(0.0, 0.02, shape);
         }
     }
@@ -1996,9 +2144,6 @@ void applyErosion(const ProcWorld& G, double x, double z, Macro& m, bool wait = 
     if (m.creekOn > 0.5 && m.creekS < 35) keep = std::max(keep, m.creekLevel + 0.35);
     if (m.riverOn > 0.5 && m.riverS < 35) keep = std::max(keep, m.riverLevel + 0.35);
     m.h = std::max(m.h + D, std::min(m.h, keep));
-    // (A wet river never runs perched over its own valley: where the land under and beside its water lies under its level (a
-    // creek's notch or a valley cut beneath it), its banks are raised to hold it, falling off at 1 in 2 away from the water.)
-    if (m.riverOn > 0.5 && m.riverS < m.riverHW + 12) m.h = std::max(m.h, m.riverLevel + 0.35 - 0.5 * std::max(0.0, m.riverS - m.riverHW));
     // (A lake the worn land holds here: its own tile's, the nearest of its cells.)
     // (Each lake is its own tile's, but may run out over the blend band into the next: the tiles whose change grids hold the point.)
     const int64_t ti = (int64_t)std::floor(x / (double)kETile), tj = (int64_t)std::floor(z / (double)kETile);
@@ -2450,9 +2595,9 @@ void ProcWorld::start(int64_t& x, int64_t& z, double& yaw) const {
         for (int64_t j = -8; j <= 7; j++) {
             if (((i - pi) % 3 + 3) % 3 || ((j - pj) % 3 + 3) % 3) continue;
             const double cx = (i + 0.5) * kCell, cz = (j + 0.5) * kCell;
-            const double massif = routeAt(P, cx, cz, wetAt(P, cx, cz), heatAt(P, cx, cz)).massif;
+            const double massif = routeHere(P, cx, cz).massif;
             const double off = std::max(0.0, std::fabs(massif - 0.3) - 0.15);  // (foothills: massif 0.15-0.45)
-            cand.push_back({std::sqrt(cx * cx + cz * cz) + 10000 * off, {i, j}});
+            cand.push_back({std::sqrt(sqr(cx - P.homeX) + sqr(cz - P.homeZ)) + 10000 * off, {i, j}});  // (nearest the first pick: its home country round it)
         }
     std::sort(cand.begin(), cand.end());
     double best = 1e18;
@@ -2464,7 +2609,8 @@ void ProcWorld::start(int64_t& x, int64_t& z, double& yaw) const {
             const double r = q < 8 ? 18 : 34;
             steep = std::max(steep, std::fabs(groundHeight(n.x + kDir8[q & 7][0] * r, n.z + kDir8[q & 7][1] * r) - n.h) / r);
         }
-        const double d = cand[c].first + 20000 * std::max(0.0, steep - 0.08);
+        // (never in its home country's desert, mesa or plains, nor their edges: beside them, the way into each its own)
+        const double d = cand[c].first + 20000 * std::max(0.0, steep - 0.08) + (countryAt(P, n.x, n.z).k > 0.02 ? 1e9 : 0.0);
         if (d < best) best = d, at = n;
     }
     yaw = nodeYaw(at);
@@ -2544,6 +2690,10 @@ TrailNode ProcWorld::makeNode(int64_t i, int64_t j) const {
     n.fuel = mi == 1 && mj == 2;
     // A spot in the cell to build on: clear of rivers and creeks, the gentlest ground of a dozen tries, low rather than high (in the
     // ranges: the valleys and passes, where the roads can get to). Its flat ground is the land's level there.
+    // (In mesa country a share of the nodes, never an outpost's or a fuel stop's, are up on a mesa's flat top instead: the trails to
+    // them climb its talus and a break in its cliff bands, owner: "trails to the top of mesas".)
+    const Macro mc = macroAt((double)(i * kCell) + kCell / 2, (double)(j * kCell) + kCell / 2, false);
+    n.top = mi != 0 && mj != 0 && !n.fuel && mc.w[PB_BADLANDS] > 0.85 && hash01(P.s[S_DITHER] + 29, i, j) < 0.4;
     double best = -1e18;
     for (int k = 0; k < 36; k++) {
         if (k == 12 && best > -1e8) break;  // (the first dozen found dry ground; else on, over the whole cell)
@@ -2554,7 +2704,7 @@ TrailNode ProcWorld::makeNode(int64_t i, int64_t j) const {
         const double g = groundHeight(x, z, m), e = groundHeight(x + 20, z), w = groundHeight(x - 20, z), s = groundHeight(x, z + 20), nn = groundHeight(x, z - 20);
         const double slope = (std::fabs(e - w) + std::fabs(s - nn)) / 40 + (std::fabs(e + w - 2 * g) + std::fabs(s + nn - 2 * g)) / 40;
         const double clear = m.lakeLevel > -1e8 ? -40.0 : std::min(std::fabs(m.riverS) - m.riverHW - (m.riverOn > 0 ? 45 : 15), std::fabs(m.creekS) - 20);
-        const double score = (m.riverOn > 0 && std::fabs(m.riverS) < m.riverHW + 3 ? -1e9 : 0.0) + std::min(clear, 30.0) - 160 * slope - 0.12 * g;  // (never in a river)
+        const double score = (m.riverOn > 0 && std::fabs(m.riverS) < m.riverHW + 3 ? -1e9 : 0.0) + std::min(clear, 30.0) - 160 * slope + (n.top ? 0.6 : -0.12) * g;  // (never in a river)
         if (score > best) best = score, n.x = x, n.z = z, n.h = (2 * g + e + w + s + nn) / 6;
     }
     return n;
@@ -2660,12 +2810,14 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
         // Its rating (and so the steepest it may climb): roads are gentle; trails by the dice, rougher in the ranges.
         const double mtn = 0.5 * (land(a.x, a.z).rug + land(b.x, b.z).rug);
         const double rr = hash01(P.s[S_DITHER] + 401 + (uint64_t)dir, i, j);
-        e->rating = e->road ? 0 : mtn > 0.4 ? (rr < 0.35 ? 1 : 2) : (rr < 0.45 ? 0 : rr < 0.85 ? 1 : 2);
+        e->rating = e->road ? 0 : a.top || b.top ? 2 : mtn > 0.4 ? (rr < 0.35 ? 1 : 2) : (rr < 0.45 ? 0 : rr < 0.85 ? 1 : 2);  // (up onto a mesa: black)
         const double gmax = e->road ? 0.12 : e->rating == 0 ? 0.15 : e->rating == 1 ? 0.22 : 0.32;
         // The way: the cheapest path over a 16 m grid of the land round the two nodes (A*), each step dearer the steeper it climbs and
         // far dearer past the rating's grade, so it zigzags up a slope it can't take straight (switchbacks); a river crossed once, at a ford.
         constexpr double C = 16;
-        const double W = e->road ? 320 : 220;  // (how far it may wander: a road's gentler grade wants longer switchbacks; makeChunk's gather allows ~460)
+        // (How far it may wander: a road's gentler grade wants longer switchbacks; a long climb (v9) room for its zigzags as long as it needs, out
+        // to 400 m; a climb onto a mesa a way round to a break in its cliffs. makeChunk's gather allows ~460.)
+        const double W = e->road ? 320 : a.top || b.top ? 400 : std::min(400.0, std::max(220.0, 220 + 0.8 * std::fabs(a.h - b.h)));
         const double gx0 = std::floor((std::min(a.x, b.x) - W) / C) * C, gz0 = std::floor((std::min(a.z, b.z) - W) / C) * C;
         const int NX = (int)((std::max(a.x, b.x) + W - gx0) / C) + 1, NZ = (int)((std::max(a.z, b.z) + W - gz0) / C) + 1;
         std::vector<float> H((size_t)NX * NZ);
@@ -2693,6 +2845,10 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
             ux[d] = kStep[d][0] / l, uz[d] = kStep[d][1] / l;
         }
         const double turnK = e->road ? 26 : 16, hairpinK = e->road ? 70 : 40;
+        // (v9, switchbacks: on a climb steeper than its grade end to end, the legs of a zigzag may slant across steeper sides; elsewhere a
+        // tread across a steep side is dearer, a deep cut on one hand and a bank on the other)
+        const bool climb = !e->road && std::fabs(a.h - b.h) > gmax * std::sqrt(sqr(a.x - b.x) + sqr(a.z - b.z));
+        const double crossFrom = climb ? 0.75 : 0.5;
         const size_t NS = (size_t)NX * NZ * NSD;
         std::vector<double> cost(NS, 1e300);
         std::vector<int> from(NS, -1);
@@ -2727,7 +2883,7 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
                     auto Hc = [&](int a, int b) { return (double)H[(size_t)std::min(NX - 1, std::max(0, a)) * NZ + std::min(NZ - 1, std::max(0, b))]; };
                     const double sx = (Hc(nu + 1, nv) - Hc(nu - 1, nv)) / (2 * C), sz = (Hc(nu, nv + 1) - Hc(nu, nv - 1)) / (2 * C);
                     const double cross = std::fabs(-sx * uz[d] + sz * ux[d]);  // (the land's fall across the way)
-                    if (cross > 0.5) step += L * 12 * (cross - 0.5);
+                    if (cross > crossFrom) step += L * 12 * (cross - crossFrom);
                 }
                 if (wet[nc] == 3) step += 8000;  // (into a lake: never, nearly)
                 else if (wet[nc] == 2 && wet[c] != 2) step += canBridge || e->road ? 350 : 8000;  // (a bridge costs; wading a big river: never, nearly)
@@ -2780,19 +2936,18 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
         };
         std::vector<double> raw(n), y(n), along(n, 0.0);
         std::vector<char> ford(n, 0);
-        // (...and the ground itself every 4 m (between, in a line: a gully's dip is caught): the most the tread may stand over, at the end. In a valley's hollow
+        // (...and the ground itself at every sample (a gully's dip is caught): the most the tread may stand over, at the end. In a valley's hollow
         // or beside a wash the 16 m lattice's corners up the sides would hold it up on a bank over the floor.)
         std::vector<double> fine(n);
         for (int k = 0; k < n; k++) {
             raw[k] = Hat(px[k], pz[k]);
-            fine[k] = (k % 2 == 0 || k == n - 1) ? groundHeight(a.x + px[k], a.z + pz[k]) : 0.0;
+            fine[k] = groundHeight(a.x + px[k], a.z + pz[k]);  // (v9: every 2 m: a dry wash narrower than 4 m is caught too)
             if (k) along[k] = along[k - 1] + std::sqrt(sqr(px[k] - px[k - 1]) + sqr(pz[k] - pz[k - 1]));
         }
-        for (int k = 0; k + 1 < n; k++)
-            if (k % 2) {
-                const int k0 = k - k % 2, k1 = std::min(n - 1, k0 + 2);
-                fine[k] = fine[k0] + (fine[k1] - fine[k0]) * (double)(k - k0) / (k1 - k0);
-            }
+        // (A bridge's deck is set over the ground every 4 m, the ground between in a line, as before v9: its banks' metre-scale rims
+        // would raise it over the approaches beyond.)
+        std::vector<double> fine4(fine);
+        for (int k = 1; k + 1 < n; k += 2) fine4[k] = 0.5 * (fine[k - 1] + fine[k + 1]);
         const int smoothR = e->road ? 8 : 4;  // (a road's profile smoothed over ~32 m; a trail's follows the land closer, ~16 m)
         for (int k = 0; k < n; k++) {
             double s = 0;
@@ -2830,7 +2985,7 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
                 // (The deck over the highest bank under it, and ~6 m of level approach at each end graded to it (earthworks): the
                 // ground meets the deck at its ends, never stands over it.)
                 double deck = level + 1.8;
-                for (int q = b0; q <= b1; q++) deck = std::max(deck, fine[q]);  // (the ground itself: the 16 m lattice in a gorge reads its rims)
+                for (int q = b0; q <= b1; q++) deck = std::max(deck, fine4[q]);  // (the ground itself: the 16 m lattice in a gorge reads its rims)
                 for (int q = b0; q <= b1; q++) br[q] = 1, y[q] = deck;
                 for (int q = 1; q <= 3; q++) {
                     if (b0 - q >= 1) app[b0 - q] = 1, y[b0 - q] = deck;
@@ -2849,13 +3004,14 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
         }
         for (int k = 0; k < n; k += 4) {  // (fords: where it's in a river or a creek, the water's level less a wading depth)
             const double gx = a.x + px[k], gz = a.z + pz[k];
-            if (!wet[cellOf(gx, gz)] || br[k]) continue;
+            if (!wet[cellOf(gx, gz)] || br[k] || app[k]) continue;  // (v9: nor on a bridge's approach: a creek beside its end let it down off the deck)
             const Macro m = macro(gx, gz);
             double fy = 1e9;
             if (m.riverOn > 0.5 && std::fabs(m.riverS) < m.riverHW + 2) fy = m.riverLevel - 0.45, e->bigFord |= m.bigRiver;
             else if (m.creekOn > 0.5 && std::fabs(m.creekS) < m.creekHW + 1) fy = m.creekLevel - 0.3;
             if (fy > 1e8) continue;
-            for (int q = std::max(0, k - 2); q <= std::min(n - 1, k + 2); q++) ford[q] = 1, y[q] = fy;
+            for (int q = std::max(0, k - 2); q <= std::min(n - 1, k + 2); q++)
+                if (!br[q] && !app[q]) ford[q] = 1, y[q] = fy;
             if (!e->ford) e->ford = true, e->fordX = gx, e->fordZ = gz;
         }
         y[0] = a.h, y[n - 1] = b.h;
@@ -3032,6 +3188,27 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
     {
         const auto te = std::chrono::steady_clock::now();
         const int64_t ci = floorDiv(gx0 + 32, kCell), cj = floorDiv(gz0 + 32, kCell);
+        {  // (v9, procworld/chunk-budget: the ones nobody laid out ahead, laid out a few at once: each is its own A* over its own
+           // land, a pure function of its two nodes, so the same whichever thread makes it. ~0.5 s one after another, a quarter of it so.)
+            std::vector<EdgeKey> missing;
+            {
+                std::lock_guard<std::mutex> lock(edgeMutex);
+                for (int64_t i = ci - 2; i <= ci + 1; i++)
+                    for (int64_t j = cj - 2; j <= cj + 1; j++)
+                        for (int dir = 0; dir < 2; dir++)
+                            if (!edgeCache.count({seed_, i, j, dir})) missing.push_back({seed_, i, j, dir});
+            }
+            if (missing.size() >= 3) {
+                std::atomic<size_t> next{0};
+                auto work = [&] {
+                    for (size_t k; (k = next.fetch_add(1)) < missing.size();) edge(missing[k].i, missing[k].j, missing[k].dir);
+                };
+                std::vector<std::thread> pool;
+                for (int t = 1; t < 4; t++) pool.emplace_back(work);
+                work();
+                for (std::thread& t : pool) t.join();
+            }
+        }
         for (int64_t i = ci - 2; i <= ci + 1; i++)  // (an edge runs east or north of its cell's node, wandering up to ~260 m off)
             for (int64_t j = cj - 2; j <= cj + 1; j++)
                 for (int dir = 0; dir < 3; dir++) {
@@ -3259,6 +3436,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                 }
             }
             double bridgeOff = 1e9, bridgeY = 0;  // (how far outside the nearest bridge's clear ground, and its deck)
+            double endRamp = -1e9;  // (v9: the ground under a bridge's approach, past its ends: level with the deck 6 m on, then down at 1:3)
             for (const auto& ep : edges)  // (a bridge's span and approaches, 8 m past each end and 5 m either side of the deck: clear)
                 for (const TrailEdge::Span& sp : ep->bridges) {
                     const double vx = sp.bx - sp.ax, vz = sp.bz - sp.az, len = std::sqrt(vx * vx + vz * vz);
@@ -3268,6 +3446,10 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                     if (along > -8 && along < len + 8 && across < ep->half() + 5) cl.keep = 1, cl.bridge = true;
                     const double off = std::max({0.0, -8 - along, along - len - 8, across - ep->half() - 5});
                     if (off < bridgeOff) bridgeOff = off, bridgeY = sp.y;
+                    if (across < ep->half() + 3 && (along < 0 || along > len)) {  // (v9: past its ends, on its line: the approach's bank)
+                        const double e = std::max(-along, along - len);
+                        if (e < 25) endRamp = std::max(endRamp, sp.y - 0.35 * std::max(0.0, e - 6));
+                    }
                 }
             if (bridgeOff <= 0 && h > bridgeY) h = bridgeY;  // (a bridge's ends and approaches: the ground never over its deck)
             for (const Plaza& pz : plazas) {  // (level ground for the place's buildings, easing into the land)
@@ -3281,6 +3463,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                 if (d < pz.r + 3) cl.keep = 1, cl.water = -1e9, cl.fx = cl.fz = 0;
                 if (pz.lot && d < pz.r - 1) cl.bed = 4;
             }
+            if (endRamp > h) h = endRamp;  // (a bridge's approach built up to its deck, whatever lot or hollow is beside it: never a step off its end)
             // (By a worn-land lake, after the trails and places have had their way: water where the ground's under its level, else
             // the ground never under it beside the water.)
             if (cl.lakeW > -1e8 && h < cl.lakeW - 0.02 && cl.water < cl.lakeW) {
@@ -3488,7 +3671,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         if (rr() > 0.25 + 0.75 * smoothstep(0.15, 0.6, slope)) continue;
         const bool big = slope > 0.4 && rr() < 0.15;
         const double rad = SCR.rockSize * (big ? 1.4 + 2.2 * rr() : 0.35 + rr() * rr() * 0.9), flat = 0.5 + 0.4 * rr();
-        if (rad > 2 && trailNear(fx, fz, rad)) continue;
+        if (rad > 1.3 && trailNear(fx, fz, rad * 1.5)) continue;  // (v9: as big as it may grow, a cluster's middle: never over a trail or a bridge's end)
         RockSpec r;
         r.x = (float)fx, r.z = (float)fz, r.rx = (float)rad, r.ry = (float)(rad * flat), r.rz = (float)(rad * (0.7 + 0.3 * rr()));
         r.top = (float)(rad * flat * (0.5 + 0.5 * rr()));
@@ -3592,6 +3775,15 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         // (Clear of the trails, water, bridges and places: open ground right round its footprint.)
         auto clearRound = [&](double fx, double fz, double rad) {
             if (rad > 2 && trailNear(fx, fz, rad)) return false;
+            // (A bridge's span and approaches, its footprint's reach included: the cells below only see this chunk's, so a big rock
+            // near its edge could reach over one in the next chunk.)
+            for (const auto& ep : edges)
+                for (const TrailEdge::Span& sp : ep->bridges) {
+                    const double vx = sp.bx - sp.ax, vz = sp.bz - sp.az, len = std::sqrt(vx * vx + vz * vz);
+                    if (len < 1e-6) continue;
+                    const double rx = (double)gx0 + fx - sp.ax, rz = (double)gz0 + fz - sp.az, along = (rx * vx + rz * vz) / len, across = std::fabs(-rx * vz + rz * vx) / len;
+                    if (along > -9 - rad && along < len + 9 + rad && across < ep->half() + 6 + rad) return false;
+                }
             for (int q = 0; q < 9; q++) {
                 const double ax = q == 8 ? 0 : kDir8[q][0], az = q == 8 ? 0 : kDir8[q][1];
                 int i, j;
@@ -3822,6 +4014,7 @@ std::string ProcWorld::placeName(int64_t i, int64_t j, int salt) const {
 int ProcWorld::nodeKind(const TrailNode& n) const {
     if (n.outpost) return PK_RANGER_STATION;
     if (n.fuel) return PK_FUEL_STOP;
+    if (n.top) return PK_LOOKOUT;  // (up on a mesa: the view over the valley)
     const double r = hash01(params_->s[S_DITHER] + 501, n.i, n.j);
     const int b = biomeAt(n.x, n.z);
     if (r < 0.26) return PK_CABIN;

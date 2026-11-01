@@ -27,6 +27,16 @@ const VehicleSpec& broncoOn(int tread) {
         const VehicleSpec& s = tunedSpec(v, ms);
         if (s.tireType == tread) return s;
     }
+    if (tread == TIRE_SNOW) {
+        // (Winter tires aren't in the garage since parts list 2, docs/parts-simplified.md; the tread still is in the
+        // tire model. Fitted as the garage fitted them: the all-terrains' grip scaled by the treads' peaks, mods.cpp.)
+        static VehicleSpec snow = [] {
+            VehicleSpec s = vehicleCatalog()[2];
+            s.tireGrip *= 0.94 / 0.98, s.lateralGrip *= 0.80 / 0.77, s.tireType = TIRE_SNOW;
+            return s;
+        }();
+        return snow;
+    }
     return vehicleCatalog()[v];
 }
 

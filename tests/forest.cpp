@@ -196,14 +196,14 @@ SCENARIO(forestBudget, "forest/budget", "The trees and bushes a dense view draws
 SCENARIO(forestFarField, "forest/far-field", "The far forest's field (farforest.h) grows what the chunks grow: its trees a hectare and its conifers, from the generator's own tree rule") {
     // Chunks of two seeds' worlds against the field at their four 32 m samples (the backdrop's spacing): the trees a hectare the
     // chunks end up with, and the field's, binned by how wooded the field says it is.
-    double realSum[3] = {}, fieldSum[3] = {}, conR = 0, conF = 0;
+    double realSum[3] = {}, fieldSum[3] = {}, conR = 0, conF = 0, fieldTrees = 0;
     int n[3] = {}, trees = 0;
     for (uint64_t seed : {1ull, 2ull}) {
         const proc::ProcWorld& G = proc::ProcWorld::forSeed(seed);
         for (int64_t cx = -24; cx < 24; cx += 6)
             for (int64_t cz = -24; cz < 24; cz += 6) {
                 auto c = G.chunk(cx, cz);
-                double field = 0, con = 0;
+                double field = 0, conTrees = 0;
                 for (int a = 0; a < 2; a++)
                     for (int b = 0; b < 2; b++) {
                         const double gx = (double)cx * 64 + 16 + 32 * a, gz = (double)cz * 64 + 16 + 32 * b;
@@ -211,13 +211,18 @@ SCENARIO(forestFarField, "forest/far-field", "The far forest's field (farforest.
                         const double h = G.groundHeight(gx, gz, m);
                         const double slope = std::hypot(G.groundHeight(gx + 32, gz) - G.groundHeight(gx - 32, gz), G.groundHeight(gx, gz + 32) - G.groundHeight(gx, gz - 32)) / 64;
                         const auto tc = G.treeCover(gx, gz, m, h, slope);
-                        field += FarForestGrid::realized(tc.triedPerHa) / 4, con += tc.conifer / 4;
+                        const double grown = FarForestGrid::realized(tc.triedPerHa);
+                        field += grown / 4, conTrees += grown * tc.conifer / 4;
                     }
                 const int bin = field < 40 ? 0 : field < 150 ? 1 : 2;
                 realSum[bin] += c->trees.size() / 0.4096, fieldSum[bin] += field, n[bin]++;
                 int cc = 0;
                 for (const auto& t : c->trees) cc += t.kind == 0;
-                conR += cc, conF += con * c->trees.size(), trees += (int)c->trees.size();
+                // (The conifers each grows, over the same land: the chunks' counted, the field's as it draws them, each 32 m sample's
+                // own trees with its own share. v9: a plain mean of the samples' shares weighted an open sample's like a wooded one's,
+                // and the woods (conifers, on the slopes) hold the trees: 0.52 against the chunks' 0.63, while the field's own share,
+                // tree for tree, is 0.61.)
+                conR += cc, conF += conTrees * 0.4096, fieldTrees += field * 0.4096, trees += (int)c->trees.size();
             }
     }
     char b[200];
@@ -226,13 +231,14 @@ SCENARIO(forestFarField, "forest/far-field", "The far forest's field (farforest.
                       n[k] ? realSum[k] / n[k] : 0.0, n[k] ? fieldSum[k] / n[k] : 0.0);
         ctx.note(b);
     }
-    std::snprintf(b, sizeof b, "conifers: the chunks %.2f, the field %.2f", trees ? conR / trees : 0.0, trees ? conF / trees : 0.0);
+    const double shareR = trees ? conR / trees : 0.0, shareF = fieldTrees > 0 ? conF / fieldTrees : 0.0;
+    std::snprintf(b, sizeof b, "conifers: the chunks %.2f, the field %.2f", shareR, shareF);
     ctx.note(b);
     ctx.check("some thick wood and some open land among the chunks", n[2] >= 4 && n[0] >= 4);
     for (int k = 1; k < 3; k++)
         if (n[k] >= 4) ctx.check(std::string(k == 1 ? "thin" : "thick") + " wood: the field within a quarter of the chunks' trees", std::fabs(fieldSum[k] - realSum[k]) <= 0.25 * realSum[k]);
     ctx.check("open land: the field under 40 trees a hectare there too", n[0] == 0 || realSum[0] / n[0] < 40);
-    ctx.check("the field's conifer share within 0.08 of the chunks'", trees > 0 && std::fabs(conR - conF) / trees < 0.08);
+    ctx.check("the field's conifer share within 0.08 of the chunks'", trees > 0 && fieldTrees > 0 && std::fabs(shareR - shareF) < 0.08);
 }
 
 SCENARIO(forestPictures, "forest/pictures", "Past where the pictures take over (forest::View::impostorFrom) no tree is a mesh; before it they dissolve over the band; shadows stop there") {

@@ -105,10 +105,10 @@ SCENARIO(paintGarageFile, "paint/garage-file", "Paint saves per vehicle with the
     // A file from before paint.
     const std::string old = tmpFile("old.txt");
     FILE* f = std::fopen(old.c_str(), "w");
-    std::fprintf(f, "bronco 1 0 0 0 0\n4runner 0 0 0\ncivic 0 0 0 0 0\n");
+    std::fprintf(f, "bronco 2 0 0 0 0\n4runner 0 0 0\ncivic 0 0 0 0 0\n");  // (before parts list 2: the Bronco's old engine 2, the stage 1 tune)
     std::fclose(f);
     Garage g;
-    ctx.check("old file loads", g.load(old) && g.fitted[a].pick[MOD_ENGINE] == 1);
+    ctx.check("old file loads (its picks in the old lists: the tune is TUNED V6 now)", g.load(old) && modOptions(a, MOD_ENGINE)[g.fitted[a].pick[MOD_ENGINE]].name == "TUNED V6");
     bool factory = true;
     for (const CarPaint& p : g.paint) factory &= p.factory();
     ctx.check("with factory colours everywhere", factory);

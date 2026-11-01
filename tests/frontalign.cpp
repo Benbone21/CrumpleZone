@@ -19,9 +19,9 @@ int optIndex(int vehicle, int slot, const std::string& name) {
 }
 const VehicleSpec& sandbox4Runner() {
     ModSet ms;
-    ms.pick[MOD_ENGINE] = optIndex(3, MOD_ENGINE, "1GR SWAP");
-    ms.pick[MOD_SUSPENSION] = optIndex(3, MOD_SUSPENSION, "LONG TRAVEL AND 37S");
-    ms.pick[MOD_TRANSMISSION] = optIndex(3, MOD_TRANSMISSION, "CRAWL BOX");
+    ms.pick[MOD_ENGINE] = optIndex(3, MOD_ENGINE, "BIG V6");
+    ms.pick[MOD_SUSPENSION] = optIndex(3, MOD_SUSPENSION, "BIG LIFT");
+    ms.pick[MOD_TRANSMISSION] = optIndex(3, MOD_TRANSMISSION, "CRAWL GEARS");
     return tunedSpec(3, ms);
 }
 

@@ -121,13 +121,19 @@ int shaftsGone(const Car& c) {
 // The garage's biggest engine on every low-range truck: into 4L at idle, then away gently,
 // then a stab of the pedal. The engine's torque arrives over ~0.15 s, so the half shafts are
 // not rung by a step (a spring's first swing is twice the steady torque): nothing snaps.
-SCENARIO(lowRangeSwap, "drivetrain/low-range-swap", "Every low-range truck with the biggest engine swap: into 4L at idle, away gently, then a stab of the pedal: no shaft or CV snaps") {
+// (Until parts list 2 this was the buggy's 820 N*m blown LS in every truck; now each truck's own strongest.)
+SCENARIO(lowRangeSwap, "drivetrain/low-range-swap", "Every low-range truck with its biggest engine: into 4L at idle, away gently, then a stab of the pedal: no shaft or CV snaps") {
     int lane = 0;
     for (int v : listedVehicles()) {
         const VehicleSpec& stock = vehicleCatalog()[v];
         if (stock.lowRange <= 0 || lowMode(stock) < 0) continue;
         ModSet ms;
-        ms.pick[MOD_ENGINE] = partIndex(v, MOD_ENGINE, "BLOWN 6.2");  // the buggy's 820 N*m supercharged LS
+        double most = 0;
+        for (int o = 0; o < (int)modOptions(v, MOD_ENGINE).size(); o++) {
+            ModSet e;
+            e.pick[MOD_ENGINE] = o;
+            if (peakTorque(tunedSpec(v, e)) > most) most = peakTorque(tunedSpec(v, e)), ms.pick[MOD_ENGINE] = o;
+        }
         const VehicleSpec& spec = tunedSpec(v, ms);
         Car& c = ctx.add(spec, -60, -50 - 12 * lane++, 0);
         ctx.focus(c);
@@ -147,20 +153,20 @@ SCENARIO(lowRangeSwap, "drivetrain/low-range-swap", "Every low-range truck with 
     ctx.check("some low-range trucks were tried", lane >= 3);
 }
 
-// The 4Runner as the career garage builds it: the LS7 on the Blazer's four-speed manual (6.55 first,
-// 4.56 axles) in 4L is 77:1. The pedal hitting the floor used to snap the front CVs within 20 ms.
-SCENARIO(lowRangeCrawler, "drivetrain/low-range-crawler", "4Runner with LS7 and the Blazer's manual box in 4L: the floored pedal ramps in; a stuck tire still snaps a shaft") {
+// The 4Runner as the career garage builds it for crawling: the supercharged 4.0 on the crawl gears (4.88 axles,
+// 4.7 low range) in 4L is 64:1. (Until parts list 2 it was the LS7 on the Blazer's four-speed, 77:1.) The pedal
+// hitting the floor used to snap the front CVs within 20 ms. (It also held a brake flat out to snap one, which
+// the LS7's 77:1 did and this 64:1 doesn't; a CV still breaks under abuse: drivetrain/4runner-front-abuse.)
+SCENARIO(lowRangeCrawler, "drivetrain/low-range-crawler", "4Runner with its biggest engine and the crawl gears in 4L: the floored pedal ramps in, nothing snaps") {
     ModSet ms;
-    ms.pick[MOD_ENGINE] = partIndex(3, MOD_ENGINE, "7.0 LS7");
-    ms.pick[MOD_TRANSMISSION] = partIndex(3, MOD_TRANSMISSION, "4.56 GEARS AND LOCKERS");
+    ms.pick[MOD_ENGINE] = partIndex(3, MOD_ENGINE, "BIG V6 SUPERCHARGED");
+    ms.pick[MOD_TRANSMISSION] = partIndex(3, MOD_TRANSMISSION, "CRAWL GEARS");
     const VehicleSpec& spec = tunedSpec(3, ms);
-    ctx.check("(the 77:1 stack is in)", spec.gears[0] * spec.finalDrive * spec.lowRange > 70);
+    ctx.check("(the 64:1 stack is in)", spec.gears[0] * spec.finalDrive * spec.lowRange > 60);
     Car& c = ctx.add(spec, -60, -50, 0);
-    Car& stuck = ctx.add(spec, -60, -65, 0);
     ctx.focus(c);
     ctx.run(1.5);
     c.setDriveMode(lowMode(spec));
-    stuck.setDriveMode(lowMode(spec));
     ctx.run(2, [&] { c.throttle = 1; });
     ctx.check("floored from rest: nothing snaps", shaftsGone(c) == 0);
     ctx.metric("front shaft load against its limit", [&] {
@@ -168,29 +174,22 @@ SCENARIO(lowRangeCrawler, "drivetrain/low-range-crawler", "4Runner with LS7 and 
         for (const Wheel& w : c.wheels) m = std::max(m, w.shaftLoad / (spec.shaftLimit * (w.front ? 0.65 : 1.0)));
         return m;
     }(), "share", 0, 1);
-    // Legitimate breakage stays: flat out against a held brake (a tire that can't turn).
-    ctx.run(3, [&] { stuck.throttle = 1; stuck.brake = 1; });
-    ctx.check("flat out against the brakes still snaps a shaft", shaftsGone(stuck) > 0);
 }
 
-// The sandbox garage's 4Runner (LONG TRAVEL AND 37S, CRAWL BOX, stock wheels and tires) with each of
-// the buggy's engines (and the saved 1GR swap): into 4L by the L key's route (4H, 4H LOCK, 4L LOCK)
-// at idle, rolling, with the pedal already down (a pad trigger) and with the wheels spinning.
-// Nothing may break on engaging; and the engines' own torque must not either, short of a stuck tire.
-SCENARIO(lowRangeBuggyEngines, "drivetrain/low-range-buggy-engines", "4Runner (long travel 37s, crawl box) with each buggy engine: into 4L via 4H LOCK at idle, rolling, pedal down, wheels spinning: nothing breaks") {
-    const int buggy = 4;
-    ctx.check("(catalog index 4 is the buggy)", std::string(vehicleCatalog()[buggy].id) == "buggy");
-    std::vector<int> engines{partIndex(3, MOD_ENGINE, "1GR SWAP")};
-    const auto& opts = modOptions(3, MOD_ENGINE);
-    for (int i = 0; i < (int)opts.size(); i++)
-        if (opts[i].fromVehicle == buggy) engines.push_back(i);
-    ctx.check("the buggy's engines are on offer", engines.size() >= 4);
+// The sandbox garage's 4Runner (BIG LIFT, CRAWL GEARS, stock wheels and tires) with each of its
+// engines: into 4L by the L key's route (4H, 4H LOCK, 4L LOCK) at idle, rolling, with the pedal
+// already down (a pad trigger) and with the wheels spinning. Nothing may break on engaging; and the
+// engines' own torque must not either, short of a stuck tire. (Until parts list 2: the buggy's engines.)
+SCENARIO(lowRangeBuggyEngines, "drivetrain/low-range-buggy-engines", "4Runner (big lift, crawl gears) with each of its engines: into 4L via 4H LOCK at idle, rolling, pedal down, wheels spinning: nothing breaks") {
+    std::vector<int> engines;
+    for (int i = 0; i < (int)modOptions(3, MOD_ENGINE).size(); i++) engines.push_back(i);
+    ctx.check("its engines are on offer", engines.size() >= 3);
     int lane = 0;
     for (int e : engines) {
         ModSet ms;
         ms.pick[MOD_ENGINE] = e;
-        ms.pick[MOD_SUSPENSION] = partIndex(3, MOD_SUSPENSION, "LONG TRAVEL AND 37S");
-        ms.pick[MOD_TRANSMISSION] = partIndex(3, MOD_TRANSMISSION, "CRAWL BOX");
+        ms.pick[MOD_SUSPENSION] = partIndex(3, MOD_SUSPENSION, "BIG LIFT");
+        ms.pick[MOD_TRANSMISSION] = partIndex(3, MOD_TRANSMISSION, "CRAWL GEARS");
         const VehicleSpec& spec = tunedSpec(3, ms);
         const std::string tag = modOptions(3, MOD_ENGINE)[e].name;
         for (int trial : {0, 3}) {
@@ -217,9 +216,9 @@ namespace {
 const VehicleSpec& sandboxRunner() {
     const int v = 3;
     ModSet ms;
-    ms.pick[MOD_ENGINE] = partIndex(v, MOD_ENGINE, "1GR SWAP");
-    ms.pick[MOD_SUSPENSION] = partIndex(v, MOD_SUSPENSION, "LONG TRAVEL AND 37S");
-    ms.pick[MOD_TRANSMISSION] = partIndex(v, MOD_TRANSMISSION, "CRAWL BOX");
+    ms.pick[MOD_ENGINE] = partIndex(v, MOD_ENGINE, "BIG V6");
+    ms.pick[MOD_SUSPENSION] = partIndex(v, MOD_SUSPENSION, "BIG LIFT");
+    ms.pick[MOD_TRANSMISSION] = partIndex(v, MOD_TRANSMISSION, "CRAWL GEARS");
     return tunedSpec(v, ms);
 }
 int frontShaftsGone(const Car& c) {
@@ -326,8 +325,7 @@ SCENARIO(runnerFrontDurability, "drivetrain/4runner-front-durability", "Sandbox 
 }
 
 // ...but a CV is still a fuse: the sandbox 4Runner in 4L with both lockers, full lock and the pedal on the floor on the
-// slickrock dome (the lockers bind, a loaded front tire grips) snaps one, as the Bronco's does flat out into a ledge (offroad/shaft-break);
-// and flat out against a held brake in the 77:1 stack still does (drivetrain/low-range-crawler).
+// slickrock dome (the lockers bind, a loaded front tire grips) snaps one, as the Bronco's does flat out into a ledge (offroad/shaft-break).
 SCENARIO(runnerFrontAbuse, "drivetrain/4runner-front-abuse", "Sandbox 4Runner flat out at full lock with both lockers in 4L on the rock dome: a CV still snaps and that wheel freewheels") {
     const VehicleSpec& spec = sandboxRunner();
     ctx.sim.world = World(MAP_MOUNTAIN);
