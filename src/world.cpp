@@ -37,13 +37,16 @@ double World::padOutside(double x, double z) {
 
 const SurfaceInfo& surfaceInfo(Surface s) {
     // name, grip, bite, keep, rolling, sink, dust color
+    // (Loose ground grips as far as its own soil shears: dry dirt ~0.65-0.75 and loose gravel
+    // ~0.55-0.65 for an all-terrain tire, which is what these give with the tread and tire on
+    // top. They were 0.82 and 0.68: ~0.95 and ~0.79, and the trucks walked up dirt banks.)
     static const SurfaceInfo table[SURF_COUNT] = {
         {"PAVEMENT", 1.00, 1.00, 0.71, 0.012, 0, {0.86f, 0.86f, 0.88f}},
         {"GRASS", 0.72, 0.70, 0.85, 0.030, 0, {0.45f, 0.42f, 0.28f}},
-        {"DIRT", 0.82, 0.75, 0.90, 0.020, 0, {0.52f, 0.43f, 0.30f}},
+        {"DIRT", 0.64, 0.75, 0.90, 0.020, 0, {0.52f, 0.43f, 0.30f}},
         {"ROCK", 1.00, 1.00, 0.71, 0.012, 0, {0.62f, 0.60f, 0.57f}},
         {"SCREE", 0.60, 0.50, 0.92, 0.045, 0, {0.62f, 0.60f, 0.56f}},
-        {"GRAVEL", 0.68, 0.55, 0.98, 0.030, 0, {0.60f, 0.56f, 0.50f}},
+        {"GRAVEL", 0.56, 0.55, 0.98, 0.030, 0, {0.60f, 0.56f, 0.50f}},
         {"SAND", 0.58, 0.40, 1.00, 0.060, 0.11, {0.80f, 0.70f, 0.50f}},
         {"MUD", 0.40, 0.45, 1.00, 0.050, 0.13, {0.30f, 0.22f, 0.14f}},
         {"SNOW", 0.32, 0.60, 0.95, 0.025, 0.09, {0.95f, 0.96f, 1.00f}},

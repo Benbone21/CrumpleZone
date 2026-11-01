@@ -49,6 +49,7 @@ PHYS     += src/freecam.cpp
 SCEN     += tests/freecam.cpp
 SCEN     += tests/bctrails.cpp
 SCEN     += tests/damping.cpp tests/pausemenu.cpp
+SCEN     += tests/weightfeel.cpp
 # The self-updater (updater.h; docs/update-signing-keys.md): SHA-2, Ed25519, the manifest/zip/swap logic, HTTPS through the OS or a
 # run-time loaded libcurl (-ldl; Windows: -lwinhttp). Linked into the game, run_tests and build/cz-update, not the sim tools.
 UPD      := src/sha2.cpp src/ed25519.cpp src/updatecore.cpp src/httpget.cpp src/updater.cpp

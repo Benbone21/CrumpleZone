@@ -30,12 +30,15 @@ Hurt hurt(const Car& c) {
 }  // namespace
 
 // The kicker on the proving ground (3.4 m up over 13 m): a desert Bug is built to fly. Taken at
-// 70-76 km/h it flies ~20 m, its tail-heavy weight swinging it back about level, and comes down
+// 72-78 km/h it flies ~20 m, its tail-heavy weight swinging it back about level, and comes down
 // on the flat pad on its long travel: the shocks and bump stops take the landing, not the body,
 // and it rolls on with nothing broken. (Each run stops before the landing ramp's back face, 35 m
 // on: that's for faster cars. Slower, this kicker noses everything over; faster, it flips.)
-SCENARIO(bajaJump, "baja/kicker-jump", "Baja Bug takes the kicker at 70, 73 and 76 km/h: flies, lands about level on its long travel, rolls on with nothing broken") {
-    for (double vJump : {70.0, 73.0, 76.0}) {
+// (It was 70-76 km/h while the tires were elastic: compressed up the face, the front tires sprang
+// the nose up off the lip. Their carcass now keeps most of a deep squash, so it leaves the lip a
+// little more nose-down and takes ~2 km/h more for the same flight.)
+SCENARIO(bajaJump, "baja/kicker-jump", "Baja Bug takes the kicker at 72, 75 and 78 km/h: flies, lands about level on its long travel, rolls on with nothing broken") {
+    for (double vJump : {72.0, 75.0, 78.0}) {
         ctx.sim.cars.clear();
         Car& c = ctx.add(baja(), 10, -30, 0);
         ctx.focus(c);
