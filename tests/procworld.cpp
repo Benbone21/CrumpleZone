@@ -751,7 +751,9 @@ SCENARIO(procEarthworks, "procworld/earthworks", "Roads' and trails' earthworks 
         // (v0.4.7: 9.0 and 9.4 m a metre at worst. Two treads crossing at different heights still make a short steep ramp.)
         // (v6: the land is far steeper (mountains and knolls): a level tread across a 1:2 side makes a bank steeper than 1:1 on its high
         // side, and the same measure over profiles with no trail at all finds 6.4% (v5: 1.7%). So 30%; no wall still holds.)
-        ctx.check(std::string(r ? "main trails" : "trails") + ": under 30% of the sides half a metre a metre steeper than 1:1 and the land", s.sideOver * 100 < 30 * 2 * s.n);
+        // (v9: a climb's switchbacks slant their legs across steep sides, each a bench cut into the slope with a short steep bank above
+        // it: 33%. So 36%; no wall still holds.)
+        ctx.check(std::string(r ? "main trails" : "trails") + ": under 36% of the sides half a metre a metre steeper than 1:1 and the land", s.sideOver * 100 < 36 * 2 * s.n);
         ctx.check(std::string(r ? "main trails" : "trails") + ": no side a wall (over 4.5 m a metre steeper than 1:1 and the land)", s.worstSide < 4.5);
     }
 }
@@ -1350,8 +1352,7 @@ SCENARIO(procCrossings, "procworld/crossings", "Big rivers are real obstacles: a
     ctx.note(std::to_string(trails) + " trails in 4 x 36 km2: " + std::to_string(bigFords) + " ford a big river at a known ford, " + std::to_string(bridges) + " bridges; " + std::to_string(gone) + " links without a trail; " +
              std::to_string(wades) + " samples wading a big river elsewhere" + (where.empty() ? "" : " (first: " + where + ")"));
     ctx.check("no trail wades a big river off its known fords", wades == 0);
-    // (v8: the creeks' second levels moved the trails; a 4 x 36 km2 sample may hold no known-ford crossing, so fords or bridges, and bridges)
-    ctx.check("there are known fords and bridges", bigFords + bridges > 0 && bridges > 0);
+    ctx.check("there are known fords and bridges", bigFords > 0 && bridges > 0, std::to_string(bigFords) + " fords, " + std::to_string(bridges) + " bridges");
     ctx.check("every bridge's deck stands 1.4 m or more over the water", lowDecks == 0);
     if (bseed) {
         World w = windowAt(bseed, bx, bz);
@@ -1375,7 +1376,10 @@ SCENARIO(procCrossings, "procworld/crossings", "Big rivers are real obstacles: a
             return al > -6 - r && al < len + 6 + r && ac < 4 + r;
         };
         for (const Tree& t : w.trees) clutter += onSpan(t.base, 0.3);
-        for (const Rock& r : w.rocks) clutter += onSpan(r.c, r.r);
+        long trees = clutter;
+        for (const Rock& r : w.rocks)
+            if (onSpan(r.c, r.r)) clutter++, ctx.note("a rock on the bridge: radius " + std::to_string(r.r) + " at " + std::to_string(r.c.x) + "," + std::to_string(r.c.z) + " (span " + std::to_string(ax) + "," + std::to_string(az) + " to " + std::to_string(ex) + "," + std::to_string(ez) + ")");
+        if (trees) ctx.note(std::to_string(trees) + " trees on the bridge");
         ctx.check("no tree or rock on a bridge's span or approaches", clutter == 0, std::to_string(clutter));
         ctx.note("a bridge: seed " + std::to_string(bseed) + " at " + std::to_string((int)bx) + "," + std::to_string((int)bz));
         World::procOriginSet = false;

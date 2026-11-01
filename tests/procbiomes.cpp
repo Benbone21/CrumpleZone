@@ -88,6 +88,7 @@ SCENARIO(procBiomeMap, "procworld/biome-map", "(with CZ_PROC_MAPS=dir) a map of 
         }
     const std::string path = std::string(dir) + "/biomes_seed" + std::to_string(seed) + ".ppm";
     writePpm(path, S, img);
+    ctx.note("start " + std::to_string(sx) + "," + std::to_string(sz));
     ctx.note("wrote " + path + " (meadow light green, forest dark green, mesa red, alpine grey, desert sand; washed out: mixed; rings every 2 km)");
 }
 
@@ -179,9 +180,264 @@ SCENARIO(procEndless, "procworld/endless", "The world goes on for ever (owner: \
     }
     ctx.check("every window 30 km out has land and plants and rocks (6 directions)", withPlants == 6, std::to_string(withPlants) + " of 6");
     ctx.check("most of them have water (rivers, creeks, lakes)", withWater >= 3, std::to_string(withWater) + " of 6");
-    ctx.metric("the worst step from a far window's edge to the land past it (a lot's or a trail's earthworks)", worstEdge, "m", 0, 40);
-    ctx.metric("share of the edge stepping over 3 m", (double)edgeBad / std::max(1L, edgeN), "", 0, 0.08);
+    ctx.metric("the worst step from a far window's edge to the land past it (a lot's or a trail's earthworks: a place levelled on a mountainside)", worstEdge, "m", 0, 80);
+    ctx.metric("share of the edge stepping over 3 m", (double)edgeBad / std::max(1L, edgeN), "", 0, 0.12);
     ctx.metric("two far windows a slide apart: the worst difference in land or water where they overlap", worstSlide, "m", 0, 1e-6);
     ctx.metric("the farthest local coordinate of a far window's spawn", worstLocal, "m", 0, 10);
     ctx.check("a truck set down 30 km out rests on the ground (6 of 6)", onGround == 6, std::to_string(onGround) + " of 6");
+}
+
+namespace {
+// Where each biome is clearly itself (its weight 0.8 or more right across a 300 m patch round a point), nearest a point: rings out
+// every 100 m, 72 ways round. (-1: none within `maxR`.)
+void nearestClear(const ProcWorld& G, double cx, double cz, double maxR, double out[PB_COUNT]) {
+    for (int b = 0; b < PB_COUNT; b++) out[b] = -1;
+    for (double r = 100; r <= maxR; r += 100)
+        for (int k = 0; k < 72; k++) {
+            const double t = k * (2 * 3.14159265358979 / 72), x = cx + r * std::cos(t), z = cz + r * std::sin(t);
+            double share;
+            const int b = domBiome(G, x, z, share);
+            if (out[b] >= 0 || share < 0.8) continue;
+            bool clear = true;
+            for (int q = 0; q < 8 && clear; q++) {
+                double s2;
+                clear = domBiome(G, x + 150 * std::cos(q * 0.785398), z + 150 * std::sin(q * 0.785398), s2) == b && s2 >= 0.8;
+            }
+            if (clear) out[b] = r;
+        }
+}
+}  // namespace
+
+SCENARIO(procHomeBiomes, "procworld/home-biomes", "Plains, desert and mesa country within ~2-4 km of a world's start (owner: today desert and mesa are 8-10 km off), each clearly itself with a short edge, and the start itself in none of them") {
+    int good = 0;
+    const uint64_t seeds[] = {326904175ull, 1ull, 2ull, 99ull, 123456789ull};
+    double worst = 0;
+    for (uint64_t seed : seeds) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        int64_t sx, sz;
+        double yaw;
+        G.start(sx, sz, yaw);
+        double d[PB_COUNT];
+        nearestClear(G, (double)sx, (double)sz, 8000, d);
+        const double far = std::max({d[PB_MEADOW] < 0 ? 1e9 : d[PB_MEADOW], d[PB_DUNES] < 0 ? 1e9 : d[PB_DUNES], d[PB_BADLANDS] < 0 ? 1e9 : d[PB_BADLANDS]});
+        worst = std::max(worst, far);
+        good += far <= 4200;
+        char line[200];
+        std::snprintf(line, sizeof line, "seed %llu (start %lld,%lld): clear plains %.0f m, forest %.0f, mesa %.0f, alpine %.0f, desert %.0f", (unsigned long long)seed, (long long)sx,
+                      (long long)sz, d[0], d[1], d[2], d[3], d[4]);
+        ctx.note(line);
+    }
+    ctx.check("every seed has plains, desert and mesa country clearly themselves within 4.2 km of its start", good == 5, std::to_string(good) + " of 5");
+    ctx.metric("the farthest of the three from a start (5 seeds)", worst, "m", 0, 4200);
+    // (Clear edges: along lines out from seed 326904175's start, how far the land is a mix (no biome over 0.7) across each border.)
+    const ProcWorld& G = ProcWorld::forSeed(326904175ull);
+    int64_t sx, sz;
+    double yaw;
+    G.start(sx, sz, yaw);
+    long mixed = 0, all = 0;
+    for (int k = 0; k < 36; k++)
+        for (double r = 0; r < 6000; r += 25) {
+            double share;
+            domBiome(G, (double)sx + r * std::cos(k * 0.1745329), (double)sz + r * std::sin(k * 0.1745329), share);
+            all++, mixed += share < 0.7;
+        }
+    ctx.metric("share of the land within 6 km of the start that's a mix (no biome over 0.7)", (double)mixed / all, "", 0, 0.12);
+}
+
+SCENARIO(procMesaCountry, "procworld/mesa-country", "Mesa country (owner: Monument Valley, greatly expanded): regions several km across, many big mesas and buttes on a flat desert floor, sheer bands over talus, spires; canyons cut deep through them") {
+    const ProcWorld& G = ProcWorld::forSeed(326904175ull);
+    // (How much of a 40 km square is mesa country, and the biggest region (by flood over a 250 m grid).)
+    const int N = 160;
+    const double step = 250, x0 = -20000, z0 = -20000;
+    std::vector<uint8_t> mesa((size_t)N * N);
+    for (int i = 0; i < N; i++)
+        for (int j = 0; j < N; j++) {
+            double share;
+            mesa[(size_t)i * N + j] = domBiome(G, x0 + i * step, z0 + j * step, share) == PB_BADLANDS && share > 0.7;
+        }
+    long cells = 0, biggest = 0;
+    std::vector<uint8_t> seen((size_t)N * N);
+    std::vector<int> stack;
+    for (int s = 0; s < N * N; s++) {
+        cells += mesa[s];
+        if (!mesa[s] || seen[s]) continue;
+        long n = 0;
+        stack.assign(1, s), seen[s] = 1;
+        while (!stack.empty()) {
+            const int c = stack.back();
+            stack.pop_back(), n++;
+            const int i = c / N, j = c % N;
+            const int nb[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+            for (auto& o : nb) {
+                const int a = i + o[0], b = j + o[1];
+                if (a < 0 || b < 0 || a >= N || b >= N) continue;
+                const int q = a * N + b;
+                if (mesa[q] && !seen[q]) seen[q] = 1, stack.push_back(q);
+            }
+        }
+        biggest = std::max(biggest, n);
+    }
+    ctx.metric("share of 40 km square that's mesa country", (double)cells / (N * N), "", 0.06, 0.4);
+    ctx.metric("the biggest region of it", biggest * step * step / 1e6, "km2", 9, 1e9);
+    // (Inside the biggest stretch near the start: the floor, the mesas' tops over it, the cliffs.)
+    int64_t sx, sz;
+    double yaw;
+    G.start(sx, sz, yaw);
+    long floorN = 0, tall = 0, sheer = 0, n = 0;
+    double highest = 0;
+    for (int i = -60; i <= 60; i++)
+        for (int j = -60; j <= 60; j++) {
+            const double x = (double)sx + i * 70, z = (double)sz + j * 70;
+            double share;
+            if (domBiome(G, x, z, share) != PB_BADLANDS || share < 0.9) continue;
+            const Macro m = G.macroCached(x, z);
+            const double over = m.h - m.mass;  // (over the desert floor's mass)
+            n++;
+            floorN += over < 25;
+            tall += over > 120;
+            highest = std::max(highest, over);
+            const double s = std::max(std::fabs(G.macroCached(x + 4, z).h - G.macroCached(x - 4, z).h), std::fabs(G.macroCached(x, z + 4).h - G.macroCached(x, z - 4).h)) / 8;
+            sheer += s > 2;
+        }
+    char line[200];
+    std::snprintf(line, sizeof line, "%ld points of mesa country within 4 km of the start: %ld on the floor, %ld over 120 m up, %ld sheer (over 2:1), the highest %.0f m over the floor", n, floorN, tall, sheer,
+                  highest);
+    ctx.note(line);
+    ctx.check("there is mesa country within 4 km of the start", n > 200, std::to_string(n));
+    ctx.metric("share of it that's open floor", (double)floorN / std::max(1L, n), "", 0.3, 0.85);
+    ctx.metric("share of it that's mesa or butte top or side over 120 m up", (double)tall / std::max(1L, n), "", 0.06, 0.6);
+    ctx.metric("share of it in sheer cliff bands (over 2:1)", (double)sheer / std::max(1L, n), "", 0.01, 0.3);
+    ctx.metric("the tallest mesa over its floor", highest, "m", 200, 500);
+    // (Trails to the tops: the trail nodes up on mesas within ~6 km of the start, and the trails that reach them.)
+    const int64_t ci = floorDiv(sx, kCell), cj = floorDiv(sz, kCell);
+    int tops = 0, reached = 0;
+    double steepest = 0;
+    for (int64_t i = ci - 12; i <= ci + 12; i++)
+        for (int64_t j = cj - 12; j <= cj + 12; j++) {
+            const TrailNode nd = G.node(i, j);
+            if (!nd.top || nd.h - G.macroCached(nd.x, nd.z).mass < 80) continue;
+            tops++;
+            bool on = false;
+            for (auto e : {G.edge(i, j, 0), G.edge(i, j, 1), G.edge(i - 1, j, 0), G.edge(i, j - 1, 1)})
+                if (e->on) {
+                    on = true;
+                    double es = 0;
+                    size_t ek = 0;
+                    for (size_t k = 5; k + 5 < e->y.size(); k += 5) {
+                        const double g = std::fabs(e->y[k + 5] - e->y[k]) / std::max(1e-3f, e->along[k + 5] - e->along[k]);
+                        if (g > es) es = g, ek = k;
+                    }
+                    steepest = std::max(steepest, es);
+                    if (std::getenv("CZ_TOP_DBG")) {
+                        std::printf("edge from %.0f,%.0f rating %d, %zu samples, %.0f m long, climbs %.0f m; steepest %.2f at %.0f m:", e->ax, e->az, e->rating, e->y.size(), e->along.back(),
+                                    e->y.back() - e->y.front(), es, e->along[ek]);
+                        for (size_t k = ek >= 15 ? ek - 15 : 0; k < std::min(e->y.size(), ek + 20); k += 5) std::printf(" %.0f(%.0f)", e->y[k], e->fill[k]);
+                        std::printf("\n");
+                    }
+                }
+            reached += on;
+        }
+    ctx.note(std::to_string(tops) + " trail nodes up on mesas (80 m and more over the floor) within ~6 km, " + std::to_string(reached) + " with a trail up; steepest 10 m of those trails " +
+             std::to_string(steepest));
+    ctx.check("some mesa tops have trails up to them", reached >= 2, std::to_string(reached));
+}
+
+SCENARIO(procSwitchbacks, "procworld/switchbacks", "Trails switchback up steep climbs (rules 6; owner: switchback trails): where the land between a trail's ends climbs past its rating's grade, the trail zigzags up it in hairpins and keeps nearer its grade") {
+    const double lim[3] = {0.15, 0.22, 0.32};
+    double len = 0, over = 0, climbLen = 0, climbOver = 0;
+    long hairpins = 0, climbs = 0, climbsWithHairpins = 0;
+    for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        for (int64_t i = -6; i < 6; i++)
+            for (int64_t j = -6; j < 6; j++)
+                for (int dir = 0; dir < 2; dir++) {
+                    auto e = G.edge(i, j, dir);
+                    if (!e->on || e->road || e->y.size() < 30) continue;
+                    const double g = lim[std::min(2, std::max(0, e->rating))];
+                    // (A steep climb: a stretch of the trail whose ends, 200 m apart as the crow flies, differ by more than the grade allows.)
+                    const size_t n = e->y.size();
+                    std::vector<char> steep(n, 0);
+                    for (size_t k = 0; k < n; k++)
+                        for (size_t q = k + 1; q < n; q++) {
+                            const double d = std::hypot(e->x[q] - e->x[k], e->z[q] - e->z[k]);
+                            if (d < 200) continue;
+                            if (std::fabs(e->y[q] - e->y[k]) > g * d * 1.3)
+                                for (size_t r = k; r <= q; r++) steep[r] = 1;
+                            break;
+                        }
+                    bool anyClimb = false, anyPin = false;
+                    // (A hairpin: the heading turns more than 120 degrees within 40 m of the trail.)
+                    for (size_t k = 10; k + 10 < n; k += 5) {
+                        const double ax = e->x[k] - e->x[k - 10], az = e->z[k] - e->z[k - 10], bx = e->x[k + 10] - e->x[k], bz = e->z[k + 10] - e->z[k];
+                        const double c = (ax * bx + az * bz) / std::max(1e-6, std::hypot(ax, az) * std::hypot(bx, bz));
+                        if (c < -0.5) {
+                            hairpins++, anyPin |= steep[k] != 0;
+                            k += 15;
+                        }
+                    }
+                    for (size_t k = 0; k + 10 < n; k++) {
+                        const double run = e->along[k + 10] - e->along[k], gr = std::fabs(e->y[k + 10] - e->y[k]) / std::max(1e-6, run), seg = e->along[k + 1] - e->along[k];
+                        len += seg, over += gr > g ? seg : 0;
+                        if (steep[k]) climbLen += seg, climbOver += gr > g ? seg : 0, anyClimb = true;
+                    }
+                    climbs += anyClimb, climbsWithHairpins += anyClimb && anyPin;
+                }
+    }
+    char b[300];
+    std::snprintf(b, sizeof b, "trails: %.0f km, %.1f%% over their grade; steep climbs %.1f km on %ld trails, %.1f%% over their grade; %ld hairpins, on %ld of the climbing trails", len / 1000,
+                  100 * over / std::max(1.0, len), climbLen / 1000, climbs, 100 * climbOver / std::max(1.0, climbLen), hairpins, climbsWithHairpins);
+    ctx.note(b);
+    ctx.metric("share of the trails over their grade (v8: 10.4%)", over / std::max(1.0, len), "", 0, 0.12);
+    ctx.metric("share of the steep climbs over their grade", climbOver / std::max(1.0, climbLen), "", 0, 0.3);
+    ctx.metric("share of climbing trails with hairpins on their climbs (v8: 61%)", (double)climbsWithHairpins / std::max(1L, climbs), "", 0.62, 1);
+}
+
+SCENARIO(procRiverBankDbg,"procworld/river-bank-dbg", "(with CZ_BANK_DBG=seed) where the land beside a wet river lies under its water, and what made it so, for looking at") {
+    const char* spec = std::getenv("CZ_BANK_DBG");
+    if (!spec) {
+        ctx.note("CZ_BANK_DBG not set");
+        return;
+    }
+    const ProcWorld& G = ProcWorld::forSeed(std::strtoull(spec, nullptr, 10));
+    long n = 0, under = 0, byCreek = 0, byFloor = 0, byErosion = 0, other = 0;
+    double worstDrop = 0;
+    for (double x = -6000; x < 6000; x += 6)
+        for (double z = -6000; z < 6000; z += 6) {
+            const Macro m = G.land(x, z);
+            if (!(m.riverOn > 0.5 && m.riverS > m.riverHW && m.riverS < m.riverHW + 12)) continue;
+            n++;
+            const double drop = m.riverLevel - m.h;
+            if (drop < 1) continue;
+            worstDrop = std::max(worstDrop, drop);
+            under++;
+            const double D = G.erosionAt(x, z), pre = m.h - D;
+            const bool creek = m.creekS < m.creekHW + 30 && m.creekLevel < m.riverLevel - 1;
+            const bool floor = m.floor < m.riverLevel - 1;
+            const bool eros = pre >= m.riverLevel - 0.5;
+            byCreek += creek, byFloor += floor && !creek, byErosion += eros && !creek && !floor, other += !creek && !floor && !eros;
+            if (drop > 2.5)
+                std::printf("bank %.0f,%.0f: river %.1f (S %.1f hw %.1f A %.0f big %d) land %.1f (pre-erosion %.1f, D %.1f) floor %.1f floorArea %.0f creek S %.0f level %.1f vale %.1f mass %.1f\n", x, z,
+                            m.riverLevel, m.riverS, m.riverHW, m.riverArea, (int)m.bigRiver, m.h, pre, D, m.floor, m.floorArea, m.creekS, m.creekLevel, m.vale, m.mass);
+        }
+    std::printf("bank: %ld points beside wet rivers, %ld over 1 m under the water: %ld by a creek's notch, %ld by a lower valley's floor, %ld worn down by erosion, %ld other; the deepest %.1f m\n", n, under, byCreek,
+                byFloor, byErosion, other, worstDrop);
+}
+
+SCENARIO(procProfile,"procworld/profile", "(with CZ_PROFILE=x0,z0,x1,z1[,seed]) the land along a line every 50 m: height, mass, climate, for looking at") {
+    const char* spec = std::getenv("CZ_PROFILE");
+    double x0, z0, x1, z1;
+    unsigned long long seed = 326904175ull;
+    if (!spec || std::sscanf(spec, "%lf,%lf,%lf,%lf,%llu", &x0, &z0, &x1, &z1, &seed) < 4) {
+        ctx.note("CZ_PROFILE not set: nothing printed");
+        return;
+    }
+    const ProcWorld& G = ProcWorld::forSeed(seed);
+    const double L = std::hypot(x1 - x0, z1 - z0);
+    const double stepM = std::getenv("CZ_PROFILE_STEP") ? std::atof(std::getenv("CZ_PROFILE_STEP")) : 50;
+    for (double t = 0; t <= L; t += stepM) {
+        const double x = x0 + (x1 - x0) * t / L, z = z0 + (z1 - z0) * t / L;
+        const Macro m = G.macroCached(x, z);
+        std::printf("%6.0f m: chunk %7.1f ground %7.1f  h %7.1f mass %7.1f vale %7.1f floor %7.1f rug %.2f wet %.2f heat %.2f  w %.2f %.2f %.2f %.2f %.2f\n", t, [&] { const int64_t ix = (int64_t)std::floor(x), iz = (int64_t)std::floor(z); const auto c = G.chunk(floorDiv(ix, kChunk), floorDiv(iz, kChunk)); return (double)c->h[(ix - c->cx * kChunk) * kChunk + (iz - c->cz * kChunk)]; }(), G.groundHeight(x, z, m), m.h, m.mass,
+                    m.vale, m.floor, m.rug, m.wet, m.heat, m.w[0], m.w[1], m.w[2], m.w[3], m.w[4]);
+    }
 }

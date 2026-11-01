@@ -74,6 +74,11 @@ std::vector<Key> keys() {
     k.push_back({MS, "size", nullptr, AT(r.mesa.size), "m: about how big the mesa field's features are (mesas, buttes between)"});
     k.push_back({MS, "cliff", nullptr, AT(r.mesa.cliff), "0..1: the share of its height in the sheer band at the top (the rest the talus under it)"});
     k.push_back({MS, "spires", nullptr, AT(r.mesa.spires), "0..1: how many lone spires and needles stand on the flats"});
+    k.push_back({MS, "buttes", nullptr, AT(r.mesa.buttes), "0..1: how many lone buttes stand out on the flats between the mesas"});
+    k.push_back({MS, "country_size", nullptr, AT(r.mesa.countrySize), "m: mesa country comes in regions of a field this big (several km across), whatever the climate..."});
+    k.push_back({MS, "country_from", nullptr, AT(r.mesa.countryFrom), "0..1: ...where that field passes this (higher: rarer)"});
+    k.push_back({MS, "home_distance", nullptr, AT(r.mesa.homeDistance), "m: round a world's start, desert, mesa country and plains lie about this far off (each its own way)..."});
+    k.push_back({MS, "home_size", nullptr, AT(r.mesa.homeSize), "m: ...each this far across its middle, fading out over 800 m past it"});
     const char* KN = "terrain.knolls";
     k.push_back({KN, "knoll_size", nullptr, AT(r.knoll.knollSize), "m: the rolling knolls' size (the land's lumps, after the Backcountry's)"});
     k.push_back({KN, "knoll_height", nullptr, AT(r.knoll.knollHeight), "m: ...and their height, top to hollow, about"});
