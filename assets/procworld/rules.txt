@@ -34,7 +34,7 @@ bank_batter = 4.5                 # in the ranges a valley's side is this times 
 low_batter = 14                   # ...in the lowland
 river_grade = 0.04                # the steepest a big river's level climbs in the ranges (a tenth of it in the lowland)
 creek_grade = 0.33                # ...and a creek's, high in the ranges (cascades)
-ford_spacing = 2500               # m: about how far apart a big river's known fords are
+ford_spacing = 1200               # m: about how far apart a big river's known fords are
 ford_depth = 0.4                  # m: the water over a ford's riffle
 
 [bridges]
@@ -63,10 +63,15 @@ alpine_full = 560                 # m: ...and is whole here
 alpine_heat_shift = 100           # m: in the coldest country the alpine comes this much lower (in the hottest, higher)
 
 [terrain.mesas]
-height = 170                      # m: a mesa's top over the desert floor
-size = 700                        # m: about how big the mesa field's features are (mesas, buttes between)
+height = 200                      # m: a mesa's top over the desert floor
+size = 2400                       # m: about how big the mesa field's features are (mesas, buttes between)
 cliff = 0.65                      # 0..1: the share of its height in the sheer band at the top (the rest the talus under it)
-spires = 0.4                      # 0..1: how many lone spires and needles stand on the flats
+spires = 0.6                      # 0..1: how many lone spires and needles stand on the flats
+buttes = 0.5                      # 0..1: how many lone buttes stand out on the flats between the mesas
+country_size = 9000               # m: mesa country comes in regions of a field this big (several km across), whatever the climate...
+country_from = 0.64               # 0..1: ...where that field passes this (higher: rarer)
+home_distance = 3400              # m: round a world's start, desert, mesa country and plains lie about this far off (each its own way)...
+home_size = 1500                  # m: ...each this far across its middle, fading out over 800 m past it
 
 [terrain.knolls]
 knoll_size = 90                   # m: the rolling knolls' size (the land's lumps, after the Backcountry's)

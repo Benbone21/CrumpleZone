@@ -55,6 +55,7 @@ constexpr int kHorizonTexels = 1024, kHorizonUnit = 8;
 constexpr float kHorizonTexel = 4.0f, kHorizonSnap = 256.0f;
 constexpr double kCanopyFrom = 700, kCanopyFull = 2200;  // (m) far off, the ground under a wood takes the canopy's colour over this
 constexpr double kFarForestFrom = 1000;  // (m) the window's trees hand over to the far forest (farforest.h): inside every window's edge
+constexpr float kEndlessFar = 6800;  // (m) the procedural world's far plane: its land (window and far backdrop) reaches past it all round the camera
 
 // Shared fragment-shader helpers: noise, shadows, sky, fog. Everything renders into a
 // linear HDR target; the composite pass tone maps it (see kCompositeFS).
@@ -73,6 +74,8 @@ uniform float uTime, uClouds;
 uniform vec2 uNoiseOff;
 #define NP (vPos + vec3(uNoiseOff.x, 0.0, uNoiseOff.y))
 uniform float uFogFar;  // (a short draw distance: the fog closes in to hide where the world stops; 0 off)
+uniform float uFogFrom;  // (...from this share of it: 0.45 for a draw distance; the endless procedural world's far haze starts later)
+uniform float uHazeFloor;  // (1: the sky under the horizon is the horizon's haze, not the dark ground: an endless world's land fades into it)
 // Time of day (daylight.h). uSun is the key light that shades and casts the shadows: the
 // sun by day, the moon by night; uSunDir is where the sun really is.
 uniform vec3 uKeyCol, uAmbSky, uAmbGround;
@@ -224,6 +227,7 @@ vec3 skyColor(vec3 d, int oct){
   vec2 hz = d.xz / max(length(d.xz), 1e-4), sz = uSunDir.xz / max(length(uSunDir.xz), 1e-4);
   c += uDusk * pow(dot(hz, sz) * 0.5 + 0.5, 3.0) * pow(1.0 - y, 6.0);  // sunrise and sunset burn along that horizon
   c += uSunGlow * (pow(sd, 6.0) * 0.22 * (1.0 - y) + pow(sd, 90.0) * 0.6);
+  vec3 haze = c;  // (the horizon's own colour here: what an endless world's land fades into under it)
   float md = max(dot(d, uMoonDir), 0.0), moonLit = 0.5 - 0.5 * cos(6.2832 * uMoonPhase);
   if (oct > 0) {
     c += vec3(0.55, 0.65, 0.85) * moonLit * uNight * (pow(md, 1500.0) * 0.10 + pow(md, 40.0) * 0.006);  // halo
@@ -246,7 +250,7 @@ vec3 skyColor(vec3 d, int oct){
   // The sun's disk: the sky dome only (a reflected disk blooms on every matte roof; the
   // shaders' highlights stand in for it there).
   if (oct > 3) c += uSunDisc * smoothstep(0.99965, 0.9998, sd) * (1.0 - 0.85 * cl);
-  if (d.y < 0.0) c = mix(uSkyHor * 0.85, uGround, clamp(-d.y * 4.0, 0.0, 1.0));
+  if (d.y < 0.0) c = uHazeFloor > 0.5 ? haze : mix(uSkyHor * 0.85, uGround, clamp(-d.y * 4.0, 0.0, 1.0));
   return c;
 }
 vec3 skyEnv(vec3 d){ return skyColor(d, 3); }
@@ -319,7 +323,7 @@ vec3 applyFog(vec3 col, vec3 pos){
   vec3 fc = skyColor(vec3(dir.x, max(dir.y, 0.02) * 0.3, dir.z), 0);
   col = mix(col, fc, fog);
   // (Past the draw distance there's only sky: the land fades into the sky behind it, so the edge doesn't show.)
-  if (uFogFar > 0.0) col = mix(col, skyColor(vec3(dir.x, max(dir.y, 0.0), dir.z), 0), smoothstep(uFogFar * 0.45, uFogFar * 0.97, dist));
+  if (uFogFar > 0.0) col = mix(col, skyColor(vec3(dir.x, max(dir.y, 0.0), dir.z), 0), smoothstep(uFogFar * uFogFrom, uFogFar * 0.97, dist));
   return col;
 }
 vec4 finishColor(vec3 col, vec3 pos, float alpha){ return vec4(applyFog(col, pos), alpha); }
@@ -6141,7 +6145,11 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     props.timing = gpuTiming;  // (its timer queries only when they're read: F3, the bench)
     props.beginFrame(sim.world, view.eye, M4(), propsOk ? settings.props : 0, view.time);
 
-    farZ_ = settings.drawDistance > 0 ? std::max(150.0f, settings.drawDistance) : 6000.0f;  // (a draw distance: everything past it is clipped)
+    // (A draw distance: everything past it is clipped. The procedural world is endless: its land reaches ~7 km round the camera (the
+    // window and its far backdrop, render.cpp buildBackdrop), so the far plane and a haze that closes in toward it hide where it stops:
+    // from up high there's no square of land with an edge, only land fading into the haze.)
+    const bool endless = mapId == MAP_PROCEDURAL;
+    farZ_ = settings.drawDistance > 0 ? std::max(150.0f, settings.drawDistance) : endless ? kEndlessFar : 6000.0f;
     M4 proj = perspective(view.fovy, (float)view.width / std::max(1, view.height), 0.05f, farZ_);
     M4 vp = proj * lookAt(view.eye, view.target, view.up);
     // Wheels past where a mud tire's lug (2.4 cm proud) is under half a pixel draw their far copies.
@@ -6244,7 +6252,9 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Uniform1f(uniformLocation(prog, "uTime"), view.time);
         Uniform1f(uniformLocation(prog, "uClouds"), fadeClouds_);
         Uniform2f(uniformLocation(prog, "uNoiseOff"), noiseOff_[0], noiseOff_[1]);
-        Uniform1f(uniformLocation(prog, "uFogFar"), settings.drawDistance > 0 ? farZ_ : 0.0f);
+        Uniform1f(uniformLocation(prog, "uFogFar"), settings.drawDistance > 0 || endless ? farZ_ : 0.0f);
+        Uniform1f(uniformLocation(prog, "uFogFrom"), settings.drawDistance > 0 ? 0.45f : 0.72f);
+        Uniform1f(uniformLocation(prog, "uHazeFloor"), endless ? 1.0f : 0.0f);
         const Daylight& d = daylight;
         const std::pair<const char*, V3> sky[] = {
             {"uKeyCol", d.keyCol},     {"uAmbSky", d.ambSky},       {"uAmbGround", d.ambGround}, {"uSunDir", d.sunDir},

@@ -29,7 +29,7 @@ struct WaterRule {
     double lowBatter = 14;            // ...in the lowland
     double riverGrade = 0.04;        // the steepest a big river's level climbs in the ranges (a tenth of it in the lowland)
     double creekGrade = 0.33;        // ...and a creek's high in the ranges (cascades)
-    double fordSpacing = 2500;       // m: about how far apart a big river's known fords are
+    double fordSpacing = 1200;       // m: about how far apart a big river's known fords are (v9: was 2500; trails found few)
     double fordDepth = 0.4;          // m: the water over a ford's riffle
 };
 
@@ -81,10 +81,15 @@ struct KnollRule {
 
 // ---- Terrain: mesas (owner: "Monument Valley": big flat-topped mesas and buttes, sheer cliff bands over talus slopes, spires) ----
 struct MesaRule {
-    double height = 170;        // m: a mesa's top over the desert floor
-    double size = 700;          // m: about how big the mesa field's features are (mesas, buttes between)
-    double cliff = 0.65;        // 0..1: the share of its height in the sheer band at the top (the rest the talus under it)
-    double spires = 0.4;        // 0..1: how many lone spires and needles stand on the flats
+    double height = 200;        // m: a mesa's top over the desert floor (each mesa 0.65-1.35 times it)
+    double size = 2400;         // m: about how big the mesa field's features are (mesas, buttes between)
+    double cliff = 0.65;        // 0..1: the share of its height in the sheer bands at the top (the rest the talus under it)
+    double spires = 0.6;        // 0..1: how many lone spires and needles stand on the flats
+    double buttes = 0.5;        // 0..1: how many lone buttes stand out on the flats between the mesas
+    double countrySize = 9000;  // m: mesa country comes in regions of a field this big (several km across), whatever the climate...
+    double countryFrom = 0.64;  // 0..1: ...where that field passes this (higher: rarer)
+    double homeDistance = 3400; // m: round a world's start, desert, mesa country and plains lie about this far off (each its own way)...
+    double homeSize = 1500;     // m: ...each this far across its middle, fading out over 800 m past it
 };
 
 // ---- Rocks that follow the land's steepness (owner: "the steeper the terrain, the more rocks and the larger, so it's like cliff walls") --
