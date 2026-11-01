@@ -227,8 +227,9 @@ jobs:
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/mac/test_audio
           python3 -u - <<'PY'
           import subprocess
-          # Hosted Macs use Apple Software Renderer; the full graphics checks take 5-25 minutes (quality 1 alone has taken 7).
-          subprocess.run(['./build/mac/test_render'], check=True, timeout=10800)  # TEMP (wip/mac-render): measure the full run
+          # Hosted Macs use Apple Software Renderer, which compiles each ground shader tier for minutes: the full graphics checks took
+          # 49 minutes (run 41263422020; quality 1 alone 5), so 40 timed out once the ground stopped failing its draws.
+          subprocess.run(['./build/mac/test_render'], check=True, timeout=4500)
           PY
           python3 - <<'PY'
           import re, subprocess
