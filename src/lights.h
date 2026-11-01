@@ -15,6 +15,7 @@ int lampBeam(int mode, float night);
 struct CarLamps {
     int beam = 0;            // 0 off, 1 low, 2 high
     V3 headPos[2];           // headlamp centers, left and right (world)
+    V3 tailPos[2];           // tail lamp centers (world)
     V3 fwd, up;              // which way the car points (the beams follow its pitch and roll)
     float head[2] = {1, 1};  // headlamps that still work: 1 whole, 0 smashed
     float tail[2] = {1, 1};  // tail lamps that still work

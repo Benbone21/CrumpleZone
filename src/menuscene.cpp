@@ -252,7 +252,10 @@ Daylight daylight(const Level& lv) {
 }
 
 std::string userPath() { return configDir() + "/menu_camp.czl"; }
-std::string repoPath() { return "assets/menu/camp.czl"; }
+std::string repoPath() {
+    const std::string d = findAssetDir("assets/menu");
+    return (d.empty() ? std::string("assets/menu") : d) + "/camp.czl";  // (no folder: the repo-relative name, where a save would make it)
+}
 
 Level load(std::string* from) {
     for (int pass = 0; pass < 2; pass++) {

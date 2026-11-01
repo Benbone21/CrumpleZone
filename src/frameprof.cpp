@@ -4,6 +4,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#ifdef __linux__
+#include <sys/resource.h>
+#include <time.h>
+#endif
 
 namespace {
 int64_t nowNs() {
@@ -16,7 +20,36 @@ const char* framePassName(FramePass p) {
     return p < FP_COUNT ? kNames[p] : "?";
 }
 
+namespace {
+thread_local std::vector<FrameWork> g_workCur, g_workLast;  // (per thread: only the frame thread's are turned over and read)
+}
+
+double frameWorkNowMs() { return nowNs() * 1e-6; }
+
+ThreadUsage threadUsage() {
+    ThreadUsage u;
+#ifdef __linux__
+    timespec ts;
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0) u.cpuMs = ts.tv_sec * 1e3 + ts.tv_nsec * 1e-6;
+    rusage r;
+    if (getrusage(RUSAGE_THREAD, &r) == 0) u.preempted = r.ru_nivcsw, u.majorFaults = r.ru_majflt;
+#endif
+    return u;
+}
+
+void frameWorkAdd(const char* name, double ms) {
+    for (FrameWork& w : g_workCur)
+        if (w.name == name) { w.ms += ms; return; }
+    g_workCur.push_back({name, ms});
+}
+
+const std::vector<FrameWork>& frameWorkLast() { return g_workLast; }
+
 void FrameProfile::beginFrame() {
+    if (this == &frameProfile()) {
+        g_workLast.swap(g_workCur);
+        g_workCur.clear();
+    }
     const int64_t t = nowNs();
     if (open_) {
         cur_[pass_] += (t - since_) * 1e-6;
@@ -161,6 +194,14 @@ void describeSpike(char* line, int n, int frame, double frameMs, double typicalM
         if (i != a && stageMs[i] > stageMs[b]) b = i;
     std::snprintf(line, n, "spike: frame %d took %.1f ms (typical %.1f): %s %.1f ms, %s %.1f ms", frame, frameMs, typicalMs, framePassName((FramePass)a),
                   stageMs[a], framePassName((FramePass)b), stageMs[b]);
+}
+
+int simNetSteps(double h, double owedS, double msPerStep) {
+    const int least = simMaxSteps(h);
+    if (!(h > 0) || !(owedS > 0)) return least;
+    const double owedSteps = std::ceil(std::min(owedS, kNetOwedMax + 0.1) / h);
+    const double budget = msPerStep > 0 ? kNetPhysicsMs / msPerStep : owedSteps;
+    return std::max(least, (int)std::min(owedSteps, budget));
 }
 
 double simCatchUp(double dt, double& usualDt) {

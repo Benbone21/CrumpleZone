@@ -225,6 +225,85 @@ SCENARIO(netRepairSync, "net/repair-sync",
     repair(hs, gs, hostCar, "host's repair, guest watching: ");
 }
 
+SCENARIO(netHoodSync, "net/hood-sync", "A hood opened on one machine is open on the other's copy of the vehicle (the panel up on its hinges with the states, Car::hoodOpen true there), shut again when it's closed, both ways; a late flag is refreshed while it's up; unheard, it's down") {
+    Car& hostCar = ctx.add(vehicleCatalog()[2], 10, -8, 0);
+    ctx.focus(hostCar);
+    NetSession host;
+    const int port = testPort() + 300;
+    ctx.check("host opens a session", host.host(port, "HOSTY", MAP_PROVING_GROUND), host.error);
+    host.adopt(ctx.sim);
+    Sim sim2;
+    sim2.world = World(MAP_PROVING_GROUND);
+    sim2.setupEmpty();
+    sim2.addCar(vehicleCatalog()[2], V3(-30, 0.5, -30), 0, V3(0.2, 0.2, 0.2));
+    sim2.player = 0;
+    NetSession client;
+    bool joined = false, joinDone = false;
+    std::thread joiner([&] {
+        joined = client.join("127.0.0.1:" + std::to_string(port), "BUDDY", 3.0);
+        joinDone = true;
+    });
+    for (int k = 0; k < 400 && !joinDone; k++) {
+        host.receive(ctx.sim, ctx.t);
+        usleep(5000);
+    }
+    joiner.join();
+    ctx.check("guest is let in", joined && client.self == 1, client.error);
+    if (!joined) return;
+    client.adopt(sim2);
+    Side hs{ctx.sim, host}, gs{sim2, client};
+    Walker none;
+    auto frame = [&] {
+        host.send(ctx.sim, ctx.t);
+        host.receive(ctx.sim, ctx.t);
+        client.receive(sim2, ctx.t);
+        sim2.drive(false, false, false, false, true, Ctx::kFrame);
+        sim2.advance(Ctx::kFrame, 1000);
+        for (Car& c : sim2.cars) c.updateStats();
+        client.send(sim2, ctx.t);
+        for (Side* s : {&hs, &gs}) {
+            s->out.update(s->sim, nullptr, s->ia, ctx.t, true, [&](const std::string& t) {
+                s->net.sendGame(t);
+                s->bytes += t.size() + 12, s->msgs++;
+            });
+            for (const NetSession::GameMsg& m : s->net.gameIn)
+                if (m.player >= 0 && m.player < net::kMaxPeers) s->in.onMessage(s->sim, m.player, s->net.players[m.player].name, m.text, ctx.t);
+            s->net.gameIn.clear();
+            s->in.update(s->sim, Ctx::kFrame, ctx.t);
+        }
+        usleep(300);
+    };
+    auto panelY = [](const Car& c) {
+        const Panel& p = c.panels[c.hoodPanel()];
+        double y = 0;
+        for (int n : p.panelNodes) y += c.nodes[n].p.y - c.frame().com.y;
+        return y / (double)p.panelNodes.size();
+    };
+    ctx.run(1.5, frame);
+    auto both = [&](Side& owner, Side& viewer, Car& c, const std::string& tag) {
+        Car* copy = copyOf(viewer, c);
+        ctx.check(tag + "the viewer has a copy", copy != nullptr);
+        if (!copy) return;
+        const double y0 = panelY(*copy);
+        ctx.check(tag + "shut to begin with, both sides", c.hoodShut() && copy->hoodShut());
+        const size_t msgs0 = owner.msgs;
+        c.setHood(true);
+        ctx.run(2.5, frame);
+        ctx.check(tag + "open on its owner's machine", c.hoodOpen());
+        ctx.check(tag + "...and open on the other's copy (the flag)", copy->hoodOpen(), "share " + std::to_string(copy->hood.share));
+        ctx.check(tag + "...the panel is up there too (it rides the states)", panelY(*copy) > y0 + 0.1, std::to_string(panelY(*copy) - y0));
+        ctx.run(7.0, frame);
+        ctx.check(tag + "...still open after the refresh (not expired)", copy->hoodOpen());
+        ctx.check(tag + "...a few short messages, not a stream", owner.msgs - msgs0 < 40, std::to_string(owner.msgs - msgs0));
+        c.setHood(false);
+        ctx.run(2.5, frame);
+        ctx.check(tag + "closed: shut on both", c.hoodShut() && copy->hoodShut(), "copy share " + std::to_string(copy->hood.share));
+        ctx.check(tag + "...and the panel is back down", std::fabs(panelY(*copy) - y0) < 0.08, std::to_string(panelY(*copy) - y0));
+    };
+    both(hs, gs, hostCar, "host's hood: ");
+    both(gs, hs, sim2.cars[0], "guest's hood: ");
+}
+
 SCENARIO(netRepairFormat, "net/repair-sync-format", "The repair messages read safely: a good one round trips, bad fields are dropped, unknown keys skipped, a vehicle that isn't the sender's left alone, other chatter not taken") {
     Car& mine = ctx.add(vehicleCatalog()[2], 10, -8, 0);
     Car& theirs = ctx.add(vehicleCatalog()[2], -10, -8, 0);
@@ -258,6 +337,15 @@ SCENARIO(netRepairFormat, "net/repair-sync-format", "The repair messages read sa
     ctx.check("...and nobody puts a jack under one of mine", !mine.jackPlaced);
     in.update(ctx.sim, 0.1, repairsync::kJackExpiry + 1);
     ctx.check("...unheard, it's gone", !theirs.jackPlaced);
+    const std::string hood = "hood " + std::to_string(theirs.netId) + " 1";
+    ctx.check("a hood from someone else about their car: left alone", in.onMessage(ctx.sim, 1, "B", hood, 0) && !theirs.hoodOpen());
+    ctx.check("...from its owner: up", in.onMessage(ctx.sim, 2, "C", hood, 0) && theirs.hoodOpen());
+    in.onMessage(ctx.sim, 2, "C", "hood " + std::to_string(theirs.netId) + " 7", 0);
+    ctx.check("...a bad flag: ignored", theirs.hoodOpen());
+    in.onMessage(ctx.sim, 0, "A", "hood " + std::to_string(mine.netId) + " 1", 0);
+    ctx.check("...and nobody lifts the hood of one of mine", !mine.hoodOpen());
+    in.update(ctx.sim, 0.1, repairsync::kHoodExpiry + 1);
+    ctx.check("...unheard, it's down", !theirs.hoodOpen());
     theirs.wheels[0].popped = true;
     in.onMessage(ctx.sim, 1, "B", "fixed " + std::to_string(theirs.netId) + " " + std::to_string((int)Fix::NEW_TIRE) + " 0 -1 -1", 0);
     ctx.check("a fix from someone else about their car: not done", theirs.wheels[0].popped);

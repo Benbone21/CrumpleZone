@@ -84,6 +84,12 @@ void PhysicsWorkers::process(int self) {
 
 void PhysicsWorkers::runRaw(int n, Thunk fn, const void* job) {
     std::lock_guard<std::mutex> one(callMutex);
+    if (serialLeft > 0) {  // (the contention guard: see the header)
+        serialLeft--;
+        for (int i = 0; i < n; i++) fn(job, i);
+        return;
+    }
+    const auto t0 = std::chrono::steady_clock::now();
     // (The workers are all idle here: the last batch returned only after every one finished.)
     count = n;
     thunk = fn;
@@ -101,11 +107,18 @@ void PhysicsWorkers::runRaw(int n, Thunk fn, const void* job) {
         start.notify_all();
     }
     process(0);  // The caller does its share too.
+    const auto t1 = std::chrono::steady_clock::now();
     if (!spinUntil([&] { return pending.load() == 0; })) {
         std::unique_lock<std::mutex> lock(mutex);
         callerSleeping = true;
         done.wait(lock, [&] { return pending.load() == 0; });
         callerSleeping = false;
+    }
+    {  // A batch the caller mostly waited through (over 3x its own share and 0.5 ms): one more stall. Several lately: alone for a while.
+        const double own = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        const double wait = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count();
+        stallScore = stallScore * 0.98 + (wait > 0.5 && wait > 3 * own ? 1.0 : 0.0);
+        if (stallScore > 4) stallScore = 0, serialLeft = kSerialBatches, fallbackCount++;
     }
     thunk = nullptr;
     ctx = nullptr;

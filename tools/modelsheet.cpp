@@ -2,13 +2,15 @@
 // a column per design, seen from the front-left and the back-right, with a ground grid,
 // a 1.8 m figure beside the big things, and each design's size and triangle count.
 //
-//   build/modelsheet [--out DIR] [--size PX] [id ...]      (ids: substrings; none = all)
+//   build/modelsheet [--out DIR] [--size PX] [--set KEY=VALUE ...] [id ...]      (ids: substrings; none = all;
+//   --set: a param for every design, e.g. --set bare=1 for a car part as fitted)
 //
 // It's for looking over the shapes quickly; the model lab (crumplezone --lab) shows them as
 // the game draws them.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -341,9 +343,15 @@ int main(int argc, char** argv) {
     std::string out = "build/review/models";
     int cell = 420;
     std::vector<std::string> only;
+    mk::P set;
     for (int i = 1; i < argc; i++) {
         const std::string a = argv[i];
         if (a == "--out" && i + 1 < argc) out = argv[++i];
+        else if (a == "--set" && i + 1 < argc) {
+            const std::string kv = argv[++i];
+            const size_t eq = kv.find('=');
+            if (eq != std::string::npos) set.v[kv.substr(0, eq)] = std::atof(kv.c_str() + eq + 1);
+        }
         else if (a == "--size" && i + 1 < argc) cell = std::max(120, std::atoi(argv[++i]));
         else only.push_back(a);
     }
@@ -360,7 +368,7 @@ int main(int argc, char** argv) {
         text(sheet, 8, 8, 3, d.title + "  (" + d.id + ")  " + d.category, lin(V3(0.95, 0.85, 0.4)));
         for (int v = 0; v < nv; v++) {
             mk::Mesh m;
-            mk::build(d, v, mk::P(), m);
+            mk::build(d, v, set, m);
             const V3 size = m.hi - m.lo;
             const V3 c = (m.lo + m.hi) * 0.5;
             const double radius = std::max(0.05, len(size) * 0.5);

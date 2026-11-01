@@ -318,9 +318,14 @@ SCENARIO(netTakeContention, "net/take-contention", "Two ask for the same empty t
     Guest* loser = winner == a ? b : a;
     ctx.check("only the winner simulates it", !winner->sim.cars[nearTo(winner->sim, parkedAt)].remote && loser->sim.cars[nearTo(loser->sim, parkedAt)].remote && ctx.sim.cars[1].remote);
 
-    // Now it's a guest's: the host and the other guest both ask its owner at once (the host holds the ask: the second waits its turn, and is told no).
+    // Now it's a guest's: the other guest asks its owner through the host, and once the host has that ask out with the owner (not
+    // before: over a real socket "once the host has it" is a matter of milliseconds, and an owner that answers first makes the
+    // second ask "IT'S GONE" instead) the host asks too, and waits its turn.
     const int li = nearTo(loser->sim, parkedAt);
-    ctx.check("both ask its new owner", s.host.requestTake(ctx.sim, 1) && loser->net.requestTake(loser->sim, li));
+    const uint32_t id1 = ctx.sim.cars[1].netId;
+    ctx.check("the other guest asks its new owner", loser->net.requestTake(loser->sim, li));
+    ctx.check("the host has that ask out with the owner", s.until(4, [&] { return s.host.takePending(id1); }));
+    ctx.check("the host asks too", s.host.requestTake(ctx.sim, 1));
     got = refused = 0;
     s.until(4, [&] {
         for (NetSession* n : {&s.host, &loser->net}) {

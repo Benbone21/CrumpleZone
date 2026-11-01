@@ -1,3 +1,4 @@
+#include "frameprof.h"
 #include "thread_cache.h"
 #include "softbody.h"
 #include "loadprof.h"
@@ -16,6 +17,16 @@ namespace {
 // ---- Tires and ground -------------------------------------------------------
 const double kTireK = Wheel::radialStiffness, kTireC = 1500;
 const double kRimK = 3.0e6;          // stiffness once the tire is squashed onto the rim
+// The carcass's hysteresis squashed far (wheelStep): the share of its spring lost unloading, from
+// and to what share of the sidewall's height it's squashed, eased in between these rebound speeds
+// (m/s: a landing's rebound is 1-3 m/s; settling and the step's jitter are far slower).
+const double kTireFoldLoss = 0.7, kTireFoldFrom = 0.15, kTireFoldFull = 0.55, kTireFoldEase0 = 0.1, kTireFoldEase1 = 0.6;
+// Tire load sensitivity: mu falls this much per 100 % of load over the tire's static share
+// (real tires: ~5-15 % from their rated load to twice it).
+const double kTireLoadSens = 0.08;
+// Airing down on loose ground (dirt, gravel, scree, grass, sand, mud, snow): the most extra grip
+// the longer, softer patch gets there (~8 psi down).
+const double kAirDownLooseMax = 0.10;
 const double kRimPopSpeed = 7.0;     // rim strike faster than this (m/s) pinches the tire -> blowout
 const double kStickK = 1.2e5, kStickC = 4000;  // contact-patch static friction (parking, slopes)
 const double kNodeRadius = 0.04;
@@ -268,6 +279,15 @@ Frame Car::frame() const {
     return f;
 }
 
+void Car::clearHydrolock() {
+    // (Drowning knocks the engine's health to 10%, which would leave it dead after any fix: the water out, the oil changed and the
+    // plugs new give back what it was before the flood.)
+    hydrolocked = false;
+    engineHealth = std::max(engineHealth, floodedHealth >= 0 ? floodedHealth : 0.85);
+    floodedHealth = -1;
+    engineDead = engineHealth < 0.12;
+}
+
 V3 Car::engineBay() const { return groupAvg(engineNodes); }
 
 double Car::engineTorque(double r) const {
@@ -330,10 +350,6 @@ void Car::computeForces(double h, const World& w) {
         const char* option = std::getenv("CZ_FREE_COILS");
         return option && std::string(option) == "1";
     }();
-    static const bool highSpeedDamping = [] {
-        const char* option = std::getenv("CZ_HIGH_SPEED_DAMPING");
-        return option && std::string(option) == "1";
-    }();
     const V3 g(0, -9.81, 0);
     const double dragPerKg = 0.5 * 1.2 * spec->dragArea / mass;  // 0.5 * rho * Cd * A, spread over the nodes
     for (Node& n : nodes) n.f = g * n.m - n.v * (len(n.v) * dragPerKg * n.m);
@@ -366,6 +382,7 @@ void Car::computeForces(double h, const World& w) {
                 for (int i : engineNodes)
                     if (top < 0 || nodes[i].p.y > nodes[top].p.y) top = i;
             if (top >= 0 && nodes[top].p.y - (spec->extras & EXTRA_SNORKEL ? 0.15 : 0.0) < w.waterLevel(nodes[top].p.x, nodes[top].p.z)) {
+                if (!hydrolocked) floodedHealth = engineHealth;
                 engineDead = hydrolocked = true;
                 engineHealth = std::min(engineHealth, 0.1);
             }
@@ -489,7 +506,7 @@ void Car::computeForces(double h, const World& w) {
             // the rubber is solid and the tube is on the frame: steel on steel.
             if (L >= b.minL + 0.01) continue;
             double c = std::min(b.minL + 0.01 - L, 0.03);
-            F = -(25 * b.k * c * c / 0.03 + 25 * b.k * std::max(0.0, b.minL - 0.02 - L) + 100 * b.k * std::max(0.0, b.minL - 0.04 - L));
+            F = Damper::stop(-(25 * b.k * c * c / 0.03 + 25 * b.k * std::max(0.0, b.minL - 0.02 - L) + 100 * b.k * std::max(0.0, b.minL - 0.04 - L)), vrel);
             if (vrel < 0) F += b.c * vrel;
         } else if (b.type == BEAM_SPRING) {
             F = b.k * (L - b.L0);
@@ -503,29 +520,11 @@ void Car::computeForces(double h, const World& w) {
             // Progressive rubber bump stop: firms up over its first 3 cm.
             if (L < b.minL + 0.01) {
                 double c = std::min(b.minL + 0.01 - L, 0.03);
-                F -= 25 * b.k * c * c / 0.03 + 25 * b.k * std::max(0.0, b.minL - 0.02 - L);
+                F += Damper::stop(-(25 * b.k * c * c / 0.03 + 25 * b.k * std::max(0.0, b.minL - 0.02 - L)), vrel);
             } else if (L > b.maxL) {
                 F += 25 * b.k * (L - b.maxL);
             }
-            // Dampers resist rebound (extension) harder than bump. In bump the valves blow
-            // off above ~0.25 m/s, so a sharp hit doesn't turn into a huge kick; rebound
-            // stays firm so the car doesn't spring itself into the air.
-            // High-speed choke: additional damping above ~3 m/s to prevent bottoming on
-            // large bumps (monotube shock absorber behavior). Subtle effect.
-            if (vrel > 0) {
-                F += b.c * 1.35 * vrel;
-                // High-speed choke in rebound (very subtle)
-                if (highSpeedDamping && vrel > 3.0) {
-                    F += b.c * 0.2 * (vrel - 3.0);
-                }
-            } else {
-                double sv = -vrel, knee = 0.25;
-                F -= b.c * 0.65 * (sv < knee ? sv : knee + 0.3 * (sv - knee));
-                // High-speed choke in bump (very subtle)
-                if (highSpeedDamping && sv > 3.0) {
-                    F -= b.c * 0.15 * (sv - 3.0);
-                }
-            }
+            F += Damper::force(b.c, vrel);
             // A leaf pack's leaves rub on each other as it flexes: friction damping, strongest
             // on small, quick movements (washboard), as real leaf springs ride.
             if (b.friction > 0) F += b.friction * std::tanh(vrel / 0.06);  // (smoothed: an explicit step can't hold a true stick)
@@ -1241,11 +1240,23 @@ void Car::buildWheelRub() {
         wh.rubAllow.clear();
         if (restLocal.empty() || !stock) continue;
         const V3 c0 = (restLocal[wh.inner] + restLocal[wh.outer]) * 0.5, axis0 = norm(restLocal[wh.outer] - restLocal[wh.inner]);
-        const double Rs = std::max(stock->wheelRadius, stock->wellTireRadius) + 0.03,
-                     half = 0.5 * std::max(wh.front || stock->wheelWidthRear <= 0 ? stock->wheelWidth : stock->wheelWidthRear, stock->wellTireWidth) + 0.02;
-        const double bump = wh.front ? (stock->bumpFront > 0 ? stock->bumpFront : 0.085) : (stock->bumpRear > 0 ? stock->bumpRear : 0.085);
-        const double droop = wh.front ? (stock->droopFront > 0 ? stock->droopFront : 0.11) : (stock->droopRear > 0 ? stock->droopRear : 0.11);
+        // (A garage build whose tires or travel outgrow the factory's wheel wells has its arches
+        // trimmed and flared round them (mods.cpp fitBody: wellTire*, and the kit's travel), as
+        // the drawn arches are (archGrowth): then it's that clearance the tire has.)
+        const double Rs = std::max({stock->wheelRadius, stock->wellTireRadius, spec->wellTireRadius}) + 0.03,
+                     half = 0.5 * std::max({wh.front || stock->wheelWidthRear <= 0 ? stock->wheelWidth : stock->wheelWidthRear, stock->wellTireWidth, spec->wellTireWidth}) + 0.02;
+        // (Unset travel: carbuild's defaults, scaled by tire size on a build; the factory's as it was.)
+        auto travel = [&](const VehicleSpec& v, bool bumpSide) {
+            const double t = wh.front ? (bumpSide ? v.bumpFront : v.droopFront) : (bumpSide ? v.bumpRear : v.droopRear);
+            return t > 0 ? t : (bumpSide ? 0.085 : 0.11) * (&v == stock ? 1.0 : v.wheelRadius / 0.32);
+        };
+        // (Trimmed by a builder, a well leaves a couple of cm over the kit's bump stops, for the
+        // stops' own squash on a hard landing.)
+        const bool trimmed = spec != stock && spec->wellsTrimmed;
+        const double bump = std::max(travel(*stock, true), trimmed ? travel(*spec, true) + 0.025 : 0.0);
+        const double droop = std::max(travel(*stock, false), trimmed ? travel(*spec, false) : 0.0);
         const double reach = wh.R + 0.35;
+        const bool solid = (wh.front ? spec->frontSusp : spec->rearSusp) == SOLID_AXLE;
         for (const auto& f : faces) {
             bool own = false;
             for (int k = 0; k < 3; k++) own |= std::find(wh.assembly.begin(), wh.assembly.end(), f[k]) != wh.assembly.end();
@@ -1273,12 +1284,20 @@ void Car::buildWheelRub() {
                         auto turn = [&](const V3& v) { return V3(v.x * cs + v.z * sn, v.y, -v.x * sn + v.z * cs); };
                         const V3 pivot = c0 - axis0 * kp;
                         const V3 c = pivot + turn(c0 - pivot) + V3(0, up, 0);
-                        const V3 ax = turn(axis0);
-                        for (int i = 0; i < 7; i++) {
-                            const V3 d = pts[i] - c;
-                            const double da = dot(d, ax), dr = len(d - ax * da);
-                            // (By the nearer way out, as the contact measures it.)
-                            if (std::fabs(da) < half && dr < Rs) allow[i] = std::max(allow[i], std::min(Rs - dr, half - std::fabs(da)));
+                        // (A trimmed well also clears the tire leaning as it goes: a live axle
+                        // tilting as one end rises, a wishbone's camber gain. The factory's
+                        // clearance stays as it was measured.)
+                        const double lean = !trimmed ? 0.0 : std::atan(std::fabs(up) / std::max(0.3, std::fabs(c0.z))) * (solid ? 1.0 : 0.5);
+                        for (double tilt : {0.0, lean, -lean}) {
+                            if (tilt != 0 && lean < 1e-4) continue;
+                            const double ct = std::cos(tilt), stl = std::sin(tilt);
+                            const V3 a0 = turn(axis0), ax(a0.x, a0.y * ct - a0.z * stl, a0.y * stl + a0.z * ct);
+                            for (int i = 0; i < 7; i++) {
+                                const V3 d = pts[i] - c;
+                                const double da = dot(d, ax), dr = len(d - ax * da);
+                                // (By the nearer way out, as the contact measures it.)
+                                if (std::fabs(da) < half && dr < Rs) allow[i] = std::max(allow[i], std::min(Rs - dr, half - std::fabs(da)));
+                            }
                         }
                     }
             wh.rubFaces.push_back(f);
@@ -1521,13 +1540,13 @@ void Car::wheelStep(double h, const World& w) {
         }
         throttleFill = pedal > throttleFill ? std::min(pedal, throttleFill + h * rise) : pedal;
     }
-    double thr = shiftTimer > 0 || engineDead ? 0.0 : throttleFill;
+    double thr = shiftTimer > 0 || (engineDead || engineOff) ? 0.0 : throttleFill;
     double power = 0.25 + 0.75 * engineHealth;  // a crushed engine bay loses power
     // Turbo: boost follows the pedal, slowly at low revs (lag), and leaks away off throttle.
     // Off boost the engine makes a bit over half its torque.
     double turbo = 1;
     if (spec->turboLag > 0) {
-        double want = engineDead ? 0 : throttle;  // traction control trims the spark, not the boost
+        double want = (engineDead || engineOff) ? 0 : throttle;  // traction control trims the spark, not the boost
         double tau = want > boost ? spec->turboLag * clampd(3000 / std::max(rpm, 1.0), 0.5, 2.0) : 0.25;
         boost += (want - boost) * std::min(1.0, h / tau);
         turbo = 0.7 + 0.3 * boost;
@@ -1580,8 +1599,8 @@ void Car::wheelStep(double h, const World& w) {
     double Te, Iin = Ie;
     if (fuel < 0) fuel = spec->fuelCapacity;
     if (jerry < 0) jerry = spec->jerryCan;
-    if (engineDead || nd == 0 || gear == 0 || outOfFuel()) {
-        if (engineDead || outOfFuel()) rpm += (0 - rpm) * std::min(1.0, h * 2);
+    if ((engineDead || engineOff) || nd == 0 || gear == 0 || outOfFuel()) {
+        if ((engineDead || engineOff) || outOfFuel()) rpm += (0 - rpm) * std::min(1.0, h * 2);
         else rpm += (spec->idleRpm + thr * (spec->redline - spec->idleRpm) - rpm) * std::min(1.0, h * 4);  // neutral: revs freely
         Te = 0;
     } else if (converterSlips) {
@@ -1633,7 +1652,7 @@ void Car::wheelStep(double h, const World& w) {
         if (rpm > spec->redline) Te = std::min(Te, 0.0) - (rpm - spec->redline) * 0.5;  // rev limiter
         autoShift(rpm);
     }
-    if (shiftTimer > 0 && gear != 0 && !engineDead && !automatic && spec->shiftTime > 0.06) {
+    if (shiftTimer > 0 && gear != 0 && !(engineDead || engineOff) && !automatic && spec->shiftTime > 0.06) {
         // Manual gearboxes open the clutch during a shift. Torque converters unlock
         // above and keep the pump RPM independent; LST/CVT keep their fast coupling.
         // Match the new input speed with the engine
@@ -1648,7 +1667,7 @@ void Car::wheelStep(double h, const World& w) {
     }
     // Fuel: what the engine burns for the power it makes (~250 g/kWh, petrol 0.745 kg/L), and
     // a trickle at idle.
-    if (fuelUse > 0 && !engineDead && fuel > 0) {
+    if (fuelUse > 0 && !(engineDead || engineOff) && fuel > 0) {
         const double kW = std::max(0.0, Te) * rpm * 2 * M_PI / 60 / 1000;
         const double lps = kW * 250.0 / 745.0 / 3600.0 + (rpm > 300 ? 0.8 / 3600.0 : 0.0);
         fuel = std::max(0.0, fuel - lps * fuelUse * h);
@@ -1660,7 +1679,7 @@ void Car::wheelStep(double h, const World& w) {
     // crank, not straight to the hubs: the gearbox, the transfer case and the differentials
     // pass it on (solved after the wheels, below). Slipping (pulling away), the clutch
     // presses a set torque into the gearbox, the same to every driven wheel.
-    const bool engaged = !clutchSlipping && nd > 0 && !engineDead && gear != 0;  // (a converter is always "in")
+    const bool engaged = !clutchSlipping && nd > 0 && !(engineDead || engineOff) && gear != 0;  // (a converter is always "in")
     brakePressure += clampd(brake - brakePressure, -h * 10, h * 7);
 
     // Limited-slip differentials: torque flows from the faster side to the slower one, up
@@ -1790,7 +1809,10 @@ void Car::wheelStep(double h, const World& w) {
                 const double depth = w.waterLevel(c.x, c.z) - (c.y - R);
                 if (depth > 0) grip *= 1 - 0.3 * smoothstep(0, 0.4, depth);
             }
-            if (ct.surface != SURF_PAVED && ct.surface != SURF_WET && ct.surface != SURF_ICE) grip *= (1 + 0.012 * psiDrop) * spec->looseGrip;
+            // (On loose ground the longer patch only helps up to what the soil itself holds: the
+            // bonus stops at kAirDownLooseMax. On rock the soft tread keeps wrapping the edges.)
+            if (ct.surface != SURF_PAVED && ct.surface != SURF_WET && ct.surface != SURF_ICE)
+                grip *= (1 + (hardGround(ct.surface) ? 0.012 * psiDrop : std::min(0.012 * psiDrop, kAirDownLooseMax))) * spec->looseGrip;
             // Mud packed into the tread turns it into a slick.
             grip *= 1 - (tread == TIRE_MUD_TERRAIN ? 0.25 : tread == TIRE_CHAINS ? 0.15 : tread == TIRE_RACE_SLICK ? 0.5 : 0.4) * wh.clog;
             // Standing water: past ~80 km/h the tread can't push it out of the way fast
@@ -1814,7 +1836,19 @@ void Car::wheelStep(double h, const World& w) {
             // Rim contact: once the sidewall is squashed flat, the rim takes the load. (Flat, the
             // folded rubber under the rim is all there is: past it, the rim strikes steel-hard.)
             double rimPen = pen - (R - wh.rimR) * 0.85;
-            double N = pen > 0 ? std::max(0.0, tireK * pen + kRimK * std::max(0.0, rimPen) - kTireC * vn) : 0.0;
+            // The carcass folding: squashed well past its ride deflection (a hard landing, a rock
+            // hit), the sidewall buckles and the rubber and cords scrub on themselves, and it springs
+            // back with much less than it took (rubber's hysteresis at large strain). Coming back up
+            // faster than a slow settle, the carcass gives back up to kTireFoldLoss less, from
+            // kTireFoldFrom of the sidewall's height squashed to kTireFoldFull of it. (A tire at its
+            // ride load sits at ~10-14 % and rolls on as before; slow settling, on a slope or parked,
+            // isn't touched. With the elastic carcass alone, a truck dropped 1 m flat bounced off
+            // its own tires: all four left the ground for ~0.35 s and came up 21-27 cm.)
+            // (On the rubber only: the rim's steel strike stays elastic.)
+            double Fcarcass = tireK * pen;
+            if (vn > kTireFoldEase0)
+                Fcarcass *= 1 - kTireFoldLoss * smoothstep(kTireFoldFrom, kTireFoldFull, pen / std::max(0.01, R - wh.rimR)) * smoothstep(kTireFoldEase0, kTireFoldEase1, vn);
+            double N = pen > 0 ? std::max(0.0, Fcarcass + kRimK * std::max(0.0, rimPen) - kTireC * vn) : 0.0;
             // Soft ground gives way under a hard landing: past what it can bear, the sand
             // (mud, snow) is shoved aside and packed down instead of the tire squashing
             // further, so the tire digs a crater rather than slamming onto its rim, and
@@ -1838,6 +1872,11 @@ void Car::wheelStep(double h, const World& w) {
             V3 fdir = cross(axis, n);
             double fl = len(fdir);
             if (fl > 0.25 && N > 0) {
+                // Load sensitivity: a tire grips with a little less mu the harder it's pressed
+                // (against its share of the car's weight), so weight transfer in a corner or under
+                // the brakes costs some grip, and a heavier truck isn't just a scaled-up light one.
+                const double N0 = mass * 9.81 / std::max<size_t>(wheels.size(), 1);
+                const double loadMu = clampd(1 - kTireLoadSens * (N / std::max(N0, 1.0) - 1), 0.8, 1 + kTireLoadSens);
                 fdir = fdir / fl;
                 V3 sdir = cross(n, fdir);
                 double vx = dot(vc, fdir), vy = dot(vc, sdir);
@@ -1847,7 +1886,7 @@ void Car::wheelStep(double h, const World& w) {
                 double sm = std::sqrt(sx * sx + sy * sy);
                 double fx = 0, fy = 0;
                 if (sm > 1e-9) {
-                    double Fm = mu * grip * N * tireCurve(sm, bite, si.keep);
+                    double Fm = mu * grip * loadMu * N * tireCurve(sm, bite, si.keep);
                     fx = Fm * sx / sm;
                     // Low pressure: the sidewall rolls over in a fast turn.
                     const double roll = clampd((psiDrop - 12) * 0.025, 0, 0.4) * clampd((std::fabs(vx) - 8) / 12, 0, 1);
@@ -1864,7 +1903,7 @@ void Car::wheelStep(double h, const World& w) {
                     wh.stickX = wh.stickX * relax + slipX * h;
                     wh.stickY = wh.stickY * relax + slipY * h;
                     double sxF = -kStickK * wh.stickX - kStickC * slipX, syF = -kStickK * wh.stickY - kStickC * slipY;
-                    double cap = mu * grip * N, mag = std::sqrt(sxF * sxF + syF * syF);
+                    double cap = mu * grip * loadMu * N, mag = std::sqrt(sxF * sxF + syF * syF);
                     if (mag > cap) {  // breaking loose: the patch slides, deflection stays at the limit
                         sxF *= cap / mag;
                         syF *= cap / mag;
@@ -2240,11 +2279,35 @@ void Car::updateBounds() {
     // Movement, rebuilds, recovery and network snapshots invalidate parked-car caches too.
     if (grid) grid->stamp = -1;
     nodeGridStamp = -1;
-    bbMin = bbMax = nodes[0].p;
-    for (const Node& n : nodes) {
-        bbMin = V3(std::min(bbMin.x, n.p.x), std::min(bbMin.y, n.p.y), std::min(bbMin.z, n.p.z));
-        bbMax = V3(std::max(bbMax.x, n.p.x), std::max(bbMax.y, n.p.y), std::max(bbMax.z, n.p.z));
+    // The structure still holding together: the body nodes the chassis frame keeps (all of them
+    // without one). Whatever lies further than kStrayReach outside it is a stray (softbody.h).
+    V3 cMin(1e300, 1e300, 1e300), cMax(-1e300, -1e300, -1e300);
+    const int nb = std::min(bodyNodes, (int)nodes.size());
+    const bool held = !chassis.nodes.empty();
+    for (int i = 0; i < nb; i++) {
+        if (held && i < (int)chassis.slot.size() && chassis.slot[i] >= 0 && !chassis.attached[chassis.slot[i]]) continue;
+        const V3& p = nodes[i].p;
+        cMin = V3(std::min(cMin.x, p.x), std::min(cMin.y, p.y), std::min(cMin.z, p.z));
+        cMax = V3(std::max(cMax.x, p.x), std::max(cMax.y, p.y), std::max(cMax.z, p.z));
     }
+    if (cMin.x > cMax.x) cMin = V3(-1e300, -1e300, -1e300), cMax = V3(1e300, 1e300, 1e300);  // (nothing held: keep it all)
+    const V3 r(kStrayReach, kStrayReach, kStrayReach);
+    cMin -= r;
+    cMax += r;
+    stray.assign(nodes.size(), 0);
+    strays = 0;
+    bbMin = V3(1e300, 1e300, 1e300), bbMax = V3(-1e300, -1e300, -1e300);
+    for (size_t i = 0; i < nodes.size(); i++) {
+        const V3& p = nodes[i].p;
+        if (p.x < cMin.x || p.x > cMax.x || p.y < cMin.y || p.y > cMax.y || p.z < cMin.z || p.z > cMax.z) {
+            stray[i] = 1;
+            strays++;
+            continue;
+        }
+        bbMin = V3(std::min(bbMin.x, p.x), std::min(bbMin.y, p.y), std::min(bbMin.z, p.z));
+        bbMax = V3(std::max(bbMax.x, p.x), std::max(bbMax.y, p.y), std::max(bbMax.z, p.z));
+    }
+    if (!(bbMin.x <= bbMax.x)) bbMin = bbMax = nodes[0].p;
     const double m = 0.15 + (wheels.empty() ? 0.25 : wheels[0].R);
     bbMin -= V3(m, m, m);
     bbMax += V3(m, m, m);
@@ -2437,13 +2500,31 @@ bool Car::finite() const {
 // =============================================================================
 // Sim
 
+void Sim::clearWorldLeftovers(int keep, bool keepRemotes) {
+    for (int i = (int)cars.size() - 1; i >= 0; i--)
+        if (i != keep && !(keepRemotes && cars[i].remote)) {
+            carRemoved(i);
+            cars.erase(cars.begin() + i);
+            if (keep > i) keep--;
+        }
+    player = keep >= 0 ? keep : 0;
+    if (keep >= 0) dropRopes(keep);
+    if (!keepRemotes) ropes.clear(), cables.clear();
+    handLine = HandLine();
+    handCable = HandCable();
+    setAnchors.clear();
+    looseWheels.clear();
+    droppedParts.clear();
+    playerAway = false;
+    // (the vectors' memory too: a crowded world's shouldn't stay held by the next)
+    looseWheels.shrink_to_fit();
+    if (cars.empty()) std::vector<Car>().swap(cars);
+}
+
 void Sim::setup() {
     loadprof::Scope lpSetup("sim.setup (cars)");
     const auto& cat = vehicleCatalog();
-    cars.clear();
-    ropes.clear();
-    handLine = HandLine();
-    setAnchors.clear();
+    clearWorldLeftovers(-1);
     refillAnchors();
     cars.reserve(kMaxBodies);
     colorIndex = 0;
@@ -2462,10 +2543,7 @@ void Sim::setup() {
 }
 
 void Sim::setupEmpty() {
-    cars.clear();
-    ropes.clear();
-    handLine = HandLine();
-    setAnchors.clear();
+    clearWorldLeftovers(-1);
     cars.reserve(kMaxBodies);
     colorIndex = 0;
     player = 0;
@@ -2509,7 +2587,7 @@ void Sim::addCar(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col
     cars.back().build(vs, pos, yaw, paint);
 }
 
-int Sim::advance(double realDt, int maxSubsteps) {
+int Sim::advance(double realDt, int maxSubsteps, double keepOwed) {
     if (paused) return 0;
     updateTrail(realDt * timeScale);
     accum += realDt * timeScale;
@@ -2519,9 +2597,12 @@ int Sim::advance(double realDt, int maxSubsteps) {
         accum -= h;
         n++;
     }
-    if (n == maxSubsteps) accum = 0;  // can't keep up: slow down rather than spiral
+    if (n == maxSubsteps) accum = std::min(accum, std::max(0.0, keepOwed));  // can't keep up: slow down rather than spiral (or owe a little)
     for (Car& c : cars)
-        if (c.gate.dir != 0) c.gateStep(realDt * timeScale);
+        {
+            if (c.gate.dir != 0) c.gateStep(realDt * timeScale);
+            if (c.hood.dir != 0) c.hoodStep(realDt * timeScale);
+        }
     wrapAround();
     return n;
 }
@@ -2709,8 +2790,11 @@ void Sim::substep() {
             return m > 0 ? p / m : V3();
         };
         if (r.heldHere <= 0 && len(vel(a) - vel(b)) < 1.0) continue;
-        if (r.heldHere <= 0) r.holdHere();
-        r.heldHere = 0.4;
+        if (r.heldHere <= 0) r.holdHere(), r.heldFor = 0;
+        // (Not for good: pushed along for long, it went its own way here while its owner's
+        // states said otherwise, metres apart. Past kMaxHold it goes back to them, hit or not;
+        // its owner's machine has the same push.)
+        if (r.heldFor < Car::kMaxHold) r.heldHere = std::min(0.4, Car::kMaxHold - r.heldFor);
     }
 
     if (!ropes.empty()) ropeForces();
@@ -2723,6 +2807,7 @@ void Sim::substep() {
             c.integrate(h);
             c.updateBounds();
             c.heldHere -= h;
+            c.heldFor += h;
             if (c.heldHere <= 0) c.handBack = true;
             continue;
         }
@@ -2810,6 +2895,7 @@ void Sim::setPhysicsThreads(int threads) {
 
 // Rebuild only the geometry that moved; parked supports keep their collision grids.
 void Car::prepareContact(long step) {
+    const bool cut = strays > 0 && stray.size() == nodes.size();  // (strays: left out, see updateBounds)
     if (grid->stamp != step && (!sleeping || grid->stamp < 0)) {
         updateTris();
         grid->clear();
@@ -2817,6 +2903,7 @@ void Car::prepareContact(long step) {
         for (int ti = 0; ti < (int)tris.size(); ti++) {
             const Tri& t = tris[ti];
             if (t.torn) continue;
+            if (cut && (stray[t.v[0]] | stray[t.v[1]] | stray[t.v[2]])) continue;  // (lying far off: out of the box, out of reach)
             V3 mn = nodes[t.v[0]].p, mx = mn;
             for (int c = 1; c < 3; c++) {
                 const V3& p = nodes[t.v[c]].p;
@@ -2844,13 +2931,14 @@ void Car::prepareContact(long step) {
     if (nodeGridStamp != step && (!sleeping || nodeGridStamp < 0)) {
         nodeGrid->clear();
         for (int i = 0; i < bodyNodes; i++) {
-            if (!nodeTris[i].empty()) continue;
+            if (!nodeTris[i].empty() || (cut && stray[i])) continue;
             const V3& p = nodes[i].p;
             nodeGrid->insert(i, p - reach, p + reach);
         }
         // The ladder frame and the engine block: what a bumper finds behind the sheet metal.
         for (const std::vector<int>* hard : {&ladder, &engineNodes})
             for (int i : *hard) {
+                if (cut && stray[i]) continue;
                 const V3& p = nodes[i].p;
                 nodeGrid->insert(i, p - reach, p + reach);
             }
@@ -3400,14 +3488,16 @@ void Sim::pilotStep(int i, double dt) {
         if (ap.replanTime <= 0 && len(g - ap.goal) > 8) {
             ap.replanTime = 3;
             ap.goal = g;
-            std::vector<V3> np;
-            if (planRoute(world, *c.spec, c.frame().com, g, ap.route, ap.avoid, np)) ap.path = np, ap.idx = 0;
+            pilotReplan(c, world, c.frame().com, g, 1.0);  // (in the background in the game: the old route meanwhile)
         }
     }
     const bool was = ap.active;
     const int mode0 = c.driveMode;
     const bool lf0 = c.lockFront, lr0 = c.lockRear, sway0 = c.swayDisconnected, air0 = ap.airTarget > 0;
-    pilotDrive(c, world, dt, &cars);
+    {
+        FRAMEWORK("pilot.drive");
+        pilotDrive(c, world, dt, &cars);
+    }
     if (i != player) return;
     if (was && !ap.active && ap.arrived) events.push_back("AUTOPILOT: " + ap.status);
     // Say what it changed on the truck.
@@ -3429,6 +3519,91 @@ void Sim::respawnPlayer() {
     accum = 0;
 }
 
+V3 Sim::poleFreeShift(const Car& c, double* turn) const {
+    if (turn) *turn = 0;
+    // The car's outline seen from above, in its own level frame (dents and all, not a panel lying where it came off), and its
+    // height.
+    const Frame fr = c.frame();
+    V3 fwd = norm(V3(fr.fwd.x, 0, fr.fwd.z));
+    if (!std::isfinite(fwd.x) || len(fwd) < 0.5) fwd = V3(1, 0, 0);
+    const V3 left(fwd.z, 0, -fwd.x);
+    std::vector<char> off(c.nodes.size(), 0);
+    for (const Panel& p : c.panels)
+        if (p.state == 2)
+            for (int j : p.panelNodes)
+                if (j >= 0 && j < (int)off.size()) off[j] = 1;
+    double a0 = 1e9, a1 = -1e9, l0 = 1e9, l1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (int i = 0; i < (int)c.nodes.size(); i++) {
+        if (off[i]) continue;
+        const Node& n = c.nodes[i];
+        const V3 r(n.p.x - fr.com.x, 0, n.p.z - fr.com.z);
+        a0 = std::min(a0, dot(r, fwd)), a1 = std::max(a1, dot(r, fwd));
+        l0 = std::min(l0, dot(r, left)), l1 = std::max(l1, dot(r, left));
+        y0 = std::min(y0, n.p.y), y1 = std::max(y1, n.p.y);
+    }
+    if (a0 > a1) return V3();
+    const double margin = 0.35;
+    // A way out: a corridor as wide as the car (its real outline) and a little more, a car's length (3 m at least) straight
+    // ahead or straight back, with no trunk, pole or solid too tall to roll over in it. Set down with neither, the car is
+    // as stuck as before (a second tree just behind it, a rock in front).
+    const double run = std::max(3.0, a1 - a0), side = 0.5, step = 0.3;
+    // How many ways out a spot (shifted s, facing f) has: -1 if a trunk is in the car's outline there, or another car is
+    // (where it already stands, a car alongside doesn't count: parked beside it on a pad, it isn't moved off).
+    auto ways = [&](const V3& s, const V3& f) {
+        const double x = fr.com.x + s.x, z = fr.com.z + s.z;
+        if (world.poleInside(x, z, f, a0, a1, l0, l1, y0 - 2.0, y1 + 0.5, margin)) return -1;
+        const double myR = 0.5 * std::hypot(a1 - a0, l1 - l0);
+        if (len(s) > 0)
+            for (const Car& o : cars) {
+                if (&o == &c || o.nodes.empty()) continue;
+                const V3 oc = o.frame().com;
+                const double oR = 0.5 * std::hypot(o.bbMax.x - o.bbMin.x, o.bbMax.z - o.bbMin.z);
+                if (std::hypot(oc.x - x, oc.z - z) < myR + oR + 0.3 && std::fabs(oc.y - fr.com.y) < 4) return -1;
+            }
+        const bool ahead = !world.solidInside(x, z, f, a1 - 0.5, a1 + run, l0, l1, y0 - 2.0, y1 + 0.5, side, y0, step);
+        const bool back = !world.solidInside(x, z, f, a0 - run, a0 + 0.5, l0, l1, y0 - 2.0, y1 + 0.5, side, y0, step);
+        return (int)ahead + (int)back;
+    };
+    // The nearest spot with both ways out, unless one with a single way out is nearer by more than 1.5 m; failing both,
+    // the nearest with nothing in the outline. Rings outward, first straight back (the way it came in: it hit the tree
+    // nose first), then turning round to either side, straight ahead last; on each ring facing as it was first, then
+    // turned a little (when the caller can turn it).
+    static const double kDirs[] = {0, 30, -30, 60, -60, 90, -90, 120, -120, 150, -150, 180};
+    static const double kYaws[] = {0, 15, -15, 30, -30};
+    const int nYaws = turn ? 5 : 1;
+    V3 one, any;
+    double oneTurn = 0, anyTurn = 0, oneD = -1;
+    bool haveAny = false;
+    for (double d = 0; d <= 12.0; d += 0.25) {
+        if (oneD >= 0 && d > oneD + 1.5) break;
+        for (int yi = 0; yi < nYaws; yi++) {
+            const double ya = kYaws[yi] * M_PI / 180;
+            const V3 f = fwd * std::cos(ya) + left * std::sin(ya);
+            for (double deg : kDirs) {
+                const double ang = deg * M_PI / 180;
+                const V3 s = (-fwd * std::cos(ang) + left * std::sin(ang)) * d;
+                const int w = ways(s, f);
+                if (w == 2) {
+                    if (turn) *turn = ya;
+                    return s;
+                }
+                if (w == 1 && oneD < 0) one = s, oneTurn = ya, oneD = d;
+                if (w >= 0 && !haveAny) any = s, anyTurn = ya, haveAny = true;
+                if (d == 0) break;  // (no direction to go in)
+            }
+        }
+    }
+    if (oneD >= 0) {
+        if (turn) *turn = oneTurn;
+        return one;
+    }
+    if (haveAny) {
+        if (turn) *turn = anyTurn;
+        return any;
+    }
+    return V3();  // (boxed in all round: leave it be)
+}
+
 void Sim::rightPlayer() {
     Car& c = cars[player];
     if (c.remote) return;  // (someone else's)
@@ -3437,6 +3612,13 @@ void Sim::rightPlayer() {
     double yaw = std::atan2(-fr.fwd.z, fr.fwd.x);
     if (!std::isfinite(yaw)) yaw = 0;
     c.placeUpright(world, fr.com.x, fr.com.z, yaw);
+    // Clear of the tree it's wrapped round (a hard hit leaves the trunk inside the crumpled nose).
+    double turn = 0;
+    const V3 s = poleFreeShift(c, &turn);
+    if (len(s) > 0 || turn != 0) {
+        const Frame f2 = c.frame();
+        c.placeUpright(world, f2.com.x + s.x, f2.com.z + s.z, yaw + turn);
+    }
 }
 
 void Sim::towPlayerHome() {
@@ -3444,14 +3626,23 @@ void Sim::towPlayerHome() {
     if (c.remote) return;  // (someone else's)
     dropRopes(player);
     c.placeUpright(world, c.spawnPos.x, c.spawnPos.z, c.spawnYaw);
+    double turn = 0;
+    const V3 s = poleFreeShift(c, &turn);
+    if (len(s) > 0 || turn != 0) c.placeUpright(world, c.spawnPos.x + s.x, c.spawnPos.z + s.z, c.spawnYaw + turn);
     accum = 0;
 }
 
-void Sim::teleportPlayer(double x, double z, double yaw) {
-    Car& c = cars[player];
+void Sim::teleportPlayer(double x, double z, double yaw) { teleportCar(player, x, z, yaw); }
+
+void Sim::teleportCar(int car, double x, double z, double yaw) {
+    if (car < 0 || car >= (int)cars.size()) return;
+    Car& c = cars[car];
     if (c.remote) return;  // (someone else's)
-    dropRopes(player);
+    dropRopes(car);
     c.placeUpright(world, x, z, yaw);
+    double turn = 0;
+    const V3 s = poleFreeShift(c, &turn);
+    if (len(s) > 0 || turn != 0) c.placeUpright(world, x + s.x, z + s.z, yaw + turn);
     accum = 0;
 }
 
@@ -3464,8 +3655,18 @@ void Sim::recoverPlayer() {
     double sy = c.spawnYaw;
     double yaw = std::atan2(-fr.fwd.z, fr.fwd.x);
     if (!std::isfinite(yaw)) yaw = 0;
-    c.respawn(V3(fr.com.x, world.clearY(fr.com.x, fr.com.z) + 0.05, fr.com.z), yaw);
+    // Rebuilt like new where it stood, set on the ground there: not on top of the tree it hit
+    // (a trunk isn't somewhere to stand), and moved clear of it if the fresh, undented car would
+    // reach round it (a hard hit stops the car with the trunk inside its crumpled nose).
+    c.respawn(V3(fr.com.x, world.clearY(fr.com.x, fr.com.z, false) + 0.05, fr.com.z), yaw);
     c.setDown(world);
+    double turn = 0;
+    const V3 s = poleFreeShift(c, &turn);
+    if (len(s) > 0 || turn != 0) {
+        const V3 at = c.frame().com + s;
+        c.respawn(V3(at.x, world.clearY(at.x, at.z, false) + 0.05, at.z), yaw + turn);
+        c.setDown(world);
+    }
     c.spawnPos = sp;  // R still returns to the original spawn
     c.spawnYaw = sy;
 }

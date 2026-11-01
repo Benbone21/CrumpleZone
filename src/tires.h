@@ -61,5 +61,6 @@ double blowoutDie(uint64_t seed, int wheel, uint32_t tick);
 
 // Hub (rotor, studs and drum) a corner rolls on with no wheel bolted to it (m).
 constexpr double kBareHubR = 0.17;
+constexpr double kBareHubI = 0.3;  // spin inertia of a hub and rotor alone (kg m^2)
 // How many loose wheels the world keeps (the oldest are cleared past this).
 constexpr int kMaxLooseWheels = 16;

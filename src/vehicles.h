@@ -177,6 +177,7 @@ struct VehicleSpec {
     double wheelRadius, wheelWidth;
     double wellTireRadius = 0;     // the biggest tire the wheel wells were cut for (m; 0 = this one): bigger rubs
     double wellTireWidth = 0;      // ...and its width
+    bool wellsTrimmed = false;     // a garage build's: the wells cut round its tires and travel (mods.cpp fitBody)
     double wheelWidthRear = 0;                // 0 = same as the front (staggered tires otherwise)
     double trackFront = 0, trackRear = 0;     // tire center to tire center (m); 0 = from the body width
     double wheelMass = 20, hubMass = 16;      // per corner: wheel and tire; knuckle, hub and brake
@@ -310,6 +311,14 @@ double peakPower(const VehicleSpec& vs, double* atRpm = nullptr);
 // The engine's voice with its seed (from its name: each engine its own small differences).
 EngineTone voiceFor(const VehicleSpec& vs);
 double peakTorque(const VehicleSpec& vs, double* atRpm = nullptr);
+// How much bigger a drawn wheel arch (centre height cy over the ground, radius r, superellipse
+// power p: 2 round) must be cut on this build than on the factory car, so its tires keep the
+// factory's clearance up through their travel (mods.cpp fitBody trims the wells to match). 0 on
+// a stock car or one whose tires fit under its arches.
+double archGrowth(const VehicleSpec& vs, double cy, double r, double p = 2.0);
+// How far this build's tire treads stand out past the factory's at the front and rear axles (m;
+// spacers and wider tires): what fender flares must cover.
+double tirePoke(const VehicleSpec& vs, bool front);
 // Moves the body (and everything on it) up by dy relative to the wheels: lift kits, lowering.
 void raiseBody(VehicleSpec& vs, double dy);
 // Wheel-less soft bodies placed around the map: foam crash boxes, concrete barriers.

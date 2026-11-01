@@ -1,6 +1,9 @@
 #include "../src/perf.h"
 #include "harness.h"
 #include "../src/menu.h"
+#include "../src/collision.h"
+#include <algorithm>
+#include <chrono>
 #include <limits>
 
 SCENARIO(adaptiveQuality, "engine/adaptive-quality", "Adaptive quality respects saved limits and recovers under VSync") {
@@ -132,4 +135,97 @@ SCENARIO(fpsTargetChoices, "engine/fps-target", "FPS target: saved values parse,
     c.init(slow, adaptiveAim(360));
     for (int i = 0; i < 1200; ++i) n360raw += c.evaluate(10, slow);  // (100 fps: below the 144 aim, so it does cut)
     ctx.check("100 fps still cuts", n360raw >= 1);
+}
+
+// The owner's "past a certain amount of damage the game drops to ~10 fps on every machine": a torn-off
+// bumper stayed in the car's bounds wherever it lay, so driving off from it stretched the box over the
+// map. Every parked car and prop paired with it (and woke, and stayed awake), and the pole queries swept
+// the whole box: ~13x the sim time of a healthy car. Parts lying far off are left out of the box now.
+SCENARIO(wreckCost, "engine/wreck-cost", "A wreck that shed a panel and drove off costs about what a healthy car does: no map-wide bounds, nothing woken") {
+    ctx.sim.setup();  // (the default map: parked vehicles and the prop stacks, to be woken)
+    for (Car& o : ctx.sim.cars) o.handbrake = 1;
+    // (The Civic, 14 m from the wall at x = 114, in a lane clear of spawn, the ramp and the platform.)
+    Car* cp = &ctx.add(vehicleCatalog()[0], 100, -18, 0);
+    const int me = (int)ctx.sim.cars.size() - 1;
+    ctx.sim.player = me;
+    ctx.focus(*cp);
+    ctx.run(8.0);  // (everything settles and sleeps)
+    std::vector<std::pair<int, int>> pairs;
+    std::vector<int> order;
+    auto mine = [&] {
+        collision::candidates(ctx.sim.cars, pairs, order);
+        int n = 0;
+        for (const auto& p : pairs) n += p.first == me || p.second == me;
+        return n;
+    };
+    auto awake = [&] {
+        int n = 0;
+        for (const Car& o : ctx.sim.cars) n += !o.sleeping;
+        return n;
+    };
+    // Pushed off along -X at 30 m/s (all but what lies torn off), the frames timed: the median, so a
+    // busy machine's hiccups don't count.
+    std::vector<char> left;
+    auto drive = [&](double seconds) {
+        Car& c = ctx.sim.cars[me];
+        std::vector<double> ms;
+        int f = 0;
+        ctx.run(seconds, [&] {
+            if (f++ % 30 == 0)
+                for (size_t k = 0; k < c.nodes.size(); k++)
+                    if (k >= left.size() || !left[k]) c.nodes[k].v.x = -30, c.nodes[k].v.z = 0;
+            c.wake();
+        });
+        f = 0;
+        ctx.onStep = nullptr;
+        for (int i = 0; i < 120; i++) {
+            if (f++ % 30 == 0)
+                for (size_t k = 0; k < c.nodes.size(); k++)
+                    if (k >= left.size() || !left[k]) c.nodes[k].v.x = -30, c.nodes[k].v.z = 0;
+            const auto t0 = std::chrono::steady_clock::now();
+            ctx.step();
+            ms.push_back(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() * 1000);
+        }
+        std::nth_element(ms.begin(), ms.begin() + ms.size() / 2, ms.end());
+        return ms[ms.size() / 2];
+    };
+    const double healthy = drive(1.0);
+    const int healthyAwake = awake();
+    // Back to the wall and nose into it at 70 km/h until a panel comes off.
+    int torn = 0;
+    for (int hit = 0; hit < 6 && !torn; hit++) {
+        Car& c = ctx.sim.cars[me];
+        c.translate(V3(114 - 10 - c.frame().com.x, 0, -18 - c.frame().com.z));
+        for (Node& n : c.nodes) n.v = V3(70 / 3.6, 0, 0);
+        c.wake();
+        ctx.run(2.5);
+        for (const Panel& p : c.panels) torn += p.state == 2;
+        ctx.note("hit " + std::to_string(hit + 1) + ": damage " + std::to_string(c.damage * 100) + "%, x " + std::to_string(c.frame().com.x) + ", heading " + std::to_string(headingDeg(c)));
+    }
+    Car& c = ctx.sim.cars[me];
+    if (!torn)  // (which hit tears what is chaotic: failing that, the hits' worst, its bumper's clips go)
+        for (Panel& p : c.panels)
+            if (std::string(p.name) == "FRONT BUMPER")
+                for (int pi : p.pins) c.pins[pi].broken = true;
+    ctx.run(2.0);
+    torn = 0;
+    for (const Panel& p : c.panels) torn += p.state == 2;
+    if (!ctx.check("a panel was torn off", torn > 0)) return;
+    left.assign(c.nodes.size(), 0);
+    for (const Panel& p : c.panels)
+        if (p.state == 2)
+            for (int k : p.panelNodes) left[k] = 1;
+    ctx.run(3.0);  // (the parked ones it shook awake settle again)
+    const double wrecked = drive(12.0);  // (~360 m off)
+    const double far = c.frame().com.x;
+    int strays = 0;
+    for (int k = 0; k < (int)c.nodes.size(); k++) strays += left[k] && c.stray[k];
+    ctx.check("it drove off from what it shed", far < 114 - 250 && strays > 0, "x " + std::to_string(far) + ", strays " + std::to_string(strays));
+    for (size_t i = 0; i < ctx.sim.cars.size(); i++)
+        if (!ctx.sim.cars[i].sleeping) ctx.note(std::string("awake: ") + ctx.sim.cars[i].spec->name + " #" + std::to_string(i) + " at x " + std::to_string(ctx.sim.cars[i].frame().com.x) + " z " + std::to_string(ctx.sim.cars[i].frame().com.z) + " still " + std::to_string(ctx.sim.cars[i].stillTime));
+    const V3 box = c.bbMax - c.bbMin;
+    ctx.metric("its bounds, longest side", std::max(box.x, std::max(box.y, box.z)), "m", 1, 15);
+    ctx.metric("bodies its bounds meet", mine(), "", 0, 0);
+    ctx.metric("bodies awake (healthy run: " + std::to_string(healthyAwake) + ")", awake(), "", 0, healthyAwake + 1);
+    ctx.metric("sim time per frame, wreck / healthy (median; was ~13x)", wrecked / std::max(1e-6, healthy), "x", 0, 2.0);
 }

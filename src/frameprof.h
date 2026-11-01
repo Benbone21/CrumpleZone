@@ -90,6 +90,17 @@ void describeSpike(char* line, int n, int frame, double frameMs, double typicalM
 double simCatchUp(double dt, double& usualDt);
 // The most physics steps a frame runs: 50 ms of them (below 20 fps the game slows down rather than spiral).
 inline int simMaxSteps(double h) { return h > 0 ? std::max(1, (int)(0.05 / h + 0.5)) : 1; }
+// Multiplayer can't slow down: the others show my trucks by the shared clock, so a machine at 12 fps
+// running 50 ms of physics a frame had its trucks in slow motion on everyone's screen (and
+// eased back, over and over, as each state undid the guess at where they'd be). There every frame's
+// physics is run, hitches too: as many steps as are owed (owedS: the frame and what's left over),
+// as far as kNetPhysicsMs of physics a frame goes at msPerStep (the cost measured lately; <= 0:
+// not yet), and never fewer than simMaxSteps. What's still owed waits for the next frames
+// (Sim::advance keepOwed), up to kNetOwedMax; past that the machine can't run real time at all and
+// slows down as in single player.
+constexpr double kNetPhysicsMs = 50;
+constexpr double kNetOwedMax = 0.25;
+int simNetSteps(double h, double owedS, double msPerStep);
 
 // The benchmark's camera: a drone flying a lap round `centre`, low over the ground (`h` m up), looking ahead and in.
 // `t` 0..1 is the share of the lap; heightAt gives the ground. Pure, so the path is the same every run.
@@ -100,3 +111,32 @@ BenchPose benchPose(double cx, double cz, double t, double radius, double h, dou
 
 // The process-wide profile (the game and the renderer share it).
 FrameProfile& frameProfile();
+
+// Named pieces of the frame thread's work (FRAMEWORK("stream.terrain") over a scope): their ms add up per frame, and
+// the last whole frame's are kept (beginFrame turns them over), so the frame log can say which piece a spike spent its
+// time in. Frame thread only; a few dozen names at most.
+struct FrameWork {
+    const char* name;
+    double ms;
+};
+void frameWorkAdd(const char* name, double ms);
+const std::vector<FrameWork>& frameWorkLast();  // the last whole frame's, in first-seen order
+double frameWorkNowMs();
+// The calling thread's CPU time (ms), involuntary context switches and major page faults so far (Linux; elsewhere zeros):
+// a frame whose wall time is well over its CPU time waited (on the GPU, a lock, another thread) or wasn't scheduled.
+struct ThreadUsage {
+    double cpuMs = 0;
+    long preempted = 0, majorFaults = 0;
+};
+ThreadUsage threadUsage();
+struct FrameWorkScope {
+    const char* name;
+    double t0;
+    explicit FrameWorkScope(const char* n) : name(n), t0(frameWorkNowMs()) {}
+    ~FrameWorkScope() { frameWorkAdd(name, frameWorkNowMs() - t0); }
+    FrameWorkScope(const FrameWorkScope&) = delete;
+    FrameWorkScope& operator=(const FrameWorkScope&) = delete;
+};
+#define FRAMEWORK_CAT2(a, b) a##b
+#define FRAMEWORK_CAT(a, b) FRAMEWORK_CAT2(a, b)
+#define FRAMEWORK(name) FrameWorkScope FRAMEWORK_CAT(frameWork_, __LINE__)(name)

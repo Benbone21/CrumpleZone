@@ -5,28 +5,41 @@
 //
 // A body is a skeleton of a few joints, placed in the world each frame, with its limbs
 // solved to reach where they're wanted (two-bone IK: a hand on a grip, a foot on
-// the ground) and drawn round it: rigid pieces cached per outfit (boots, gloved hands at a
-// few grip curls, the jacket's chest, the jeans' seat, the head) turned onto their bones,
-// and tapered sleeves and legs between the joints. About 3k triangles close up.
+// the ground) and drawn round it: the torso lofted through rings that follow the hips below
+// the waist and the chest above it (so it bends, not breaks, at the waist), the sleeves and
+// legs swept smoothly round the elbows and knees, and rigid pieces cached per outfit (boots,
+// hands at a few grip curls, the head with its hair and hat, the jacket's and jeans' details)
+// turned onto their bones. About 5k triangles close up, 2.5k in the middle distance, 0.8k far off.
 // Render only: nothing here touches the physics.
 #pragma once
 #include <cstdint>
 #include <string>
 
-#include "carvisual.h"
 #include "modelkit.h"
 #include "softbody.h"
 
+struct VisualTemplate;
+
 namespace people {
 
-// What someone's wearing (the jacket colour picks the rest by a hash, so a buddy keeps theirs).
+// What someone's wearing and what they look like: everything picked by a hash of the seed (so a buddy keeps theirs), the
+// jacket's colour given or picked too.
 struct Look {
     V3 jacket, jacketDark, pants, pantsDark, pantsWorn, boots, soles, laces, gloves, glovePad, skin, hair, hat, eyes, lips;
-    int hat_ = 0;  // 0 cap, 1 beanie, 2 bare head
-    bool stubble = false;
+    V3 shirt;                // the layer under the jacket (the vest's sleeves, a collar, a hem showing)
+    int hat_ = 0;            // 0 ball cap, 1 beanie, 2 bare head, 3 brimmed bush hat, 4 hard hat
+    int hairStyle = 0;       // 0 short, 1 buzzed, 2 long (to the collar), 3 bald with a fringe
+    int beard = 0;           // 0 none, 1 stubble, 2 a full beard
+    int top = 0;             // 0 work jacket (waist length, the belt showing), 1 hoodie, 2 quilted vest over a flannel shirt
+    int legs = 0;            // 0 jeans, 1 work pants (cargo pockets, knee patches)
+    bool gloved = true;      // work gloves, or bare hands
+    double girth = 1;        // build: 0.94 slim .. 1.08 stocky (the clothes' fullness, not the skeleton)
+    bool stubble = false;    // (beard == 1)
     uint64_t key = 0;
 };
 Look lookFor(const V3& jacket, uint32_t seed);
+// The same, the jacket's colour picked from the seed too (other players: each their own).
+Look lookFor(uint32_t seed);
 
 // Joints and where the limbs are going, world space. Side 0 is the left, 1 the right.
 struct Pose {
@@ -51,6 +64,10 @@ struct Pose {
 // The skeleton's fixed points.
 V3 shoulderOf(const Pose& p, int side);
 V3 hipOf(const Pose& p, int side);
+// Where the eyes are on the posed head (first person: the body's put so these are at the camera's).
+V3 eyesOf(const Pose& p);
+// A leg as build() draws it: the hip, the knee it bends to and the ankle (where the foot is, or as near as the leg reaches).
+void legOf(const Pose& p, int side, V3& hip, V3& knee, V3& ankle);
 
 // Appends the posed body to `out` (world space).
 void build(const Pose& p, const Look& look, mk::Mesh& out);

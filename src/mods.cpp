@@ -550,7 +550,16 @@ void takeEngine(VehicleSpec& s, const VehicleSpec& from) {
     s.airCooled = from.airCooled;
     s.engineName = from.engineName;
     s.engineMass = from.engineMass;
+    // Set in the bay the way a swap is: its face toward the radiator (or, mid- or rear-engined,
+    // toward the cabin) where the old block's was, so a longer one sits further back and clears
+    // the radiator; its crank on the old one's line (the gearbox and shafts stay put), unless it
+    // stands taller than the old one did under the hood: then it sits that much lower.
+    const double alongWas = s.transverse ? s.engineWid : s.engineLen;
+    const double faceX = s.rearEngine ? s.engineX - alongWas / 2 : s.engineX + alongWas / 2, topY = s.engineY + s.engineHgt / 2;
     s.engineLen = from.engineLen, s.engineWid = from.engineWid, s.engineHgt = from.engineHgt;
+    const double along = s.transverse ? s.engineWid : s.engineLen;
+    s.engineX = s.rearEngine ? faceX + along / 2 : faceX - along / 2;
+    s.engineY = std::min(s.engineY, topY - s.engineHgt / 2);
     s.voice = from.voice;
     s.engineOrigin = from.model;
 }
@@ -754,6 +763,80 @@ std::string modFindPart(const char* vehicleId, int slot, const char* name) {
     return "";
 }
 
+namespace {
+
+double travelOf(const VehicleSpec& v, bool front, bool bump) {
+    const double t = front ? (bump ? v.bumpFront : v.droopFront) : (bump ? v.bumpRear : v.droopRear);
+    return t > 0 ? t : (bump ? 0.085 : 0.11) * v.wheelRadius / 0.32;  // (carbuild's size-scaled defaults)
+}
+
+}  // namespace
+
+// Every part on, the body is made to take them, as a builder would: tires taller or wider than
+// the factory's wheel wells, or a kit that swings them further up into the body, get the arches
+// trimmed and flared round them (the tire-on-body contact and the drawn arches follow
+// wellTire* and the kit's travel), and wheel spacers keep the inner sidewall where the factory
+// tire's was, clear of the arms, springs and frame (the track widens; flares cover the tread).
+void fitBody(VehicleSpec& s, const VehicleSpec& stock) {
+    // No lower than the body can go: a floor ~9.5 cm up at most (the Jesko's splitter clears a
+    // kerb at 7), or the factory's if that's lower. A kit or smaller wheels that would take it
+    // further down have the spring perches set where it stops.
+    const double minFloor = std::min(stock.layerY[0], 0.095);
+    if (s.layerY[0] < minFloor) raiseBody(s, minFloor - s.layerY[0]);
+    // How far the body sits lower over its wheels than the factory's: the wells are cut that
+    // much deeper (the tire meets them sooner, at lock and over a bump).
+    const double lowered = std::max(0.0, (stock.layerY[0] - stock.wheelRadius) - (s.layerY[0] - s.wheelRadius));
+    const double wellR = std::max(stock.wheelRadius, stock.wellTireRadius);
+    const double wF = s.wheelWidth, wR = s.wheelWidthRear > 0 ? s.wheelWidthRear : s.wheelWidth;
+    const double sF = stock.wheelWidth, sR = stock.wheelWidthRear > 0 ? stock.wheelWidthRear : stock.wheelWidth;
+    const double wellW = std::max({sF, sR, stock.wellTireWidth});
+    bool longer = false;
+    for (bool front : {true, false})
+        for (bool bump : {true, false})
+            longer |= travelOf(s, front, bump) > travelOf(stock, front, bump) + 0.005;
+    // (With the room round them the factory left round its own tire.)
+    const double needR = s.wheelRadius + (wellR - stock.wheelRadius) + lowered;
+    const double needW = std::max(wF, wR) + (wellW - std::max(sF, sR));
+    if (needR > wellR + 0.002 || needW > wellW + 0.002 || longer) {
+        s.wellTireRadius = std::max({wellR, needR, s.wellTireRadius});
+        s.wellTireWidth = std::max({wellW, needW, s.wellTireWidth});
+        s.wellsTrimmed = true;
+    }
+    // Long travel on wishbones (or struts) takes long arms, or the wheel swings round a tight arc,
+    // tucking in and leaning over at the ends of its travel and into the wheelhouse: the arms grow
+    // to keep each end of the travel to the swing a long-travel side-by-side's arms see (droop about
+    // half the arm, bump 0.4), as far as the space between the wheels allows; past that the kit's
+    // bump stops and droop straps are set where the arms run out.
+    {
+        const double minTrack = std::min(s.trackFront > 0 ? s.trackFront : s.width - 0.2, s.trackRear > 0 ? s.trackRear : s.width - 0.2);
+        const double cap = std::max(s.armLower, minTrack / 2 - 0.03 - 0.12);
+        double need = s.armLower;
+        for (bool front : {true, false})
+            if ((front ? s.frontSusp : s.rearSusp) == WISHBONE || (front ? s.frontSusp : s.rearSusp) == STRUT)
+                need = std::max({need, travelOf(s, front, false) / 0.52, travelOf(s, front, true) / 0.40});
+        if (need > s.armLower + 0.005) {
+            const double arm = std::min(need, cap);
+            s.armUpper *= arm / s.armLower;
+            s.armLower = arm;
+            for (bool front : {true, false}) {
+                if ((front ? s.frontSusp : s.rearSusp) != WISHBONE && (front ? s.frontSusp : s.rearSusp) != STRUT) continue;
+                double& bump = front ? s.bumpFront : s.bumpRear;
+                double& droop = front ? s.droopFront : s.droopRear;
+                bump = std::min(travelOf(s, front, true), 0.40 * arm);
+                droop = std::min(travelOf(s, front, false), 0.52 * arm);
+            }
+        }
+    }
+    // Spacers: the inner sidewall no further in than the factory tire's.
+    auto spacer = [](double& track, double w, double stockTrack, double stockW) {
+        if (track <= 0 || stockTrack <= 0) return;
+        const double in = track / 2 - w / 2, stockIn = stockTrack / 2 - stockW / 2;
+        if (in < stockIn - 0.002) track += 2 * (stockIn - in);
+    };
+    spacer(s.trackFront, wF, stock.trackFront, sF);
+    spacer(s.trackRear, wR, stock.trackRear, sR);
+}
+
 const VehicleSpec& tunedSpec(int vehicle, const ModSet& mods) {
     if (mods.stock()) return vehicleCatalog()[vehicle];
     static std::mutex lock;
@@ -774,11 +857,12 @@ const VehicleSpec& tunedSpec(int vehicle, const ModSet& mods) {
             opts[p].apply(s);
             s.modSummary += (s.modSummary.empty() ? "" : " / ") + opts[p].name;
         }
+        fitBody(s, vehicleCatalog()[vehicle]);
     }
     return *slot;
 }
 
-Garage::Garage() : fitted(vehicleCatalog().size()) {}
+Garage::Garage() : fitted(vehicleCatalog().size()), paint(vehicleCatalog().size()) {}
 
 std::string Garage::defaultPath() {
     return configDir() + "/garage.txt";
@@ -791,6 +875,16 @@ bool Garage::load(const std::string& path) {
     while (std::fgets(line, sizeof line, f)) {  // "id engine suspension transmission [wheels tires]"
         char id[64];
         int p[MOD_SLOTS] = {0, 0, 0, 0, 0};
+        {  // "paint <id> <body hex|-> <accent hex|-> <finish>": a line older builds skip
+            char pid[64], body[16], accent[16];
+            int finish = 0;
+            if (std::sscanf(line, "paint %63s %15s %15s %d", pid, body, accent, &finish) >= 3) {
+                const auto& cat = vehicleCatalog();
+                for (size_t v = 0; v < cat.size(); v++)
+                    if (std::string(cat[v].id) == pid) paintFromText(body, accent, finish, paint[v]);
+                continue;
+            }
+        }
         if (std::sscanf(line, "%63s %d %d %d %d %d", id, &p[0], &p[1], &p[2], &p[3], &p[4]) < 4) continue;
         const auto& cat = vehicleCatalog();
         for (size_t v = 0; v < cat.size(); v++) {
@@ -812,6 +906,8 @@ bool Garage::save(const std::string& path) const {
     const auto& cat = vehicleCatalog();
     for (size_t v = 0; v < cat.size(); v++)
         std::fprintf(f, "%s %d %d %d %d %d\n", cat[v].id, fitted[v].pick[0], fitted[v].pick[1], fitted[v].pick[2], fitted[v].pick[3], fitted[v].pick[4]);
+    for (size_t v = 0; v < cat.size(); v++)
+        if (!paint[v].factory()) std::fprintf(f, "paint %s %s\n", cat[v].id, paintToText(paint[v]).c_str());
     std::fclose(f);
     return true;
 }

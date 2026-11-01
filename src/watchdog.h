@@ -1,4 +1,4 @@
-// Hang watchdogs for unattended runs (portable: std::thread and std::chrono only; the thread dump is Linux-only).
+// Hang watchdogs for unattended runs (portable: std::thread and std::chrono only; the thread dump reads /proc on Linux and runs sample(1) on macOS).
 //   wd::dumpThreads - every thread's kernel wait channel (/proc/self/task/*/wchan): "futex_do_wait" everywhere is a deadlock.
 //   wd::Watchdog    - a thread that polls check() and trips once it returns a message. The default trip prints it, dumps the
 //                     threads and _exit()s, since a hung thread can't be joined. Tests give it their own onTrip.
@@ -24,7 +24,17 @@
 
 namespace wd {
 
+// What each thread was doing (the game sets it to loadprof::activeStages): printed when a FrameWatchdog trips.
+inline std::function<std::string()> stageReport;
+
 inline void dumpThreads() {
+#ifdef __APPLE__
+    // No /proc: macOS's sample(1) prints every thread's stack (a second of samples), which names the call that hangs.
+    std::fflush(stdout);
+    char cmd[96];
+    std::snprintf(cmd, sizeof cmd, "/usr/bin/sample %d 1 -mayDie -file /dev/stdout 2>&1", (int)getpid());
+    if (std::system(cmd) != 0) std::printf("  (sample failed)\n");
+#endif
 #ifdef __linux__
     if (DIR* d = opendir("/proc/self/task")) {
         while (dirent* e = readdir(d)) {
@@ -108,6 +118,10 @@ public:
         : stall_(stallSec), total_(totalSec), load_(loadSec), start_(nowSec()), last_(start_),
           dog_([this] { return check(); }, onTrip ? std::move(onTrip) : [](const std::string& m) {
               std::printf("%s\n", m.c_str());
+              if (stageReport) {
+                  const std::string s = stageReport();
+                  std::printf("what each thread was doing (loading stages):\n%s", s.empty() ? "  (no stage marked)\n" : s.c_str());
+              }
               dumpThreads();
               hardExit(3);
           }) {}

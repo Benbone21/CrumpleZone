@@ -2,6 +2,7 @@
 #include <map>
 #include <cstring>
 #include <string>
+#include <type_traits>
 
 namespace gl {
 namespace {
@@ -38,6 +39,35 @@ float maxTextureAnisotropy() {
         }
     }
     return 1;
+}
+
+namespace {
+GLenum (*traceGetError)() = nullptr;
+void (*traceReport)(const char*, GLenum) = nullptr;
+template <int Tag, typename F> struct Traced;
+template <int Tag, typename R, typename... A> struct Traced<Tag, R (*)(A...)> {
+    static inline R (*original)(A...) = nullptr;
+    static inline const char* name = nullptr;
+    static void check() {
+        if (const GLenum e = traceGetError()) traceReport(name, e);
+    }
+    static R call(A... a) {
+        if constexpr (std::is_void_v<R>) { original(a...); check(); }
+        else { R r = original(a...); check(); return r; }
+    }
+    static void install(R (*&slot)(A...), const char* n) {
+        if (!slot || slot == &call) return;
+        original = slot, name = n, slot = &call;
+    }
+};
+}  // namespace
+
+void traceErrors(GLenum (*getError)(), void (*report)(const char* function, GLenum error)) {
+    traceGetError = getError, traceReport = report;
+#define CZ_TRACE(ret, fn, args) Traced<__COUNTER__, PFN_##fn>::install(fn, "gl" #fn);
+    CZ_GL_FUNCS(CZ_TRACE)
+    CZ_GL_OPTIONAL(CZ_TRACE)
+#undef CZ_TRACE
 }
 
 GLint uniformLocation(GLuint program, const char* name) {

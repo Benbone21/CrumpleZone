@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "paint.h"
 #include "vehicles.h"
 
 enum ModSlot { MOD_ENGINE, MOD_SUSPENSION, MOD_TRANSMISSION, MOD_WHEELS, MOD_TIRES, MOD_SLOTS };
@@ -49,11 +50,15 @@ std::string modFindPart(const char* vehicleId, int slot, const char* name);
 // Catalog vehicle with these mods fitted. The same mods always give the same object
 // (cars keep a pointer to their spec); no mods gives the catalog entry itself.
 const VehicleSpec& tunedSpec(int vehicle, const ModSet& mods);
+// Makes the body take the parts fitted to a tuned copy (trimmed, flared arches and wheel spacers
+// for bigger tires and longer travel); tunedSpec does it to every build.
+void fitBody(VehicleSpec& s, const VehicleSpec& stock);
 
 // Which mods are fitted to each vehicle in your garage: keys 1-4, parked spawns and
 // traffic all use these. Saved between runs.
 struct Garage {
     std::vector<ModSet> fitted;
+    std::vector<CarPaint> paint;  // per vehicle (factory unless painted)
     Garage();
     const VehicleSpec& spec(int vehicle) const { return tunedSpec(vehicle, fitted[vehicle]); }
     bool load(const std::string& path);

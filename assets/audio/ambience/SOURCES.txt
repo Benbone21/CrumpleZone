@@ -6,5 +6,5 @@ campfire.wav   from soundreality-campfire-crackling-sound-439573 (Pixabay; file 
 wind.wav       from ezanarini-air-ambience-234180 (Pixabay; file name as downloaded), the first 26 s
 stream.wav     from soundreality-stream-nature-445380 (Pixabay), 24 s taken from 30 s in; the menu's brook. See ../sfx/SOURCES.txt (reserved: river.wav, forest.wav)
 shop.wav       from freesound_community-auto-shop-soundscape-68816 (Pixabay; file name as downloaded), 15.4 s taken from 2 s in, tail crossfaded; played at every repair
-               station / shop (src/worldsound.cpp). Made with tools/sfx_prepare.py <wav folder> shop. river.wav and forest.wav (see ../sfx/SOURCES.txt) and stream.wav
+               station / shop (src/worldsound.cpp). Made with tools/sfx_prepare.py <wav folder> shop. river.wav and forest.wav (see ../sfx/SOURCES.txt)
                also play positionally from the world's water and woods (src/worldsound.cpp).

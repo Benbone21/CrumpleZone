@@ -1,4 +1,5 @@
 #include "sections.h"
+#include "detmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -150,7 +151,7 @@ struct Canvas {
     std::vector<V3> line;           // the marked way through, if the section has one (world coordinates, ~1 m apart)
 
     Canvas(World& w, SectionType t, uint32_t seed, const SectionFrame& fr, std::vector<LevelObject>* record = nullptr)
-        : w(w), fp(sectionFootprint(t)), f(fr), dx(std::cos(fr.heading)), dz(-std::sin(fr.heading)), px(std::sin(fr.heading)), pz(std::cos(fr.heading)),
+        : w(w), fp(sectionFootprint(t)), f(fr), dx(dm::cos(fr.heading)), dz(-dm::sin(fr.heading)), px(dm::sin(fr.heading)), pz(dm::cos(fr.heading)),
           ey(fr.entry.y), seed(seed), rng((seed + 1) * 1009u + (uint32_t)t), rec(record) {
         const double reachU0 = -fp.apron - fp.blend, reachU1 = fp.length + fp.apron + fp.blend, reachV = fp.half + fp.blend;
         double x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
@@ -311,9 +312,9 @@ struct Canvas {
         pose.yaw = f.heading - dir, pose.pitch = pitch;
         if (lean != 0) {  // (the roll that tips the top toward +v)
             const V3 toward(px, 0, pz);
-            const double cy = std::cos(pose.yaw), sy = std::sin(pose.yaw), cp = std::cos(pitch), sp = std::sin(pitch);
+            const double cy = dm::cos(pose.yaw), sy = dm::sin(pose.yaw), cp = dm::cos(pitch), sp = dm::sin(pitch);
             const V3 along(cy * cp, sp, -sy * cp), up0(-cy * sp, cp, sy * sp);
-            pose.roll = dot(rotateAxis(up0, along, 0.1), toward) > 0 ? lean : -lean;
+            pose.roll = dot(dm::rotateAxis(up0, along, 0.1), toward) > 0 ? lean : -lean;
         }
         spots.push_back({u, v, std::min(r.x, r.z)});
         return rock(u, v, r, top, seed * 211 + (uint32_t)rockN++, tint, &pose);
@@ -327,7 +328,7 @@ struct Canvas {
     // of it showing above the ground, or `lift` more than that). Not on top of another one.
     bool boulder(double u, double v, double r, double lift = 0, double top = 0) {
         for (const Spot& sp : spots)
-            if (std::hypot(sp.u - u, sp.v - v) < 0.45 * (sp.r + r)) return false;
+            if (dm::hypot(sp.u - u, sp.v - v) < 0.45 * (sp.r + r)) return false;
         spots.push_back({u, v, r});
         const double hy = r * rng.range(0.55, 0.8), hz = r * rng.range(0.7, 1.0), tp = top > 0 ? top : r * rng.range(0.5, 0.8) + lift;
         rock(u, v, V3(r, hy, hz), tp, seed * 131 + (uint32_t)rockN++, (float)rng.range(0.85, 1.1));
@@ -388,7 +389,7 @@ template <class Y, class S> void trail(Canvas& c, double half, double blend, Y y
 }
 // Walls either side: from |v| = half the ground rises at `deg` to H(u) above the trail (seals it).
 template <class HF, class Y> void walls(Canvas& c, double ua, double ub, double half, double deg, HF height, Y y, Surface face) {
-    const double slopeTan = std::tan(deg * M_PI / 180);
+    const double slopeTan = dm::tan(deg * M_PI / 180);
     c.each(ua - 10, ub + 10, -c.fp.half, c.fp.half, [&](int id, double u, double v) {
         const double e = std::fabs(v) - half;
         if (e < 0) return;
@@ -463,13 +464,13 @@ template <class LV> void roughen(Canvas& c, double half, double blend, const Rou
         if (wgt <= 0 || env <= 0) return;
         const double lv = lineV(u), dv = v - lv;
         double dh = r.amp * 1.4 * roughNoise(u, v, c.seed) * smoothstep(0.8, 3.2, nearKeep(u));
-        for (const Hole& h : holes) dh -= h.depth * std::exp(-(sq(u - h.u) + sq(v - h.v)) / sq(h.rad * 0.6));
-        for (const Wash& w : washes) dh -= w.depth * std::exp(-sq((u - w.u + w.skew * v) / w.sigma));
-        for (const Cam& m : cams) dh -= m.tilt * clampd(dv, -3, 3) * std::exp(-sq((u - m.u) / m.sigma)) + 0.08 * std::exp(-sq((u - m.u) / m.sigma));
-        for (const Rough::Mound& m : r.mounds) dh += m.h * std::exp(-(sq(u - m.u) + sq(v - m.v)) / sq(m.sigma));
+        for (const Hole& h : holes) dh -= h.depth * dm::exp(-(sq(u - h.u) + sq(v - h.v)) / sq(h.rad * 0.6));
+        for (const Wash& w : washes) dh -= w.depth * dm::exp(-sq((u - w.u + w.skew * v) / w.sigma));
+        for (const Cam& m : cams) dh -= m.tilt * clampd(dv, -3, 3) * dm::exp(-sq((u - m.u) / m.sigma)) + 0.08 * dm::exp(-sq((u - m.u) / m.sigma));
+        for (const Rough::Mound& m : r.mounds) dh += m.h * dm::exp(-(sq(u - m.u) + sq(v - m.v)) / sq(m.sigma));
         if (r.rut > 0) {
-            const double vc = lv + 0.5 * std::sin(u * 0.09 + ph) + 0.3 * std::sin(u * 0.23 + ph * 2), depth = r.rut * (0.7 + 0.3 * (2 * valueNoise(u / 6 + ph, 3.3) - 1));
-            dh -= depth * (std::exp(-sq((v - vc - 0.9) / 0.55)) + std::exp(-sq((v - vc + 0.9) / 0.55)));
+            const double vc = lv + 0.5 * dm::sin(u * 0.09 + ph) + 0.3 * dm::sin(u * 0.23 + ph * 2), depth = r.rut * (0.7 + 0.3 * (2 * valueNoise(u / 6 + ph, 3.3) - 1));
+            dh -= depth * (dm::exp(-sq((v - vc - 0.9) / 0.55)) + dm::exp(-sq((v - vc + 0.9) / 0.55)));
         }
         c.setH(id, c.getH(id) + dh * env * wgt);
     });
@@ -478,10 +479,10 @@ template <class LV> void roughen(Canvas& c, double half, double blend, const Rou
 // ---- 1. STEEP HILL -------------------------------------------------------------------------------
 void steepHill(Canvas& c) {
     const uint32_t seed = c.seed;
-    const double xs = kHillStart, len = c.rng.range(kHillLen), rise = len * std::tan(c.rng.range(kHillAngle) * M_PI / 180);
+    const double xs = kHillStart, len = c.rng.range(kHillLen), rise = len * dm::tan(c.rng.range(kHillAngle) * M_PI / 180);
     auto y = [&](double u) { return rise * smoothstep(xs, xs + len, u) * 0.15 + rise * clampd((u - xs) / len, 0, 1) * 0.85; };
     // The line winds a little up the climb, between the scree piles.
-    auto lineV = [&](double u) { return 1.1 * std::sin(u * 0.16 + seed) * smoothstep(xs - 8, xs + 4, u) * smoothstep(xs + len + 6, xs + len - 6, u); };
+    auto lineV = [&](double u) { return 1.1 * dm::sin(u * 0.16 + seed) * smoothstep(xs - 8, xs + 4, u) * smoothstep(xs + len + 6, xs + len - 6, u); };
     trail(c, kHillTrailHalf, kHillTrailBlend, y, [&](double u) { return u > xs && u < xs + len ? SURF_SCREE : SURF_DIRT; });
     Rough fx;
     fx.amp = 0.2, fx.holes = 2, fx.washouts = 1, fx.cambers = 1;
@@ -509,7 +510,7 @@ void steepHill(Canvas& c) {
         const double up = (pu - xs) / len;  // (rocks get bigger toward the top)
         const int n = 4 + (int)(c.rng() * 5);
         for (int i = 0; i < n; i++) {
-            const double a = c.rng.range(0, 6.283), d = radius * std::sqrt(c.rng()), u = pu + d * std::cos(a), v = clampd(pv + d * std::sin(a) * 0.8, -3.4, 3.4);
+            const double a = c.rng.range(0, 6.283), d = radius * std::sqrt(c.rng()), u = pu + d * dm::cos(a), v = clampd(pv + d * dm::sin(a) * 0.8, -3.4, 3.4);
             const double r = boulderR(c.rng, 0.9 - 0.25 * up, 0.1 + 0.15 * up, 0.55);
             if (clearOfLine(u, v, r)) c.boulder(u, v, r);
         }
@@ -550,7 +551,7 @@ void mudPit(Canvas& c) {
     });
     // Ruts carried through by the trucks before you.
     c.each(xa - 25, xa, -2, 2, [&](int id, double, double v) {
-        c.setH(id, c.getH(id) - 0.12 * std::exp(-sq((std::fabs(v) - 0.9) / 0.4)));
+        c.setH(id, c.getH(id) - 0.12 * dm::exp(-sq((std::fabs(v) - 0.9) / 0.4)));
         c.paint(id, SURF_MUD);
     });
     for (double u = 0; u <= c.fp.length; u += 2) c.lineUV.push_back({u, 0.0});
@@ -590,7 +591,7 @@ void rockyRiver(Canvas& c) {
     const double xr = kRiverAt, width = c.rng.range(kRiverWidth), depth = c.rng.range(kRiverDepth), skew = c.rng.range(kRiverSkew);
     const double level = -depth + c.rng.range(kRiverWater);  // water depth over the bed
     const double hw = c.fp.half;
-    auto bend = [&](double v) { return xr + skew * v + 6 * std::sin(v * 0.03 + seed); };
+    auto bend = [&](double v) { return xr + skew * v + 6 * dm::sin(v * 0.03 + seed); };
     c.each(-c.fp.apron, c.fp.length + c.fp.apron, -hw, hw, [&](int id, double u, double v) {
         const double d = std::fabs(u - bend(v)) - width / 2;
         if (d > 14) return;
@@ -642,10 +643,10 @@ struct Slick {
         double front(int j) const { return lx + 0.3 - ((ns - j) + 0.4); }  // where step j's tread begins
     };
     std::vector<Stair> stairs;
-    double lip(int k, double v) const { return L[k].x + L[k].amp * std::sin(v * 0.45 + L[k].phase) + 0.9 * (valueNoise(v * 0.3, k * 7.3 + seed) - 0.5); }
+    double lip(int k, double v) const { return L[k].x + L[k].amp * dm::sin(v * 0.45 + L[k].phase) + 0.9 * (valueNoise(v * 0.3, k * 7.3 + seed) - 0.5); }
     double halfW(double x) const {
-        if (x > vx0 && x < vx1) return kWallSqueezeHalf + 0.4 * std::sin(x);  // the squeeze
-        return 4.6 + 1.6 * std::sin(x * 0.09 + seed) + 0.8 * valueNoise(x * 0.2, seed);
+        if (x > vx0 && x < vx1) return kWallSqueezeHalf + 0.4 * dm::sin(x);  // the squeeze
+        return 4.6 + 1.6 * dm::sin(x * 0.09 + seed) + 0.8 * valueNoise(x * 0.2, seed);
     }
     double floorY(double x, double v) const {
         double h = 0;
@@ -728,7 +729,7 @@ void rockWall(Canvas& c) {
                 const double rl = c.rng.range(1.05, 1.5), rd = c.rng.range(0.95, 1.35), vc = v + dirn * rl * 0.85;
                 const double lx = s.lip(k, vc), dl = (s.lip(k, vc + 0.3) - s.lip(k, vc - 0.3)) / 0.6;  // (where the lip runs)
                 const double tread = s.floorY(lx + 2.0, vc) + c.rng.range(0.0, 0.14), foot = s.floorY(lx - 1.5, vc);
-                c.laid(lx + rd - 1.0, vc, std::atan2(1.0, dl), V3(rl, (tread - foot + 0.5) / 2, rd), tread, 0, 0, (float)c.rng.range(0.9, 1.08));
+                c.laid(lx + rd - 1.0, vc, dm::atan2(1.0, dl), V3(rl, (tread - foot + 0.5) / 2, rd), tread, 0, 0, (float)c.rng.range(0.9, 1.08));
                 v += dirn * rl * c.rng.range(1.2, 1.5);
             }
         };
@@ -845,7 +846,7 @@ void dunes(Canvas& c) {
     DuneParams P;
     P.windDeg = c.rng.range(kDuneWind), P.spacing = c.rng.range(kDuneSpacing), P.crestMax = c.rng.range(kDuneCrest);
     P.subSpacing = P.spacing * 0.5, P.halfU = L / 2, P.halfV = hw - 12;
-    auto edgeD = [&](double u, double v) { return std::cbrt(std::pow(std::fabs((u - L / 2) / P.halfU), 3) + std::pow(std::fabs(v / P.halfV), 3)); };
+    auto edgeD = [&](double u, double v) { return dm::cbrt(dm::pow(std::fabs((u - L / 2) / P.halfU), 3) + dm::pow(std::fabs(v / P.halfV), 3)); };
     // The cells of the cleared ground, and where each one's neighbours are.
     std::vector<int> mine;
     std::vector<float> above;  // each one's dune height over its hollow floor
@@ -882,7 +883,7 @@ void dunes(Canvas& c) {
         for (size_t m = 0; m < mine.size(); m++) c.cells[mine[m]].h = tmp[m];
     }
     // (Each pair of neighbours in place, sweeping the field forward then back, so a slope settles in a few passes.)
-    const double tanR = std::tan(kDuneRepose * M_PI / 180);
+    const double tanR = dm::tan(kDuneRepose * M_PI / 180);
     const int fwd[4][2] = {{0, 1}, {1, 0}, {1, 1}, {1, -1}};
     for (int pass = 0; pass < kDuneRelax; pass++)
         for (size_t mm = 0; mm < mine.size(); mm++) {
@@ -924,17 +925,17 @@ void dunes(Canvas& c) {
 void cliffShelf(Canvas& c) {
     const uint32_t seed = c.seed;
     const double half = c.rng.range(kShelfHalf);
-    const double tiltDeg = c.rng.range(kShelfTilt), tilt = std::tan(tiltDeg * M_PI / 180);  // leans you toward the drop (+v)
+    const double tiltDeg = c.rng.range(kShelfTilt), tilt = dm::tan(tiltDeg * M_PI / 180);  // leans you toward the drop (+v)
     const double L = c.fp.length;
-    auto curve = [&](double u) { return 5 * std::sin(u * 0.05 + seed) * smoothstep(0, kShelfEase, u); };  // (eases onto the line from the entry)
+    auto curve = [&](double u) { return 5 * dm::sin(u * 0.05 + seed) * smoothstep(0, kShelfEase, u); };  // (eases onto the line from the entry)
     // Where the set pieces stand along the shelf (u): the road under them is kept nearly level.
     struct Zone {
         double a, b;
     };
     const Zone chokeA = {24, 36}, table = {40, 53}, camber = {74, 93}, chokeB = {98, 110}, stairs = {112, 133}, straddle = {138, 152};
     const Zone zones[] = {chokeA, table, camber, chokeB, stairs, straddle};
-    auto bump = [](double u, double at, double w) { return std::exp(-sq((u - at) / w)); };
-    auto lineLat = [&](double u) { return 0.10 + 0.15 * std::sin(u * 0.09 + seed) + 0.25 * bump(u, 30, 5) - 0.25 * bump(u, 104, 5); };
+    auto bump = [](double u, double at, double w) { return dm::exp(-sq((u - at) / w)); };
+    auto lineLat = [&](double u) { return 0.10 + 0.15 * dm::sin(u * 0.09 + seed) + 0.25 * bump(u, 30, 5) - 0.25 * bump(u, 104, 5); };
     // The staircase: three steps up (0.25-0.30 each, treads 2.8 m: one axle takes a step at a time), a platform of 2.4 m, three down.
     // The ground carries it (a tenth under the rock treads laid on it), `stairH` the height of its treads above the road.
     double stairRise[3];
@@ -956,7 +957,7 @@ void cliffShelf(Canvas& c) {
         return h;
     };
     // The table: up a ramp (10 deg), across a platform, down another; carried by the ground (a tenth under the rock laid on it).
-    const double tableRise = 0.55, tableW = 1.55, tableRun = tableRise / std::tan(10 * M_PI / 180), tablePlat = 3.6;
+    const double tableRise = 0.55, tableW = 1.55, tableRun = tableRise / dm::tan(10 * M_PI / 180), tablePlat = 3.6;
     auto tableH = [&](double u) { return tableRise * std::min(clampd((u - table.a) / tableRun, 0, 1), clampd((table.a + 2 * tableRun + tablePlat - u) / tableRun, 0, 1)); };
     auto zoneMask = [&](double u) {
         double m = 0;
@@ -1005,7 +1006,7 @@ void cliffShelf(Canvas& c) {
     auto moundW = [&](double u, double lat, double* height) {
         double m = 0, wt = 0;
         for (const Bury& b : buried) {
-            const double d = std::hypot((u - b.u) / b.mx, (lat - b.lat) / b.mz);
+            const double d = dm::hypot((u - b.u) / b.mx, (lat - b.lat) / b.mz);
             if (d < 1) m = std::max(m, b.mound * (1 - smoothstep(0.3, 1.0, d))), wt = std::max(wt, 1 - smoothstep(0.3, 1.0, d));
         }
         if (height) *height = m;
@@ -1048,7 +1049,7 @@ void cliffShelf(Canvas& c) {
         const V3 p = c.at(u, v);
         return c.w.height(p.x, p.z) - p.y;
     };
-    auto yawAt = [&](double u) { return -std::atan((curve(u + 0.5) - curve(u - 0.5)) / 1.0); };  // along the shelf here
+    auto yawAt = [&](double u) { return -dm::atan((curve(u + 0.5) - curve(u - 0.5)) / 1.0); };  // along the shelf here
     // A rock laid by its top face: the point of it at (u, lat) and that point's height, its half sizes along (hx) and across (hz),
     // and about half its thickness (th, a little thicker where it must reach the ground); turned yaw about up, tipped pitch (up along
     // the shelf) and roll (the top falls toward the drop). The scanned hull that fits, sunk in so its top is where it's asked: rock
@@ -1056,7 +1057,7 @@ void cliffShelf(Canvas& c) {
     auto slabTop = [&](double u, double lat, double topY, double hx, double hz, double th, double yaw, double pitch, double roll, double) {
         c.laid(u, curve(u) + lat, -yaw, V3(hx, th * 0.8, hz), topY + 0.05, pitch, roll, (float)c.rng.range(0.92, 1.08));
     };
-    const double bedRoll = std::atan(tilt);  // the road's own cross-slope (a slab lying on it has this roll)
+    const double bedRoll = dm::atan(tilt);  // the road's own cross-slope (a slab lying on it has this roll)
     auto warm = [&]() { return sq(c.rng()); };  // (mostly grey, some rusty, all shades between)
 
     // ---- The toe: a talus of scanned rocks packed against the cliff's foot all along the shelf, 1.2-1.9 m high, overlapping, their
@@ -1143,24 +1144,24 @@ void cliffShelf(Canvas& c) {
     }
 
     // ---- Slabs to drive. ----
-    const double slopeA = std::atan(c.slope);  // the plane's tilt along the shelf: slabs on the road lie parallel to it
+    const double slopeA = dm::atan(c.slope);  // the plane's tilt along the shelf: slabs on the road lie parallel to it
     // A slab whose top runs from (ua, rise above the road there) to (ub, rise there), `w` either side of lat: how the table's
     // ramps and platforms and the staircase's treads are laid, so each meets the next at the height asked.
     auto flat = [&](double ua, double ra, double ub, double rb, double lat, double w, double yaw, double warmth) {
         const double ya = ground(ua, curve(ua) + lat) + ra, yb = ground(ub, curve(ub) + lat) + rb, d = ub - ua;
-        slabTop(0.5 * (ua + ub), lat, 0.5 * (ya + yb), 0.5 * std::hypot(d, yb - ya) + 0.06, w, 0.5, yaw, std::atan2(yb - ya, d), bedRoll, warmth);
+        slabTop(0.5 * (ua + ub), lat, 0.5 * (ya + yb), 0.5 * dm::hypot(d, yb - ya) + 0.06, w, 0.5, yaw, dm::atan2(yb - ya, d), bedRoll, warmth);
     };
     // The table's rocks: a pair side by side along each of the ramps and the platform, laid on the ground's own ramps.
     {
-        const double lat = lineLat(table.a + 7), yaw = yawAt(table.a + 7), pitch = std::atan2(tableRise, tableRun);
+        const double lat = lineLat(table.a + 7), yaw = yawAt(table.a + 7), pitch = dm::atan2(tableRise, tableRun);
         struct Piece {
             double a, b, pitch;
         };
         for (const Piece& pc : {Piece{table.a, table.a + tableRun, pitch}, Piece{table.a + tableRun - 0.1, table.a + tableRun + tablePlat + 0.1, 0.0},
                                 Piece{table.a + tableRun + tablePlat, table.a + 2 * tableRun + tablePlat, -pitch}}) {
-            const double uc = 0.5 * (pc.a + pc.b), hl = 0.5 * std::hypot(pc.b - pc.a, pc.pitch * (pc.b - pc.a)) + 0.1;
+            const double uc = 0.5 * (pc.a + pc.b), hl = 0.5 * dm::hypot(pc.b - pc.a, pc.pitch * (pc.b - pc.a)) + 0.1;
             for (int side : {-1, 1})
-                c.laid(uc, curve(uc) + lat + side * 0.8, -yaw, V3(hl, 0.3, 0.88), ground(uc, curve(uc) + lat + side * 0.8) + 0.14 + std::fabs(std::sin(pc.pitch)) * hl, slopeA + pc.pitch, bedRoll,
+                c.laid(uc, curve(uc) + lat + side * 0.8, -yaw, V3(hl, 0.3, 0.88), ground(uc, curve(uc) + lat + side * 0.8) + 0.14 + std::fabs(dm::sin(pc.pitch)) * hl, slopeA + pc.pitch, bedRoll,
                        (float)c.rng.range(0.92, 1.06));
         }
     }
@@ -1176,7 +1177,7 @@ void cliffShelf(Canvas& c) {
             const double latH = lat + 1.2;  // the hinge: the truck's drop-side edge
             const double latLo = -half - 0.3, latHi = latH + 0.3, latC = 0.5 * (latLo + latHi), w = 0.5 * (latHi - latLo);
             // the top's centre line: through the hinge at the road's height, rising toward the wall
-            const double topY = ground(u, curve(u) + latH) + std::tan(th) * (latH - latC);
+            const double topY = ground(u, curve(u) + latH) + dm::tan(th) * (latH - latC);
             slabTop(u, latC, topY, len * 0.5 + 0.12, w, 0.6, yawAt(u), slopeA, th, warm());
         }
     }
@@ -1226,9 +1227,9 @@ void cliffShelf(Canvas& c) {
         for (const Bury& b : buried)
             for (int k = 0, got = 0; k < 12 && got < 2; k++) {
                 const double a = c.rng.range(0, 2 * M_PI), r = c.rng.range(0.14, 0.34), e = c.rng.range(1.0, 1.35);
-                const double lat = b.lat + std::sin(a) * (b.hz + r) * e;
+                const double lat = b.lat + dm::sin(a) * (b.hz + r) * e;
                 if (lat > half + 0.1 || lat < -half) continue;
-                got += stone(b.u + std::cos(a) * (b.hx + r) * e, lat, r, c.rng.range(0.55, 0.85));
+                got += stone(b.u + dm::cos(a) * (b.hx + r) * e, lat, r, c.rng.range(0.55, 0.85));
             }
     }
 
@@ -1254,7 +1255,7 @@ void timber(Canvas& c) {
         fx.mounds.push_back({t.u, t.v, 1.0, 0.22});
         for (int i = 0; i < 3; i++) {
             const double a = c.rng.range(0, 6.283), d = c.rng.range(1.1, 1.8);
-            fx.mounds.push_back({t.u + d * std::cos(a), t.v + d * std::sin(a), 0.55, c.rng.range(0.12, 0.22)});
+            fx.mounds.push_back({t.u + d * dm::cos(a), t.v + d * dm::sin(a), 0.55, c.rng.range(0.12, 0.22)});
         }
     }
     roughen(c, kTimberHalf, 6, fx, [](double) { return 0.0; });
@@ -1264,7 +1265,7 @@ void timber(Canvas& c) {
     for (const Trunk& t : trunks) c.tree(t.u, t.v, t.h, 0);
     for (int k = 0; k < 3; k++) {  // windfall across it: too big to climb in a truck
         const double u = 42 + 25 * k + c.rng.range(-4, 4), a = c.rng.range(-0.4, 0.4), len = c.rng.range(kTimberLog), r = c.rng.range(kTimberLogR);
-        V3 p0 = c.at(u - std::sin(a) * len / 2, -std::cos(a) * len / 2), p1 = c.at(u + std::sin(a) * len / 2, std::cos(a) * len / 2);
+        V3 p0 = c.at(u - dm::sin(a) * len / 2, -dm::cos(a) * len / 2), p1 = c.at(u + dm::sin(a) * len / 2, dm::cos(a) * len / 2);
         p0.y = c.w.height(p0.x, p0.z) + r * 0.85, p1.y = c.w.height(p1.x, p1.z) + r * 0.85;
         c.w.addLog(p0, p1, r);
         if (c.rec) {
@@ -1277,15 +1278,15 @@ void timber(Canvas& c) {
     for (const Trunk& t : trunks)
         for (int i = 0; i < 3; i++) {
             const double a = c.rng.range(0, 6.283), d = c.rng.range(1.0, 1.7), r = c.rng.range(0.18, 0.4);
-            c.boulder(t.u + d * std::cos(a), t.v + d * std::sin(a), r);
+            c.boulder(t.u + d * dm::cos(a), t.v + d * dm::sin(a), r);
         }
     for (int cl = 0; cl < 9; cl++) {  // heaps beside the track
         const double pu = c.rng.range(24, c.fp.length - 24), side = c.rng() < 0.5 ? -1 : 1, pv = side * c.rng.range(2.6, 5.5), radius = c.rng.range(1.3, 2.6);
         const int n = 4 + (int)(c.rng() * 4);
         for (int i = 0; i < n; i++) {
-            const double a = c.rng.range(0, 6.283), d = radius * std::sqrt(c.rng()), v = pv + d * std::sin(a);
+            const double a = c.rng.range(0, 6.283), d = radius * std::sqrt(c.rng()), v = pv + d * dm::sin(a);
             if (std::fabs(v) < 2.5) continue;  // (the track's edge stays free but for the odd stray)
-            c.boulder(pu + d * std::cos(a), v, boulderR(c.rng, 0.55, 0.35, 0.8));
+            c.boulder(pu + d * dm::cos(a), v, boulderR(c.rng, 0.55, 0.35, 0.8));
         }
     }
     int foot = 0;
@@ -1295,7 +1296,7 @@ void timber(Canvas& c) {
         c.local(t.base.x, t.base.z, u, v);
         if (std::fabs(v) < 3.5 || std::fabs(v) > 9 || u < 22 || u > c.fp.length - 22 || c.rng() > 0.2) continue;
         const double a = c.rng.range(0, 6.283), d = t.radius + c.rng.range(0.3, 0.9);
-        foot += c.boulder(u + d * std::cos(a), v + d * std::sin(a), c.rng.range(0.2, 0.55));
+        foot += c.boulder(u + d * dm::cos(a), v + d * dm::sin(a), c.rng.range(0.2, 0.55));
     }
 }
 
@@ -1314,7 +1315,7 @@ double duneHeight(double u, double v, const DuneParams& P, uint32_t seed, double
     const double ox = (seed % 997) * 13.1 + 200, oz = (seed % 991) * 7.7 + 200;
     auto signedNoise = [&](double x, double z, int oct) { return clampd((fbmNoise(x + ox, z + oz, oct) - 0.5) * 3.4, -1, 1); };
     const double du = std::fabs(u / P.halfU), dv = std::fabs(v / P.halfV);
-    const double d = std::cbrt(du * du * du + dv * dv * dv);
+    const double d = dm::cbrt(du * du * du + dv * dv * dv);
     const double eEdge = smoothstep(1.0, 0.4, d), eCore = smoothstep(0.95, 0.25, d);
     if (eEdge <= 0) return 0;
     const double th = P.windDeg * M_PI / 180;
@@ -1323,22 +1324,22 @@ double duneHeight(double u, double v, const DuneParams& P, uint32_t seed, double
     // Where a wave's crests are: along its direction, plus the meander and the bending wave.
     auto phaseAt = [&](double dir, double spacing, double warpAmp, double bendAmp, double x, double z) {
         const double warp = warpAmp * signedNoise(x / P.warpScale, z / P.warpScale, 2);
-        const double bend = bendAmp * std::sin(k2 * (x * std::cos(a2) + z * std::sin(a2)) + bendPh);
-        return (x * std::cos(dir) + z * std::sin(dir) + warp + bend) / spacing;
+        const double bend = bendAmp * dm::sin(k2 * (x * dm::cos(a2) + z * dm::sin(a2)) + bendPh);
+        return (x * dm::cos(dir) + z * dm::sin(dir) + warp + bend) / spacing;
     };
     // Ridges: a sawtooth wave across the wind. A ridge's height is that where its back begins (found by stepping
     // upwind from here), so it's the same all across the ridge's profile and the slopes aren't bent by the field's
     // swelling or the noise. The back's and the slip's lengths follow from that height and the real spacing of the
     // crests here (the phase gradient), so the slopes come out right wherever the warp squeezes them.
     auto ridges = [&](double dir, double spacing, double warpAmp, double bendAmp, double heightFrac, double windward, double slipAngle, double noiseScale, double noiseAt) {
-        const double tW = std::tan(windward * M_PI / 180), tS = std::tan(slipAngle * M_PI / 180);
+        const double tW = dm::tan(windward * M_PI / 180), tS = dm::tan(slipAngle * M_PI / 180);
         const double ph = phaseAt(dir, spacing, warpAmp, bendAmp, u, v);
         const double gx = phaseAt(dir, spacing, warpAmp, bendAmp, u + 1, v) - ph, gz = phaseAt(dir, spacing, warpAmp, bendAmp, u, v + 1) - ph;
-        const double g = std::max(std::hypot(gx, gz), 0.25 / spacing);  // crests per metre, across them
+        const double g = std::max(dm::hypot(gx, gz), 0.25 / spacing);  // crests per metre, across them
         const double phi = ph - std::floor(ph);
         const double back0 = std::min(phi / g, 1.5 * spacing);          // metres up the wind to where this ridge's back begins
-        const double u0 = u - std::cos(dir) * back0, v0 = v - std::sin(dir) * back0;
-        const double e0 = std::cbrt(std::pow(std::fabs(u0 / P.halfU), 3) + std::pow(std::fabs(v0 / P.halfV), 3));
+        const double u0 = u - dm::cos(dir) * back0, v0 = v - dm::sin(dir) * back0;
+        const double e0 = dm::cbrt(dm::pow(std::fabs(u0 / P.halfU), 3) + dm::pow(std::fabs(v0 / P.halfV), 3));
         const double base = P.crestMin * smoothstep(1.0, 0.5, e0) + (P.crestMax - P.crestMin) * smoothstep(0.92, 0.3, e0);
         const double crest = base * heightFrac * (0.86 + 0.28 * signedNoise(u0 / noiseScale + noiseAt, v0 / noiseScale + noiseAt * 0.45, 2));
         const double A = std::min(crest, 0.9 / (g * (1 / tW + 1 / tS)));  // (a crest the spacing has no room for is cut down to size)
@@ -1356,10 +1357,10 @@ double duneHeight(double u, double v, const DuneParams& P, uint32_t seed, double
     // Small lopsided swells over the lot (a cosine with its phase pushed along itself), far gentler than the slip faces.
     const double baseHere = P.crestMin * eEdge + (P.crestMax - P.crestMin) * eCore;
     const double p3 = 2 * M_PI * phaseAt(th - 0.15, P.subSpacing * 0.45, P.warp * 0.5, P.bend * 0.3, u, v);
-    const double small = P.sub * 0.25 * baseHere * (0.7 + 0.6 * signedNoise(u / 80 + 9, v / 80 + 1, 2)) * 0.5 * (1 - std::cos(p3 + 0.5 * std::sin(p3)));
+    const double small = P.sub * 0.25 * baseHere * (0.7 + 0.6 * signedNoise(u / 80 + 9, v / 80 + 1, 2)) * 0.5 * (1 - dm::cos(p3 + 0.5 * dm::sin(p3)));
     const double dunes = big + mid + small;
     // The hollows' floor: a slow swell (and a long wave across it).
-    const double floorH = P.swell * eEdge * (0.7 * signedNoise(u / 210 + 1, v / 210 + 4, 3) + 0.3 * std::sin(2 * M_PI * (u * std::sin(th) - v * std::cos(th)) / 410 + (seed % 7)));
+    const double floorH = P.swell * eEdge * (0.7 * signedNoise(u / 210 + 1, v / 210 + 4, 3) + 0.3 * dm::sin(2 * M_PI * (u * dm::sin(th) - v * dm::cos(th)) / 410 + (seed % 7)));
     if (aboveFloor) *aboveFloor = dunes;
     return floorH + dunes;
 }
@@ -1389,7 +1390,7 @@ SectionBuilt buildSection(World& w, SectionType t, uint32_t seed, const SectionF
     out.line = c.line;
     const double L = sectionLength(t);
     // (The shelf's line wanders, and ends a little off the heading.)
-    const double exitV = t == SEC_CLIFF_SHELF ? 5 * std::sin(L * 0.05 + seed) : 0;
+    const double exitV = t == SEC_CLIFF_SHELF ? 5 * dm::sin(L * 0.05 + seed) : 0;
     out.entry = c.at(0, 0), out.exit = c.at(L, exitV);
     out.entry.y = w.height(out.entry.x, out.entry.z), out.exit.y = w.height(out.exit.x, out.exit.z);
     out.exitHeading = f.heading;

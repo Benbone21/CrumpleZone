@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "battery.h"
 #include "mathx.h"
 #include "modelkit.h"
 #include "walker.h"
@@ -312,13 +313,51 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
         if (s < 0.85) jackGrip(pl);  // (let go as it settles)
         break;
     }
+    case IA_OPEN_HOOD:
+    case IA_CLOSE_HOOD: {
+        // Both hands on the hood's front edge: heaving it up on its hinges (or lowering it, then a press to latch it).
+        const bool open = o.kind == IA_OPEN_HOOD;
+        const double reach = smooth(std::min(1.0, t * 4)), lift = smooth(t), edge = 0.30 * (open ? lift : 1 - lift);
+        const V3 rest = eye + flat(F) * 0.35 + R * 0.2 - kUp * 0.55;
+        for (int s = 0; s < 2; s++) {
+            const V3 on = o.at + R * (s == 0 ? -0.16 : 0.16) + kUp * (edge + 0.03);
+            h.hands[s].on = true;
+            h.hands[s].p = lerp(rest + R * (s == 0 ? -0.4 : 0.0), on, reach);
+            h.hands[s].axis = norm(lerp(flat(F), -kUp, reach));
+            h.hands[s].grip = reach < 0.9 ? 0.2 : 0.8;
+        }
+        h.hasWork = true, h.workAt = o.at;
+        break;
+    }
     case IA_FIX: {
         const Fix& f = o.fix;
+        const RepairStep::Act act = engineStepAct(f.kind, o.step);
+        if (act == RepairStep::ACT_CRANK) {  // a hand on the crank pulley, turning the engine over by the starter's side
+            const double ph = secs * 2 * M_PI * 1.3;
+            h.hasWork = true, h.workAt = o.at;
+            h.hands[1].on = true;
+            h.hands[1].p = o.at + R * (0.06 * std::cos(ph)) + kUp * (0.05 * std::sin(ph)) + toward * 0.1;
+            h.hands[1].axis = -toward;
+            h.hands[1].grip = 0.55;
+            h.hands[0].on = true;  // (the other steadies on the fender)
+            h.hands[0].p = o.at - R * 0.35 + toward * 0.2 + kUp * 0.02;
+            h.hands[0].axis = -kUp;
+            h.hands[0].grip = 0.5;
+            break;
+        }
+        if (act == RepairStep::ACT_FILL) {  // the jug tipped over the filler, the oil running in
+            const double tilt = 0.35 + 1.45 * smooth(std::min(1.0, t * 1.6)), settle = 1 - std::pow(1 - std::min(1.0, t * 4), 2);
+            const V3 yv = norm(kUp * std::cos(tilt) - toward * std::sin(tilt));
+            h.hasWork = true, h.workAt = o.at;
+            sc.put(repairPartModel(PART_ENGINE_OIL), lerp(o.at + toward * 0.5 + kUp * 0.4, o.at + kUp * 0.2 + toward * 0.1, settle), R, yv);
+            sc.both(0.06, 0.02);
+            break;
+        }
         // At a corner the work's done at the hub (the axle nut, the knuckle behind it), where you
         // can see it, the tool coaxial with it; anywhere else where the step is (a plug points up,
         // a shaft's ends). One step, one tool, worked slowly for the whole hold; or the new part going in.
         V3 work = o.at, workAxis = toward;
-        if (f.kind == Fix::SPARK_PLUGS) workAxis = kUp;
+        if (f.kind == Fix::SPARK_PLUGS) workAxis = act == RepairStep::ACT_DRAIN ? -kUp : kUp;
         if (car && wh && !o.atEnd) {
             WheelItem item = wh->item;
             if (!wh->mounted) item.style = car->spec->wheelStyle;
@@ -374,6 +413,40 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
         } else if (o.tool >= 0) {
             sc.lever(toolId((Tool)o.tool), rim, toward, secs / 1.4 * M_PI * 2);
         }
+        break;
+    }
+    case IA_JUMP_PACK: {
+        // The pack set down on the engine bay's edge, held by its handle in the left hand; its two clamps go onto the posts (the right hand
+        // takes each in turn) and the battery gets its charge.
+        const V3 rise = kUp * 0.08;
+        sc.put("jump_pack", o.at + toward * 0.3 + kUp * 0.1, -toward, kUp);
+        sc.hold(0, 0.0, 0.8);
+        if (!h.models.empty()) h.hands[0].p = h.models.back().p + kUp * 0.12;
+        if (car) {
+            const double s = smooth(std::min(1.0, t / 0.3));
+            const V3 from = eye + F * 0.45 + R * 0.2 - kUp * 0.5;
+            for (int w = 0; w < 2; w++) {
+                const V3 post = battery::post(*car, w) + rise * 0.3;
+                const V3 pos = lerp(from, post + toward * 0.03, w == 0 ? s : smooth(std::min(1.0, std::max(0.0, (t - 0.15) / 0.2))));
+                sc.put("cable_clamp", pos, w == 0 ? -toward : toward, kUp);
+                if (w == 1 && t < 0.4 && !h.models.empty()) h.hands[1].on = true, h.hands[1].p = pos, h.hands[1].axis = norm(post - pos), h.hands[1].grip = 0.9;
+            }
+        }
+        h.hasWork = true, h.workAt = o.at;
+        break;
+    }
+    case IA_CLAMP_CABLE:
+    case IA_UNCLAMP_CABLE: {
+        // A clamp in the right hand reaching to the post (red first, black next) and biting on (off: coming away).
+        if (!car) break;
+        const bool on = o.kind == IA_CLAMP_CABLE;
+        const V3 post = battery::post(*car, on ? (o.step == 1 ? 1 : 0) : 0);
+        const V3 from = eye + F * 0.45 + R * 0.2 - kUp * 0.5;
+        const double s = smooth(std::min(1.0, t / 0.5));
+        const V3 pos = on ? lerp(from, post + toward * 0.03, s) : lerp(post + toward * 0.03, from, s);
+        sc.put("cable_clamp", pos, -toward, kUp);
+        h.hands[1].on = true, h.hands[1].p = pos, h.hands[1].axis = norm(-toward), h.hands[1].grip = 0.9;
+        h.hasWork = true, h.workAt = post;
         break;
     }
     case IA_OPEN_CACHE:

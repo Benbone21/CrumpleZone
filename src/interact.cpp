@@ -1,6 +1,7 @@
 // On foot, hands on (interact.h): the spare, the wheels, and the hold-E jobs.
 #include "interact.h"
 
+#include "battery.h"
 #include "carentry.h"
 
 #include <cmath>
@@ -22,7 +23,9 @@ constexpr double kGrabLine = 1.0, kHookLine = 1.2, kUnhookLine = 0.8, kStowLine 
 constexpr double kLineReach = 3.0;  // m from your chest to the anchor you hook to
 constexpr double kOpenCache = 1.5;  // prise the lid off a supply cache
 constexpr double kTakeItem = 0.5, kStowItem = 0.5;  // the back, and things in and out of it
+constexpr double kJumpPack = 4.0, kClampCable = 2.0, kUnclampCable = 1.5;  // jump pack on, cables clamped, taken off
 constexpr double kReach = prompts::kReach;  // m from your chest
+constexpr double kOpenHood = 1.1, kCloseHood = 0.9;  // s to heave the hood up / let it down and press it home
 
 // Whether a car already has a line of this kind of its own out (a winch hooked from it; a strap at either end).
 bool hasLine(const Sim& sim, int ci, RopeKind kind) {
@@ -37,6 +40,7 @@ V3 hubOf(const Car& c, const Wheel& wh) { return (c.nodes[wh.inner].p + c.nodes[
 
 CornerNow cornerNow(const Sim& sim, const Car& c, int k) {
     CornerNow n;
+    n.hoodOpen = c.hoodOpen(), n.hoodShut = c.hoodShut();
     if (k < 0 || k >= (int)c.wheels.size()) return n;
     const Wheel& wh = c.wheels[k];
     n.lifted = Interact::cornerLifted(sim, c, k);
@@ -117,6 +121,7 @@ InteractOption Interact::fixOption(const Sim& sim, const Walker& wk, int ci, con
         o.blocked = true, o.prompt = what + st.verb;
         break;
     }
+    if (st.under) o.at = enginePlugAt(c);  // (the sump's drain plug, down below the engine)
     if (st.end && f.beam >= 0 && f.beam < (int)c.beams.size()) {  // a shaft's ends: each one where it bolts on
         const Beam& b = c.beams[f.beam];
         const V3 pa = c.nodes[b.a].p, pb = c.nodes[b.b].p;
@@ -331,6 +336,16 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
             o.prompt = sim.handLine.kind == ROPE_WINCH ? "SPOOL WINCH LINE BACK" : "STOW TOW STRAP";
             consider(o);
         }
+        // The hood (Car::hoodOpen): E at the nose swings it up on its hinges, and down again. Engine work wants it up.
+        if (c.hasHood() && !busy && !c.hoodTorn() && len(c.frame().vel) < 0.5 && c.hood.dir == 0) {
+            InteractOption o;
+            o.car = ci, o.kind = c.hoodOpen() ? IA_CLOSE_HOOD : IA_OPEN_HOOD;
+            o.hold = c.hoodOpen() ? kCloseHood : kOpenHood;
+            o.at = c.hoodFront() - c.frame().fwd * 0.15;
+            o.prompt = c.hoodOpen() ? "CLOSE THE HOOD" : "OPEN THE HOOD";
+            // (Closing it yields to the engine work under it: looking at the sump or the plugs is never the hood.)
+            consider(o, kReach, c.hoodOpen() ? (fixesFor(c).empty() ? 0.12 : 0.45) : 0.0);
+        }
         // The back (trunk.h): E at it opens the inventory (invmenu.h), where you take what you need and put it back.
         if (trunkCar && !wk.carrying.has_value() && !lineHeld) {
             InteractOption g;
@@ -419,6 +434,54 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                     consider(o, kReach, -1.0);
                 } else {
                     consider(o);
+                }
+            }
+    }
+    // Batteries (battery.h): the jump pack in your hands on a dead one, the jumper cables clamped on and taken off. Any vehicle's, a buddy's included.
+    {
+        const bool freeHands = !wk.carrying.has_value() && !wk.holdingJack && !wk.holdingChain && !lineHeld;
+        const bool pack = freeHands && wk.hand.kind == TK_TOOL && wk.hand.id == TOOL_JUMP_PACK;
+        const bool cables = freeHands && wk.hand.kind == TK_TOOL && wk.hand.id == TOOL_CABLES;
+        bool mineOut = false;
+        for (const Sim::JumperCable& j : sim.cables) mineOut |= j.owner < 0;
+        for (int ci = 0; ci < (int)sim.cars.size(); ci++) {
+            const Car& c = sim.cars[ci];
+            if (c.isProp()) continue;
+            InteractOption o;
+            o.car = ci, o.at = battery::aim(c), o.radius = 0.4;
+            const bool shut = c.hasHood() && !c.hoodOpen();  // (the battery's under the hood)
+            if (pack) {
+                o.kind = IA_JUMP_PACK, o.hold = kJumpPack, o.prompt = "JUMP START THE BATTERY";
+                if (battery::running(c)) o.blocked = true, o.prompt += ": IT'S RUNNING";
+                else if (c.engineDead) o.blocked = true, o.prompt += ": THE ENGINE'S DEAD, NOT THE BATTERY";
+                if (shut) o.blocked = true, o.prompt = "JUMP START THE BATTERY: OPEN THE HOOD FIRST";
+                consider(o, kReach, -0.1);
+            }
+            if (cables) {
+                o.kind = IA_CLAMP_CABLE, o.hold = kClampCable;
+                if (sim.handCable.on() && sim.handCable.car == ci) {
+                    o.kind = IA_UNCLAMP_CABLE, o.rope = -1, o.hold = kUnclampCable, o.prompt = "TAKE THE CABLES OFF AGAIN";
+                } else if (sim.handCable.on()) {
+                    o.step = 1, o.prompt = "CLAMP THE CABLES ON THE OTHER BATTERY";
+                    if (battery::cableOn(sim, ci) >= 0) o.blocked = true, o.prompt += ": CABLES ON IT ALREADY";
+                } else {
+                    o.step = 0, o.prompt = "CLAMP THE CABLES ON THIS BATTERY";
+                    if (mineOut) o.blocked = true, o.prompt += ": YOUR CABLES ARE ON A VEHICLE ALREADY";
+                    else if (battery::cableOn(sim, ci) >= 0) o.blocked = true, o.prompt += ": CABLES ON IT ALREADY";
+                }
+                if (shut && o.kind == IA_CLAMP_CABLE) o.blocked = true, o.prompt = (o.step ? "CLAMP THE CABLES ON THE OTHER BATTERY" : "CLAMP THE CABLES ON THIS BATTERY") + std::string(": OPEN THE HOOD FIRST");
+                consider(o, kReach, -0.1);
+            }
+        }
+        if (!sim.handCable.on() && (cables || (freeHands && !wk.hand.any())))  // cables in place: off again, at either end (yours or a buddy's)
+            for (int k = 0; k < (int)sim.cables.size(); k++) {
+                const Sim::JumperCable& j = sim.cables[k];
+                if (j.a < 0 || j.b < 0 || j.a >= (int)sim.cars.size() || j.b >= (int)sim.cars.size()) continue;
+                for (int e : {j.a, j.b}) {
+                    InteractOption o;
+                    o.kind = IA_UNCLAMP_CABLE, o.rope = k, o.car = e, o.hold = kUnclampCable, o.at = battery::aim(sim.cars[e]), o.radius = 0.4;
+                    o.prompt = "TAKE THE JUMPER CABLES OFF";
+                    consider(o, kReach, -0.05);
                 }
             }
     }
@@ -615,7 +678,8 @@ std::string Interact::run(Sim& sim, Walker& wk, const V3& eye, const V3& look, b
     }
     if (progress < o.hold) return "";
     progress = 0;
-    if (o.kind == IA_FIX || o.kind == IA_TIRE_WORK || o.kind == IA_GRAB_LINE || o.kind == IA_HOOK_LINE || o.kind == IA_UNHOOK_LINE || o.kind == IA_STOW_LINE)
+    if (o.kind == IA_FIX || o.kind == IA_TIRE_WORK || o.kind == IA_GRAB_LINE || o.kind == IA_HOOK_LINE || o.kind == IA_UNHOOK_LINE || o.kind == IA_STOW_LINE ||
+        o.kind == IA_JUMP_PACK || o.kind == IA_CLAMP_CABLE || o.kind == IA_UNCLAMP_CABLE)
         waitRelease = true;  // (a step at a time: let go before the next)
     return perform(sim, wk, o);
 }
@@ -792,9 +856,34 @@ std::string Interact::perform(Sim& sim, Walker& wk, const InteractOption& o) {
             return sim.hookHandLine(o.end);
         case IA_UNHOOK_LINE:
             return sim.unhookRope(o.rope);
+        case IA_OPEN_HOOD:
+        case IA_CLOSE_HOOD: {
+            Car& c = sim.cars[o.car];
+            if (len(c.frame().vel) > 0.5) return "STOP THE VEHICLE FIRST";
+            c.setHood(o.kind == IA_OPEN_HOOD);
+            waitRelease = true;
+            return o.kind == IA_OPEN_HOOD ? "HOOD OPEN" : "HOOD CLOSED";
+        }
         case IA_STOW_LINE:
             sim.dropHandLine();
             return o.lineKind == ROPE_WINCH ? "WINCH LINE SPOOLED BACK" : "TOW STRAP PUT BACK";
+        case IA_JUMP_PACK:
+            if (o.car < 0 || o.car >= (int)sim.cars.size()) return "";
+            if (sim.cars[o.car].remote) jumpedCar = o.car;  // (its owner puts the charge in: repairsync.h)
+            return battery::jump(sim, o.car);
+        case IA_CLAMP_CABLE: {
+            bool done = false;
+            const std::string say = battery::clamp(sim, o.car, done);
+            if (done) wk.hand = TrunkRef();  // (the cables are out on the two vehicles now)
+            return say;
+        }
+        case IA_UNCLAMP_CABLE: {
+            std::string say;
+            if (o.rope < 0) sim.handCable = Sim::HandCable(), say = "CABLES OFF";
+            else say = battery::unclamp(sim, o.rope);
+            if (!wk.hand.any()) wk.hand = TrunkRef{TK_TOOL, TOOL_CABLES};
+            return say;
+        }
         default:
             return "";
     }

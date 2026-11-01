@@ -4,3 +4,4 @@
 #include <string>
 
 std::string buildDescription();  // "A1B2C3D  DEV BUILD  BUILT OCT 17 2026 12:00:00"
+std::string buildId();           // "a1b2c3d": the commit alone (what multiplayer tells the others)

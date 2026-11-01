@@ -8,6 +8,9 @@
 #include "../src/toolsounds.h"
 #include "../src/fixes.h"
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <cstdio>
 #include <cstdlib>
 #include <chrono>
@@ -16,6 +19,8 @@
 #include <limits>
 #include <functional>
 #include <new>
+#include <array>
+#include <string>
 
 // Trace C++ allocations only around offline calls to the actual callback mixer.
 static std::atomic<bool> traceAllocations{false};
@@ -36,6 +41,8 @@ void soundscapeTests(const std::function<void(const char*, bool)>& check, void (
 
 struct AudioTest {
     static void render(Audio& audio, float* out, int frames) { audio.render(out, frames); }
+    static void seed(Audio& audio, uint32_t rng) { audio.rng_ = rng; }
+    static size_t fireSamples(const Audio& audio) { return audio.fireLoop_.size(); }
     static bool hissRates() {
         for (int rate : {8000, 22050, 44100, 48000, 192000}) {
             Audio audio;
@@ -215,10 +222,85 @@ int main() {
     }
     traceAllocations = false;
     check("mixer and music map changes perform no C++ allocations in the callback", callbackAllocations == 0);
+    {  // the main menu's camp plays ONE fire: with campfire.wav loaded, the synthesized fire contributes nothing (the mix doesn't depend on its noise state)
+        auto camp = [&](bool recorded, uint32_t seed) {
+            Audio a;
+            if (recorded) a.loadAmbience("assets/audio/ambience");
+            AudioTest::seed(a, seed);
+            a.setVolume(1); a.setEngine(0, 0); a.setCampfire(0.85f, 0.25f, 0.1f);
+            std::vector<float> buf(512 * 2), all;
+            for (int k = 0; k < 300; k++) {
+                AudioTest::render(a, buf.data(), 512);
+                if (k >= 150) all.insert(all.end(), buf.begin(), buf.end());
+            }
+            return std::pair<size_t, std::vector<float>>(AudioTest::fireSamples(a), all);
+        };
+        const auto a = camp(true, 0x12345678u), b = camp(true, 0x9e3779b9u), synthA = camp(false, 0x12345678u), synthB = camp(false, 0x9e3779b9u);
+        auto rmsDiff = [](const std::vector<float>& x, const std::vector<float>& y) {
+            double d = 0, e = 0;
+            for (size_t i = 0; i < x.size(); i++) d += (x[i] - y[i]) * (x[i] - y[i]), e += x[i] * x[i];
+            return std::sqrt(d / std::max(1e-12, e));
+        };
+        std::printf("  camp fire: recording %zu samples; mix changes with the noise seed by %.5f (recorded) and %.3f (synthesized)\n", a.first, rmsDiff(a.second, b.second), rmsDiff(synthA.second, synthB.second));
+        check("the camp's recorded fire loads (campfire.wav, 48 kHz mono PCM16)", a.first > 48000);
+        check("with the recording, the synthesized fire is not in the camp mix", rmsDiff(a.second, b.second) < 1e-4);
+        check("without it, the synthesized fire is (the comparison above is sensitive)", rmsDiff(synthA.second, synthB.second) > 0.05);
+    }
+    {  // the vehicle volume: scales the car's sounds only
+        auto level = [&](float vehicle, bool car, bool hiss = false) {
+            Audio a;
+            a.loadAmbience("assets/audio/ambience");
+            a.setVolume(1); a.setVehicleVolume(vehicle);
+            a.setEnvironment(0, 12, car ? 0.0f : 0.8f);
+            a.setEngine(car ? 2500.0f : 0.0f, car ? 0.3f : 0.0f);
+            if (car) a.setSpeed(20), a.setTires(0.6f);
+            if (hiss) a.setHiss(1);
+            std::vector<float> buf(512 * 2);
+            double e = 0;
+            for (int k = 0; k < 300; k++) {
+                AudioTest::render(a, buf.data(), 512);
+                if (k >= 100) for (float x : buf) e += x * x;
+            }
+            return std::sqrt(e / (200.0 * 1024));
+        };
+        const double full = level(1, true), half = level(0.5f, true), off = level(0, true);
+        const double ambFull = level(1, false), ambOff = level(0, false), hissOff = level(0, false, true);
+        std::printf("  vehicle volume rms: full %.4f half %.4f off %.6f; ambience %.4f/%.4f; hiss at 0 %.4f\n", full, half, off, ambFull, ambOff, hissOff);
+        check("vehicle volume 0 silences the engine and tires", full > 0.01 && off < full * 1e-4);
+        check("vehicle volume 50% is about half the amplitude", half > full * 0.4 && half < full * 0.6);
+        check("ambience and tire air still play with the vehicle volume at 0", ambFull > 1e-4 && std::fabs(ambOff - ambFull) < ambFull * 1e-3 && hissOff > 0.001);
+    }
+    {  // no orphans: every .wav under assets/audio is read by Audio, and the start-up line's totals match the folders
+        namespace fs = std::filesystem;
+        std::string src;
+        {
+            std::ifstream f("src/audio.cpp");
+            std::stringstream ss;
+            ss << f.rdbuf();
+            src = ss.str();
+        }
+        check("src/audio.cpp is readable from here", src.size() > 1000);
+        for (const char* dir : {"ambience", "sfx"}) {
+            int files = 0;
+            bool allNamed = true;
+            std::string orphan;
+            for (const auto& e : fs::directory_iterator(std::string("assets/audio/") + dir)) {
+                if (e.path().extension() != ".wav") continue;
+                files++;
+                if (src.find("\"" + e.path().filename().string() + "\"") == std::string::npos && src.find("/" + e.path().filename().string() + "\"") == std::string::npos) allNamed = false, orphan = e.path().filename().string();
+            }
+            const int want = std::string(dir) == "ambience" ? Audio::kAmbienceFiles : Audio::kSfxFiles;
+            check((std::string("assets/audio/") + dir + ": every .wav is named in Audio's loader" + (orphan.empty() ? "" : " (orphan: " + orphan + ")")).c_str(), allNamed);
+            check((std::string("assets/audio/") + dir + ": the start-up total matches the folder (" + std::to_string(files) + ")").c_str(), files == want);
+            Audio a;
+            const int got = std::string(dir) == "ambience" ? a.loadAmbience("assets/audio/ambience") : a.loadSfx("assets/audio/sfx");
+            check((std::string(dir) + ": every file loads").c_str(), got == files);
+        }
+    }
     {  // recorded effects: the files load; the winch's sound follows line speed and load; nothing allocates in the callback
         Audio fx;
         const int loaded = fx.loadSfx("assets/audio/sfx");
-        check("all thirteen effect recordings load (mono 48 kHz PCM16)", loaded == 13);
+        check("all the effect recordings load (mono 48 kHz PCM16)", loaded == Audio::kSfxFiles);
         const WinchSound slow = WinchSound::at(0.1f, 0), fast = WinchSound::at(0.8f, 0), loadedUp = WinchSound::at(0.3f, 0.9f), out = WinchSound::at(-0.8f, 0), stalled = WinchSound::at(0, 1);
         check("winch hum rises with line speed and sinks and strains under load", fast.motorRate > slow.motorRate * 1.3f && loadedUp.strain > 0.5f && fast.strain == 0 && loadedUp.motorGain > WinchSound::at(0.3f, 0).motorGain * 1.5f && loadedUp.motorRate < WinchSound::at(0.3f, 0).motorRate);
         check("pawl clicks follow the cable speed, paying out and reeling in", fast.clicksPerSecond > slow.clicksPerSecond * 4 && std::fabs(out.clicksPerSecond - fast.clicksPerSecond) < 1e-4f && stalled.clicksPerSecond == 0 && WinchSound::at(50, 0).clicksPerSecond <= 28);
@@ -460,10 +542,13 @@ int main() {
         check("SDL callback starts, mixes nearby engines and shuts down", started);
     }
     {
-        // Every engine in the garage sounds like itself: its spectrum at idle and at 3,000 rpm
-        // under load (48 bands, 40 Hz to 8 kHz) differs from every other engine's, even ones
-        // with the same cylinder count (exhaust, cam, intake, valvetrain, its own pulses).
-        struct Engine { std::string name; EngineInput in; float idle; };
+        // Every engine in the garage sounds like itself, and every KIND of engine (a VTEC four,
+        // a turbo four, a blown V6, a small block, a big block, an LS, a flat-plane V8...) sounds
+        // clearly unlike every other kind. Its spectrum (48 bands, 40 Hz to 8 kHz, each band's
+        // share of the total in log10: loudness doesn't count, only the shape) at four points:
+        // idling, pulling at 3,000 rpm, pulling near the redline (VTEC, a blower's whine at speed,
+        // a flat-plane's scream) and just after a lift from there (blow-off, flutter, pops).
+        struct Engine { std::string name; EngineInput in; float idle; int kind; };
         std::vector<Engine> engines;
         for (int v = 0; v < (int)vehicleCatalog().size(); v++)
             for (int o = 0; o < (int)modOptions(v, MOD_ENGINE).size(); o++) {
@@ -474,62 +559,190 @@ int main() {
                 if (seen) continue;
                 EngineInput in{0, 0, 0, s.cylinders, (int)s.induction, (float)s.displacement, (float)s.redline, s.flatPlane};
                 in.voice = voiceFor(s);
-                engines.push_back({s.engineName, in, (float)s.idleRpm});
+                engines.push_back({s.engineName, in, (float)s.idleRpm, in.voice.kind});
             }
-        const int kBands = 48;
-        auto spectrum = [&](EngineInput in, float rpm, float load) {
+        constexpr int kBands = 48, kPoints = 4;
+        // One second (after settling) at a point; `layers` the most of each forced-induction layer heard.
+        auto renderAt = [&](EngineInput in, float idleRpm, int point, EngineSynth::Layers* layers = nullptr) {
             EngineSynth synth;
-            in.rpm = rpm, in.load = load, in.boost = load;
-            const int n = 48000, skip = 12000;
-            std::vector<float> x(n);
-            for (int i = 0; i < skip; i++) synth.sample(in, 1.0f / 48000);
-            for (int i = 0; i < n; i++) x[i] = synth.sample(in, 1.0f / 48000);
+            const float dt = 1.0f / 48000, high = in.redline * 0.85f;
+            std::vector<float> x(48000);
+            EngineSynth::Layers most;
+            auto step = [&](float rpm, float load, float boost) {
+                in.rpm = rpm, in.load = load, in.boost = boost;
+                const float y = synth.sample(in, dt);
+                const auto& l = synth.layers();
+                most.turbo = std::max(most.turbo, l.turbo), most.dump = std::max(most.dump, l.dump), most.whine = std::max(most.whine, l.whine), most.vtec = std::max(most.vtec, l.vtec);
+                return y;
+            };
+            if (point < 3) {
+                const float rpm = point == 0 ? idleRpm : point == 1 ? 3000 : high, load = point == 0 ? 0.05f : point == 1 ? 0.8f : 1.0f;
+                for (int i = 0; i < 24000; i++) step(rpm, load, point ? load : 0);
+                for (float& v : x) v = step(rpm, load, point ? load : 0);
+            } else {  // (a second flat out near the redline, then off the throttle: the boost leaks away, the revs fall)
+                for (int i = 0; i < 48000; i++) step(high, 1, 1);
+                float boost = 1;
+                for (int i = 0; i < 48000; i++) boost *= std::exp(-dt / 0.25f), x[i] = step(high - (high - in.redline * 0.5f) * i / 48000.0f, 0, boost);
+            }
+            if (layers) *layers = most;
+            return x;
+        };
+        auto bands = [&](const std::vector<float>& x) {
             std::vector<double> band(kBands);
             double total = 1e-12;
             for (int b = 0; b < kBands; b++) {
                 const double f = 40 * std::pow(200.0, (b + 0.5) / kBands), w = 2 * M_PI * f / 48000, c = 2 * std::cos(w);
                 double s0 = 0, s1 = 0, s2 = 0;
-                for (int i = 0; i < n; i++) s0 = x[i] + c * s1 - s2, s2 = s1, s1 = s0;
+                for (size_t i = 0; i < x.size(); i++) s0 = x[i] + c * s1 - s2, s2 = s1, s1 = s0;
                 band[b] = s1 * s1 + s2 * s2 - c * s1 * s2;
                 total += band[b];
             }
             for (double& v : band) v = std::log10(v / total + 1e-9);
             return band;
         };
-        std::vector<std::vector<double>> idle, load;
-        for (const Engine& e : engines) idle.push_back(spectrum(e.in, e.idle, 0.05f)), load.push_back(spectrum(e.in, 3000, 0.8f));
-        double closest = 1e9;
-        std::string pair;
+        std::vector<std::array<std::vector<double>, kPoints>> spectra;
+        for (const Engine& e : engines) {
+            std::array<std::vector<double>, kPoints> s;
+            for (int p = 0; p < kPoints; p++) s[p] = bands(renderAt(e.in, e.idle, p));
+            spectra.push_back(s);
+        }
+        // The mean difference, over the bands and the four points, in log10 power: 0.1 is 1 dB.
+        auto distance = [&](size_t a, size_t b, int first = 0, int last = 4) {
+            double d = 0;
+            for (int p = first; p < last; p++)
+                for (int k = 0; k < kBands; k++) d += std::fabs(spectra[a][p][k] - spectra[b][p][k]);
+            return d / ((last - first) * kBands);
+        };
+        double closest = 1e9, closestKinds = 1e9;
+        std::string pair, kindPair;
+        std::vector<std::pair<double, std::string>> all;
+        int kindsSeen[EK_KINDS] = {};
+        for (const Engine& e : engines) kindsSeen[e.kind]++;
         for (size_t a = 0; a < engines.size(); a++)
             for (size_t b = a + 1; b < engines.size(); b++) {
-                double d = 0;
-                for (int k = 0; k < kBands; k++) d += std::fabs(idle[a][k] - idle[b][k]) + std::fabs(load[a][k] - load[b][k]);
-                d /= 2 * kBands;
+                const double d = distance(a, b);
                 if (d < closest) closest = d, pair = engines[a].name + " / " + engines[b].name;
+                if (engines[a].kind != engines[b].kind && d < closestKinds)
+                    closestKinds = d, kindPair = std::string(engineKindName(engines[a].kind)) + " (" + engines[a].name + ") / " + engineKindName(engines[b].kind) + " (" + engines[b].name + ")";
+                all.push_back({d, (engines[a].kind == engines[b].kind ? "  same kind: " : "  ") + engines[a].name + " / " + engines[b].name});
             }
-        std::printf("  %zu engines; the closest two: %s (%.3f)\n", engines.size(), pair.c_str(), closest);
+        int kinds = 0;
+        for (int k : kindsSeen) kinds += k > 0;
+        std::printf("  %zu engines of %d kinds; the closest two: %s (%.3f); the closest two of different kinds: %s (%.3f, %.1f dB a band)\n", engines.size(), kinds,
+                    pair.c_str(), closest, kindPair.c_str(), closestKinds, closestKinds * 10);
         if (std::getenv("TONE_DEBUG")) {
-            std::vector<std::pair<double, std::string>> all;
-            std::vector<std::vector<double>> idle0, load0;
-            for (const Engine& e : engines) {
-                EngineInput plain = e.in;
-                plain.voice = EngineTone{};
-                idle0.push_back(spectrum(plain, e.idle, 0.05f)), load0.push_back(spectrum(plain, 3000, 0.8f));
-            }
-            double closest0 = 1e9;
-            for (size_t a = 0; a < engines.size(); a++)
-                for (size_t b = a + 1; b < engines.size(); b++) {
-                    double d = 0, d0 = 0;
-                    for (int k = 0; k < kBands; k++) d += std::fabs(idle[a][k] - idle[b][k]) + std::fabs(load[a][k] - load[b][k]),
-                                                      d0 += std::fabs(idle0[a][k] - idle0[b][k]) + std::fabs(load0[a][k] - load0[b][k]);
-                    all.push_back({d / (2 * kBands), engines[a].name + " / " + engines[b].name});
-                    closest0 = std::min(closest0, d0 / (2 * kBands));
-                }
             std::sort(all.begin(), all.end());
-            for (int k = 0; k < 8; k++) std::printf("    %.3f %s\n", all[k].first, all[k].second.c_str());
-            std::printf("  without the voices (cylinders, size and induction only): closest %.3f\n", closest0);
+            for (int k = 0; k < 16 && k < (int)all.size(); k++) std::printf("    %.3f%s\n", all[k].first, all[k].second.c_str());
+            // Each two kinds' closest members, the closest kinds first.
+            std::vector<std::pair<double, std::string>> kindPairs;
+            for (int ka = 1; ka < EK_KINDS; ka++)
+                for (int kb = ka + 1; kb < EK_KINDS; kb++) {
+                    double d = 1e9;
+                    for (size_t a = 0; a < engines.size(); a++)
+                        for (size_t b = 0; b < engines.size(); b++)
+                            if (engines[a].kind == ka && engines[b].kind == kb) d = std::min(d, distance(a, b));
+                    if (d < 1e9) kindPairs.push_back({d, std::string(engineKindName(ka)) + " / " + engineKindName(kb)});
+                }
+            std::sort(kindPairs.begin(), kindPairs.end());
+            for (int k = 0; k < 12 && k < (int)kindPairs.size(); k++) std::printf("    kinds %.3f (%.1f dB) %s\n", kindPairs[k].first, kindPairs[k].first * 10, kindPairs[k].second.c_str());
         }
         check("every engine in the garage has its own sound", engines.size() > 20 && closest > 0.09);
+        // (1 dB a band is about the smallest change in a sound's spectral shape a listener can
+        // pick out; every two kinds of engine are three times that apart, on average, in every band.)
+        check("every kind of engine sounds clearly unlike every other kind (3 dB a band apart)", kinds >= 12 && closestKinds > 0.3);
+        // The forced-induction layers: only on the engines that have them. The turbo's whistle and
+        // air, its blow-off or flutter on a lift; the blower's whine. Each stands at least 6 dB
+        // over the same engine without it in its own band; a naturally aspirated engine has none.
+        bool onlyForced = true, standsOut = true;
+        double weakest[3] = {1e9, 1e9, 1e9};
+        for (const Engine& e : engines) {
+            EngineSynth::Layers pull, lift;
+            const auto pulling = renderAt(e.in, e.idle, 2, &pull), lifting = renderAt(e.in, e.idle, 3, &lift);
+            const int ind = e.in.induction;
+            const bool turbo = pull.turbo > 0 || lift.turbo > 0 || lift.dump > 0, blower = pull.whine > 0 || lift.whine > 0;
+            onlyForced &= turbo == (ind == 1) && blower == (ind == 2) && (ind == 1 ? pull.turbo > 0.004f && lift.dump > 0.004f : ind == 2 ? pull.whine > 0.01f : true);
+            if (!(turbo == (ind == 1) && blower == (ind == 2))) std::printf("    %s: turbo %.4f/%.4f dump %.4f whine %.4f\n", e.name.c_str(), pull.turbo, lift.turbo, lift.dump, pull.whine);
+            if (ind == 0) continue;
+            EngineInput plain = e.in;
+            plain.induction = 0;
+            // (the same engine, naturally aspirated; its band levels in absolute dB, not shares)
+            auto absolute = [&](const std::vector<float>& x) {
+                double e2 = 0; for (float v : x) e2 += v * v;
+                auto b = bands(x);
+                for (double& v : b) v += std::log10(e2 + 1e-12);
+                return b;
+            };
+            const auto withP = absolute(pulling), withoutP = absolute(renderAt(plain, e.idle, 2));
+            const auto withL = absolute(lifting), withoutL = absolute(renderAt(plain, e.idle, 3));
+            double overP = -1e9, overL = -1e9;
+            for (int k = 0; k < kBands; k++) overP = std::max(overP, withP[k] - withoutP[k]), overL = std::max(overL, withL[k] - withoutL[k]);
+            const int which = ind == 2 ? 0 : 1;
+            weakest[which] = std::min(weakest[which], overP * 10);
+            if (ind == 1) weakest[2] = std::min(weakest[2], overL * 10);
+            standsOut &= overP > 0.6 && (ind == 2 || overL > 0.6);
+            if (std::getenv("TONE_DEBUG")) std::printf("    %-30s %s: pulling +%.1f dB in its band, lifting +%.1f dB\n", e.name.c_str(), engineKindName(e.kind), overP * 10, overL * 10);
+        }
+        std::printf("  forced induction over the bare engine (weakest): blower whine +%.1f dB, turbo pulling +%.1f dB, turbo lift +%.1f dB\n", weakest[0], weakest[1], weakest[2]);
+        check("turbo and supercharger layers sound only on the engines that have them", onlyForced);
+        check("each forced engine's turbo or blower stands 6 dB over the bare engine in its band", standsOut);
+        {  // VTEC: past the switchover the high cam opens up (a B16A at 7,000 rpm vs 5,000)
+            const Engine* vtec = nullptr;
+            for (const Engine& e : engines) if (e.kind == EK_I4_VTEC && !vtec) vtec = &e;
+            bool ok = vtec != nullptr;
+            if (vtec) {
+                EngineSynth::Layers low, high;
+                EngineInput in = vtec->in;
+                in.redline = 5000 / 0.85f; renderAt(in, vtec->idle, 2, &low);
+                in.redline = 7000 / 0.85f; renderAt(in, vtec->idle, 2, &high);
+                EngineInput nonVtec = vtec->in; nonVtec.voice.kind = EK_I4; nonVtec.redline = in.redline;
+                const auto a = bands(renderAt(in, vtec->idle, 2)), b = bands(renderAt(nonVtec, vtec->idle, 2));
+                double d = 0; for (int k = 0; k < kBands; k++) d += std::fabs(a[k] - b[k]);
+                std::printf("  VTEC: cam %.2f at 5,000 rpm, %.2f at 7,000; at 7,000 %.1f dB a band unlike the same four without it\n", low.vtec, high.vtec, d / kBands * 10);
+                ok = low.vtec < 0.01f && high.vtec > 0.95f && d / kBands > 0.15;
+            }
+            check("a VTEC four's high cam comes in past the switchover and changes its voice", ok);
+        }
+        {  // No clipping: every engine idling, revving, pulling to the redline and lifting stays under 0.9 (before the mixer's limiter)
+            bool clean = true;
+            float loudest = 0;
+            std::string who;
+            for (const Engine& e : engines) {
+                EngineSynth synth;
+                EngineInput in = e.in;
+                for (int i = 0; i < 9 * 48000; i++) {
+                    const float t = i / 48000.0f, r = in.redline;
+                    if (t < 1.5f) in.rpm = e.idle, in.load = 0.05f;
+                    else if (t < 2.2f) in.rpm = e.idle + (r * 0.8f - e.idle) * (t - 1.5f) / 0.7f, in.load = 1;  // (a blip)
+                    else if (t < 3) in.rpm = r * 0.8f - (r * 0.8f - e.idle) * (t - 2.2f) / 0.8f, in.load = 0;
+                    else if (t < 7) in.rpm = e.idle + (r - e.idle) * (t - 3) / 4, in.load = 1;
+                    else in.rpm = r - (r - e.idle) * (t - 7) / 2, in.load = 0;
+                    in.boost = in.load;
+                    const float x = synth.sample(in, 1.0f / 48000);
+                    clean &= std::isfinite(x);
+                    if (std::fabs(x) > loudest) loudest = std::fabs(x), who = e.name;
+                }
+            }
+            std::printf("  loudest sample of any engine over a rev, a pull and a lift: %.3f (%s)\n", loudest, who.c_str());
+            check("no engine clips: every one stays under 0.9 through a rev, a pull and a lift", clean && loudest < 0.9f);
+        }
+        {  // No allocations in the callback with every kind of engine playing, local and nearby, swapping between them
+            Audio a;
+            a.setVolume(1);
+            float block[1024];
+            traceAllocations = true;
+            callbackAllocations = 0;
+            for (size_t k = 0; k < engines.size(); k++) {
+                const EngineInput& in = engines[k].in;
+                a.setVoice(in.cylinders, in.liters, in.induction, in.flatPlane, in.redline, in.voice);
+                for (int j = 0; j < 12; j++) {
+                    a.setEngine(j < 8 ? in.redline * 0.8f : in.redline * 0.5f, j < 8 ? 1.0f : 0.0f);
+                    a.setBoost(j < 8 ? 1.0f : 0.0f);
+                    AudioTest::render(a, block, 512);
+                }
+            }
+            traceAllocations = false;
+            check("every kind of engine (and swapping between them) performs no C++ allocations in the callback", callbackAllocations == 0);
+        }
         // A big block roars and rumbles: louder than a little four, with far more of its sound
         // down low (under 200 Hz), idling and pulling.
         auto find = [&](const char* name) -> const Engine* {

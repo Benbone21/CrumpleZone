@@ -461,6 +461,21 @@ void Effects::campfire(const V3& base, double dt, const V3& wind) {
              0.018f, 0.01f, 1.0f, 0.55f, 0.16f, 1.0f);
 }
 
+void Effects::engineJob(int act, const V3& at, const V3& fwd, double dt) {
+    if (!(dt > 0) || !std::isfinite(at.x + at.y + at.z)) return;
+    if (act == 1) {  // the cylinders' water, pumped out through four plug holes in a row: jets and a little mist
+        for (int k = count(70, dt); k > 0; k--) {
+            const V3 hole = at + fwd * ((rand01() * 3 - 1.5) * 0.11) + V3(0, 0.03, 0);
+            emit(CLOD, hole, V3(randS() * 0.6, 2.6 + rand01() * 2.4, randS() * 0.6), 0.9f, 0.035f, 0.02f, 0.62f, 0.7f, 0.74f, 0.75f);
+        }
+        for (int k = count(14, dt); k > 0; k--)
+            emit(SMOKE, at + V3(randS() * 0.2, 0.08, randS() * 0.2), V3(randS() * 0.2, 0.7 + rand01() * 0.5, randS() * 0.2), 1.0f + rand01() * 0.6f, 0.08f, 0.5f, 0.78f, 0.82f, 0.85f, 0.2f);
+    } else if (act == 2) {  // the sump draining: a brown, watery stream off the drain plug
+        for (int k = count(55, dt); k > 0; k--)
+            emit(CLOD, at + V3(randS() * 0.015, 0, randS() * 0.015), V3(randS() * 0.08, -0.2 - rand01() * 0.4, randS() * 0.08), 0.8f, 0.03f, 0.022f, 0.24f, 0.17f, 0.09f, 0.85f);
+    }
+}
+
 void Effects::translate(const V3& d) {
     for (Particle& p : particles) p.p += d;
     for (size_t i = 0; i < skidCount; i++) {

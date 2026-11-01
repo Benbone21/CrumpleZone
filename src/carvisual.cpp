@@ -1,3 +1,4 @@
+#include "battery.h"
 #include "thread_cache.h"
 #include "loadprof.h"
 #include "carvisual.h"
@@ -403,11 +404,24 @@ void buildJeskoMesh(const Car& car, VisualTemplate& out) {
     },bodyUV,true);
     // Sills and genuinely open circular wheel arches. Extra samples at the tangent
     // points make vertical arch returns instead of a rectangular hole in the cage.
+    // (A garage build on taller tires or longer travel has its arches cut bigger round them,
+    // and on wider tires and spacers the fenders flared out over the tread: a safari build.)
+    const double archR=0.437+archGrowth(*car.spec,0.355+car.spec->layerY[0]-0.11,0.437);
+    auto flare=[&](double x,double v) {
+        double best=0;
+        for(double ax:{1.413,-1.287}) {
+            const double poke=tirePoke(*car.spec,ax>0);
+            if(poke<=0) continue;
+            const double d=std::fabs(x-ax), f=d<archR+0.04?1.0:std::max(0.0,1-(d-archR-0.04)/0.30);
+            best=std::max(best,(poke+0.015)*f*f*(3-2*f)*(1-v*v));
+        }
+        return best;
+    };
     std::vector<double> stations;
     for(int i=0;i<=100;i++)stations.push_back(-2.313+4.626*i/100);
     for(double ax:{1.413,-1.287})for(double side:{-1.0,1.0}){
-        stations.push_back(ax+side*0.437);
-        stations.push_back(ax+side*0.436);
+        stations.push_back(ax+side*archR);
+        stations.push_back(ax+side*(archR-0.001));
     }
     std::sort(stations.begin(),stations.end());
     auto sideX=[&](double u){double t=u*(stations.size()-1);int i=std::min((int)t,(int)stations.size()-2);return stations[i]+(stations[i+1]-stations[i])*(t-i);};
@@ -416,20 +430,20 @@ void buildJeskoMesh(const Car& car, VisualTemplate& out) {
             double x=sideX(u), bottom=0.15;
             for(double ax:{1.413,-1.287}) {
                 double d=x-ax;
-                if(std::fabs(d)<0.437)bottom=std::max(bottom,0.355+std::sqrt(std::max(0.0,0.437*0.437-d*d)));
+                if(std::fabs(d)<archR)bottom=std::max(bottom,0.355+std::sqrt(std::max(0.0,archR*archR-d*d)));
             }
             double top=section(x,2);
             bottom=std::min(bottom,top-0.012);
             double tail=clampd((-x-1.86)/0.453,0,1);
             double tuck=(1-v)*(1-v);
-            double z=section(x,0)-(0.05+0.05*tail)*tuck;
+            double z=section(x,0)-(0.05+0.05*tail)*tuck+flare(x,v);
             return V3(x+0.17*tail*tuck,bottom+(top-bottom)*v,sd*z);
         },bodyUV,sd<0);
         // Dark inner arch return, bound to the same fender as the outer lip.
         for(double ax:{1.413,-1.287})
             patch(32,3,REG_WELL,[&](double u,double v) {
-                double a=-0.32+(M_PI+0.64)*u,x=ax+0.437*std::cos(a);
-                return V3(x,0.355+0.437*std::sin(a),sd*(section(x,0)-0.20*v));
+                double a=-0.32+(M_PI+0.64)*u,x=ax+archR*std::cos(a);
+                return V3(x,0.355+archR*std::sin(a),sd*(section(x,0)+flare(x,0)-0.20*v));
             },bodyUV,sd>0);
     }
     // Shaped nose and tail close the shell, with bumper depth rather than a flat slab.
@@ -689,6 +703,7 @@ void buildExtras(const Car& car, PartBuilder& pb) {
                                                      {-0.006, 0.062}, {-0.008, 0.03}, {0.0, 0.0}};  // (out from the opening, out from the side)
                     const int np = 8, n = 24;
                     const double sr = taco ? 0.8 : 1.0, sz = taco ? 0.7 : 1.0;  // (the Tacoma's are slimmer moldings)
+                    const double poke = tirePoke(vs, xw > 0);  // (wider tires on spacers: the flares stand out to cover them)
                     auto archAt = [&](double d) { return V3(xw + d, std::max(shellArchHeight(vs, d), cy), 0); };
                     const V3 col = vs.trimTop > 0 ? trim : kBlack;
                     const int mat = vs.trimTop > 0 ? SM_PAINT : SM_MATTE;
@@ -704,7 +719,7 @@ void buildExtras(const Car& car, PartBuilder& pb) {
                                 continue;
                             }
                             std::vector<V3> ring;
-                            for (int q = 0; q < np; q++) ring.push_back(a + nn * (prof[q][0] * sr) + V3(0, 0, s * (W / 2 - 0.006 + prof[q][1] * sz)));
+                            for (int q = 0; q < np; q++) ring.push_back(a + nn * (prof[q][0] * sr) + V3(0, 0, s * (W / 2 - 0.006 + prof[q][1] * (sz + poke / 0.078))));
                             if (!prev.empty())
                                 for (int q = 0; q + 1 < np; q++) {
                                     if (s > 0) pb.quad(prev[q], prev[q + 1], ring[q + 1], ring[q], col, mat);
@@ -1401,6 +1416,7 @@ const VisualTemplate& visualTemplate(const Car& car) {
     LOADPROF("car.visualTemplate (first sight)");
     auto made = std::make_unique<VisualTemplate>();
     VisualTemplate& t = *made;
+    t.bakedPaint[0] = (float)car.color.x, t.bakedPaint[1] = (float)car.color.y, t.bakedPaint[2] = (float)car.color.z;
     const VehicleSpec& vs = *car.spec;
     const int cells = (int)vs.profile[0].size();
     int glassStart=cells, glassEnd=0, glassLayer=0;
@@ -1607,6 +1623,8 @@ void prebuildVisual(const VehicleSpec& spec, const V3& color) {
     if (slot.ready.load(std::memory_order_acquire) || slot.queued.exchange(true)) return;
     const VehicleSpec* sp = &spec;
     std::thread([sp, color] {
+        loadprof::nameThread("car visual");
+        loadprof::phase(sp->name);
         Car scratch;
         scratch.build(*sp, V3(0, 1, 0), 0, sp->paintColor[0] >= 0 ? V3(sp->paintColor[0], sp->paintColor[1], sp->paintColor[2]) : color);
         visualTemplate(scratch);
@@ -1966,6 +1984,32 @@ void buildRopes(const Sim& sim, std::vector<Vtx>& out) {
         const std::vector<V3> path = sim.ropePath(tmp, rad + 0.015);
         for (size_t k = 1; k < path.size(); k++) tube(out, path[k - 1], path[k], rad, winch ? 5 : 4, winch ? V3(0.72, 0.1, 0.05) : V3(0.95, 0.6, 0.08), SM_MATTE);
         blob(out, hl.hand, 0.03, V3(0.55, 0.55, 0.57), SM_METAL);  // the hook in the hand
+    }
+    {  // jumper cables (battery.h): a red and a black lead between the clamps on two batteries (or from one to your hand), drooping to the ground
+        auto lead = [&](const V3& a, const V3& b, const V3& col, double off) {
+            const double d = len(b - a), sag = std::max(0.0, (battery::kCableLen - d) * 0.25) + 0.12;
+            std::vector<V3> path;
+            for (int k = 0; k <= 10; k++) {
+                const double u = k / 10.0;
+                V3 q = a + (b - a) * u;
+                q.z += off * std::sin(3.14159 * u) * 0.08;
+                q.y = std::max(q.y - sag * 4 * u * (1 - u), sim.world.height(q.x, q.z) + 0.02);
+                path.push_back(q);
+            }
+            for (size_t k = 1; k < path.size(); k++) tube(out, path[k - 1], path[k], 0.007, 4, col, SM_MATTE);
+            blob(out, a, 0.016, col * 0.9 + V3(0.1, 0.1, 0.1), SM_METAL);
+            blob(out, b, 0.016, col * 0.9 + V3(0.1, 0.1, 0.1), SM_METAL);
+        };
+        const V3 red(0.8, 0.08, 0.06), blk(0.06, 0.06, 0.065);
+        for (const Sim::JumperCable& j : sim.cables) {
+            if (j.a < 0 || j.b < 0 || j.a >= (int)sim.cars.size() || j.b >= (int)sim.cars.size()) continue;
+            lead(battery::post(sim.cars[j.a], 0), battery::post(sim.cars[j.b], 0), red, 1);
+            lead(battery::post(sim.cars[j.a], 1), battery::post(sim.cars[j.b], 1), blk, -1);
+        }
+        if (sim.handCable.on() && sim.handCable.car < (int)sim.cars.size()) {
+            lead(battery::post(sim.cars[sim.handCable.car], 0), sim.handCable.hand, red, 1);
+            lead(battery::post(sim.cars[sim.handCable.car], 1), sim.handCable.hand - V3(0, 0.02, 0), blk, -1);
+        }
     }
     for (const Rope& r : sim.ropes) {
         auto at = [&](const RopeEnd& e) { return e.kind == ANCHOR_CAR ? sim.cars[e.car].hookPoint(e.hook) : e.p; };

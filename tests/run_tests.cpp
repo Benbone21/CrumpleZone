@@ -89,7 +89,7 @@ const double kDefaultTimeout = 300;  // s of wall time (a scenario takes 1-100 s
 double scenarioTimeout = kDefaultTimeout;
 bool timeoutGiven = false;
 // Scenarios that legitimately run long, with their own limit (the longest, net/crash-share, took 84 s at --jobs 6 on a busy machine; x3 is under the 300 s default, these get headroom).
-const std::map<std::string, double> kLongScenarios = {{"net/crash-share", 400}, {"ai/traffic", 400}, {"vehicle-physics/top-speed", 400}};
+const std::map<std::string, double> kLongScenarios = {{"net/crash-share", 400}, {"ai/traffic", 400}, {"vehicle-physics/top-speed", 400}, {"procworld/alpine", 600}, {"procworld/lakes-falls", 600}, {"procworld/places", 600}};
 double limitFor(const std::string& name) {
     auto it = kLongScenarios.find(name);
     return it != kLongScenarios.end() && !timeoutGiven ? std::max(it->second, scenarioTimeout) : scenarioTimeout;
@@ -161,6 +161,8 @@ std::string esc(const std::string& s) {
 void printResult(const Result& r, const std::map<std::string, double>& base, bool verbose) {
     std::printf("%s%s%s %s%-34s%s %s%5.1f s sim, %4.1f s wall%s\n", r.passed ? GREEN : RED, r.passed ? "PASS" : "FAIL",
                 RESET, BOLD, r.sc->name.c_str(), RESET, DIM, r.simTime, r.wall, RESET);
+    if (verbose)
+        for (const std::string& n : r.notes) std::printf("     %snote%s %s\n", DIM, RESET, n.c_str());
     for (const CheckResult& c : r.checks)
         if (!c.ok || verbose)
             std::printf("     %s%s%s %s%s%s\n", c.ok ? GREEN : RED, c.ok ? "ok  " : "FAIL", RESET, c.name.c_str(),

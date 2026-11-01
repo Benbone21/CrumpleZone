@@ -61,7 +61,7 @@ SCENARIO(riversClasses, "rivers/depth-classes", "Elk River in the new country is
     int bad = 0, total = 0;
     std::string worst;
     for (const River& r : w.rivers) {
-        const bool outer = r.name != "ELK RIVER";
+        const bool outer = r.name != "ELK RIVER" && r.name.rfind("ELK RIVER", 0) == 0;  // (Elk River's reaches out in the new country: not Copper Creek)
         for (const RiverSpot& s : r.spots) {
             if (!outer) continue;
             count[s.cls]++;

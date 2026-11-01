@@ -9,6 +9,9 @@
 
 #include "../src/meshcache.h"
 #include "../src/modelkit.h"
+#include <chrono>
+#include <filesystem>
+
 #include "../src/platform.h"
 #include "../src/texenc.h"
 #include "harness.h"
@@ -231,4 +234,16 @@ SCENARIO(loadingWorldOnWorker, "loading/world-on-worker", "A world made on a wor
             for (double z = -500; z <= 500; z += 97) same &= a.height(x, z) == b->height(x, z) && a.surfaceAt(x, z) == b->surfaceAt(x, z);
         ctx.check(std::string("on a worker: ") + mapName(map), same);
     }
+}
+
+SCENARIO(assetDirSearch, "loading/asset-dir-search", "findAssetDir returns the first base that has the folder (a missing base, or a file of that name, is skipped), and \"\" when none does") {
+    const std::string root = std::filesystem::temp_directory_path().string() + "/cz_test_assetdir_" + std::to_string((long)std::chrono::steady_clock::now().time_since_epoch().count());
+    makeDir(root), makeDir(root + "/a"), makeDir(root + "/b"), makeDir(root + "/b/assets"), makeDir(root + "/b/assets/audio");
+    writeFileAtomic(root + "/a/assets", "not a folder");  // (a file called "assets" in the first base)
+    const std::string want = root + "/b/assets/audio";
+    ctx.check("skips bases without it", findAssetDir("assets/audio", {root + "/nope", root + "/a", root + "/b"}) == want);
+    ctx.check("first base wins", findAssetDir("assets/audio", {root + "/b", root + "/nope"}) == want);
+    ctx.check("none has it", findAssetDir("assets/sfx", {root + "/a", root + "/b"}).empty());
+    ctx.check("a file is not a folder", findAssetDir("assets", {root + "/a"}).empty());
+    std::filesystem::remove_all(root);
 }

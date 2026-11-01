@@ -14,9 +14,13 @@ air_blow.wav         loop, 2.6 s  freesound_community-air-blowing-4-38952       
 air_hiss.wav         one-shot     freesound_community-air-hiss-102406   the valve's first "psst" when letting air out starts
 wrench_ratchet.wav   6 slots      freesound_community-ratchet-socket-wrench-tool-95253  the ratchet / socket set / lug wrench ticking on each return stroke (6 slots of 160 ms)
 ../ambience/stream.wav  loop, 24 s  soundreality-stream-nature-445380   the main menu's brook (replaces the synthesized stream)
+steps_paved.wav      4 slots      freesound_community-concrete-footsteps-1-6265   footsteps on paving: a bank of 300 ms slots, one picked per step (src/main.cpp stepSfx; yours and your buddies')
+steps_gravel.wav     6 slots      freesound_community-footsteps-dirt-gravel-6823  ...on gravel, dirt, grass, rock, mud, ice (anything not paving or sand / snow)
+steps_sand.wav       6 slots      freesound_community-sand-walk-106366            ...on sand and snow
+(Made with tools/sfx_prepare.py <wav folder> steps; steps_paved has as many slots as the recording has clean steps.)
 
-Reserved (prepared, not used yet; the river is now used by the world water, src/worldsound.cpp):
-horn.wav             one-shot     universfield-double-car-honk-352443   horn (no horn feature yet; Audio::play(SFX_HORN) is ready)
+Also in use (the river, forest and brook play from the world water and woods, src/worldsound.cpp):
+horn.wav             one-shot     universfield-double-car-honk-352443   the horn (hold; looped while held, src/audio.cpp setHorn)
 ../ambience/river.wav   loop, 20 s  hasin2004-nature-sound-near-river-or-waterfall-247409  world rivers / waterfalls
 ../ambience/forest.wav  loop, 24 s  soundreality-nature-forest-sound-537925  a daytime forest bed (not for the menu's sunset)
 

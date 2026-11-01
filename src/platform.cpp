@@ -4,6 +4,10 @@
 #include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <sys/stat.h>
+#ifdef __linux__
+#include <malloc.h>
+#endif
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -21,7 +25,10 @@
 
 #ifdef _WIN32
 #include <io.h>
+#else
+#include <dirent.h>
 #endif
+#include <sys/stat.h>
 
 std::string exePath() {
 #ifdef _WIN32
@@ -49,6 +56,27 @@ std::string exeDir() {
     const std::string s = exePath();
     const size_t cut = s.find_last_of("/\\");
     return cut == std::string::npos ? "" : s.substr(0, cut);
+}
+
+std::string findAssetDir(const std::string& rel, const std::vector<std::string>& bases) {
+    for (const std::string& b : bases) {
+        const std::string d = b + "/" + rel;
+#ifdef _WIN32
+        const DWORD a = GetFileAttributesA(d.c_str());
+        if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY)) return d;
+#else
+        struct stat st;
+        if (stat(d.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) return d;
+#endif
+    }
+    return "";
+}
+
+std::string findAssetDir(const std::string& rel) {
+    std::vector<std::string> bases = {"."};
+    const std::string exe = exeDir();
+    if (!exe.empty()) bases.insert(bases.end(), {exe, exe + "/../Resources", exe + "/..", exe + "/../.."});
+    return findAssetDir(rel, bases);
 }
 
 long gAtomicFailAfter = -1;
@@ -90,6 +118,62 @@ bool writeTemp(const std::string& tmp, const std::string& data) {
 
 }  // namespace
 
+std::vector<std::string> listDir(const std::string& dir) {
+    std::vector<std::string> out;
+#ifdef _WIN32
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA((dir + "/*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return out;
+    do {
+        const std::string n = fd.cFileName;
+        if (n != "." && n != "..") out.push_back(n);
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#else
+    DIR* d = opendir(dir.c_str());
+    if (!d) return out;
+    while (dirent* e = readdir(d)) {
+        const std::string n = e->d_name;
+        if (n != "." && n != "..") out.push_back(n);
+    }
+    closedir(d);
+#endif
+    return out;
+}
+
+bool isDir(const std::string& path) {
+#ifdef _WIN32
+    const DWORD a = GetFileAttributesA(path.c_str());
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) && !(a & FILE_ATTRIBUTE_REPARSE_POINT);
+#else
+    struct stat st;
+    return lstat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+#endif
+}
+
+long long fileMTime(const std::string& path) {
+    struct stat st;
+    return stat(path.c_str(), &st) == 0 ? (long long)st.st_mtime : 0;
+}
+
+bool removeTree(const std::string& dir) {
+    if (dir.empty() || dir == "/" || dir == ".") return false;
+    if (isDir(dir)) {
+        for (const std::string& n : listDir(dir)) removeTree(dir + "/" + n);
+#ifdef _WIN32
+        return RemoveDirectoryA(dir.c_str()) != 0;
+#else
+        return rmdir(dir.c_str()) == 0;
+#endif
+    }
+#ifdef _WIN32
+    SetFileAttributesA(dir.c_str(), FILE_ATTRIBUTE_NORMAL);
+    return DeleteFileA(dir.c_str()) != 0 || RemoveDirectoryA(dir.c_str()) != 0;  // (a folder symlink is removed as a folder)
+#else
+    return std::remove(dir.c_str()) == 0;  // (a symlink is unlinked, never followed)
+#endif
+}
+
 bool writeFileAtomic(const std::string& path, const std::string& data, std::string* error, bool keepBak, bool (*valid)(const std::string&)) {
     auto fail = [&](const std::string& why) {
         if (error) *error = why;
@@ -125,4 +209,10 @@ bool writeFileAtomic(const std::string& path, const std::string& data, std::stri
     }
 #endif
     return true;
+}
+
+void releaseFreedMemory() {
+#if defined(__GLIBC__)
+    malloc_trim(0);
+#endif
 }

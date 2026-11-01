@@ -31,6 +31,7 @@
 //             try again, and remember that this setup couldn't climb that; stuck at the
 //             same spot twice, plan a new route around it.
 #pragma once
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -64,6 +65,8 @@ struct PilotBody {
     };
     std::vector<Under> under;
 };
+
+struct PilotPlanJob;  // (autopilot.cpp: a replan being made in the background)
 
 struct Autopilot {
     bool active = false;
@@ -107,7 +110,18 @@ struct Autopilot {
     double airTarget = 0;     // psi it's letting the tires down to (0 = not)
     bool tcWas = true;        // traction control setting to put back
     bool blocked = false;     // nothing ahead it can take
+    std::shared_ptr<PilotPlanJob> replanning;  // a new route being planned in the background (pilotSetAsyncReplans): the old one drives on
 };
+
+// The game: a replan while driving (knocked off the route, the vehicle it follows moved on) is made on a background thread, the old
+// route driven meanwhile; it goes in once it's made (a replan on the big map is 100-300 ms: a freeze, made in the frame). Off (the
+// tests, the default) it's made there and then, as always. The first plan (pilotStart) is always made at once. The background work
+// reads the world: whoever replaces it waits first (bgwork.h waitWorldReaders).
+void pilotSetAsyncReplans(bool on);
+// A replan for this car: planned now, or (async; -1: as pilotSetAsyncReplans says) begun in the background and taken in once made
+// (pilotTakeReplan: pilotDrive does it each step).
+void pilotReplan(Car& car, const World& w, const V3& from, const V3& goal, double capScale, int async = -1);
+void pilotTakeReplan(Car& car, const World& w);
 
 // Plans a route from `from` to `to` for this vehicle; false if there's no way through.
 // `capScale` scales what it reckons the vehicle can climb (after it's failed to).

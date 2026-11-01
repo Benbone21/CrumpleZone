@@ -50,7 +50,10 @@ Download from the [releases page](https://github.com/Benbone21/crumplezone/relea
 |---|---|---|
 | `CrumpleZone-<version>-mac.dmg` | macOS 11+, Apple silicon and Intel | Open the DMG, drag **CrumpleZone.app** to **Applications**, then open it. It isn't notarized, so the first time right-click it and choose **Open** (or run `xattr -dr com.apple.quarantine CrumpleZone.app`). |
 | `CrumpleZone-<version>-windows-setup.exe` | Windows 10/11, 64-bit | Run it to install (no admin needed; Start menu and desktop shortcuts). Unsigned: Windows may say "unknown publisher" (More info > Run anyway). `make windows-installer` builds it (needs `nsis`). |
-| `CrumpleZone-<version>-linux.deb` | Debian 13+ / Ubuntu 24.04+, amd64 | `sudo apt install ./CrumpleZone-<version>-linux.deb`, then run `crumplezone` or pick Crumple Zone from the games menu. It installs to `/opt/crumplezone`. |
+| `CrumpleZone-<version>-linux.zip` | Linux amd64, the same systems as the .deb (the SDL2 runtime; curl or libcurl for updates, which most desktops have) | Unzip it and run `./install.sh`. It installs for your user only (no sudo) in `~/.local/share/crumplezone`, with a `crumplezone` command and a games-menu entry, and **updates itself**. `./install.sh --uninstall` removes it. |
+| `CrumpleZone-<version>-linux.deb` | Debian 13+ / Ubuntu 24.04+, amd64 | `sudo apt install ./CrumpleZone-<version>-linux.deb`, then run `crumplezone` or pick Crumple Zone from the games menu. It installs to `/opt/crumplezone`. It needs sudo to replace, so it doesn't update itself: the game shows where to get the new one. |
+
+**Updates:** from the release with the updater on, the game checks the newest GitHub release on launch (and when a join code finds the host on a newer version). It shows `UPDATE x.y.z AVAILABLE` with UPDATE NOW / LATER, then downloads the new version and checks it against a signed manifest (Ed25519, SHA-256). It swaps the new version in, keeps the previous one, and restarts. If the new version fails to start twice, the game goes back to the previous one by itself. If anything goes wrong, you stay on your current version and the game says why. The Windows and Mac downloads (`-windows.zip`, `-mac.zip`) are what the updater installs. Turn the launch check off with `--no-update-check`, or with the line `check off` in `update.txt` in the settings folder. A `.deb` install is told once per release where to get the new one. Owner setup: [signing keys](docs/update-signing-keys.md), [how updates are served](docs/server-updates-setup.md).
 
 `.github/workflows/release.yml` builds all three on every push to `sync` or `main` (kept as workflow artifacts, as a build check). Pushing a version tag (`git tag v0.2.0 && git push origin v0.2.0`; the Mac job is skipped on a tag unless the repository variable `RELEASE_MAC` is `true`, so that release has the .deb and .exe) also publishes them as a release, with notes from `docs/releases/<tag>.md`.
 
@@ -129,6 +132,7 @@ scenario finishes, you can drive around in the aftermath.
 | `surfaces/` | The side-by-side flat out through mud and sand; stopping from 40 km/h on pavement, wet, gravel, sand, mud, snow and ice; locked wheels vs ABS on pavement and gravel; sand sinking, floating aired down and digging in; all-terrains vs semi-slicks in mud; ice; the autopilot on sand and ice |
 | `freeway/` | Top speed per vehicle (flat out until it stops gaining; holds its lane, nothing scrapes), and seamless 400 m wraps at 200 km/h |
 | `handling/` | Keyboard steering at 130 km/h: a tap is a nudge, a hold is a hard sweeper without a spin (each per vehicle) |
+| `controls/` | Every action rebindable, keyboard and pad: defaults for every action, conflicts and swaps, the save round trip and old files, the menu keys and their fixed fallbacks, and the menus driven by pad input alone |
 | `gamepad/` | The controller logic with synthetic pad input: deadzone and curves, the speed-sensitive steering ratio, trigger pedals and reverse, the button bindings, rumble, a Bronco's lane change at 80 km/h and a 4L crawl on the pad |
 | `net/` | A host and a client over loopback: each sees the other's truck (node for node), a strap between them tows, leaving cleans up |
 | `ai/` | Laps (all vehicles and both directions), following, oncoming traffic, passing an obstacle, getting back on the road, getting unstuck, 8-car traffic |
@@ -143,7 +147,7 @@ scenario finishes, you can drive around in the aftermath.
 | A / D or ← / → | Steer. Keys are all or nothing, so full steer is as much as the tires can hold at your speed, on that surface (full lock when parking, a few degrees at 130 km/h), plus room to catch a slide |
 | Space | Handbrake |
 | 7 | Horn (hold; pitched by vehicle, small cars higher; other players hear it from your car). On a pad: LB + R3 |
-| G | Garage: W/S pick engine, suspension, transmission, wheels or tires, A/D change the part, Enter fits it (career: B buys it, at a repair station) |
+| G | Garage (docs/plans/garage-shop.md): the truck where it stands and the parts by category, each on a turntable with its numbers against what's fitted. W/S move, Enter opens a category / buys and fits a part, T tries it on the truck, R puts the factory part back, Q/E change category, drag and wheel turn and zoom the model, Esc backs out (career: only at a repair station) |
 | Q / E | Shift down / up (R, N, 1…; switches to manual). In manual W is gas, S is brake |
 | Shift+M | Manual / automatic gearbox |
 | Shift+L | Headlights: AUTO (on at dusk) / LOW BEAM / HIGH BEAM / OFF |
@@ -154,7 +158,9 @@ scenario finishes, you can drive around in the aftermath.
 | V | Winch: point and click an anchor; right stick + A on a controller. V with a line attached unhooks it |
 | Z / Shift+Z | Winch in / pay out (- and = change the saved speed, 0.1–20x; default 4x) |
 | O | Tow strap: hooked on foot (get out, hold E at a recovery point, walk the end to the other vehicle's point, hold E); O in the seat just says so |
-| U | Autopilot on/off: drives to the place picked in Esc → Autopilot |
+| U | Autopilot on/off: drives to the place last picked |
+| Shift+U | Opens the autopilot page: where to, speed, roads (rebindable) |
+| Shift+J | Opens the jobs on offer here (rebindable) |
 | Tab | Switch to another vehicle |
 | R | Repair in place. R twice quickly: respawn at the start (in a level: restart the attempt) |
 | T | Real recovery: back on your wheels where you are, damage stays. Arcade: repaired, upright |
@@ -175,13 +181,15 @@ scenario finishes, you can drive around in the aftermath.
 
 ### Keybinds
 
-Esc → Settings → Controls → Keyboard keybinds lists every keyboard action in groups (DRIVING, RECOVERY, ON FOOT, CAMERA AND VIEW, GAME, DEV): W S or the wheel scrolls, Enter or a click picks a row, then press the new key (Shift+key makes a combo like the lights' Shift+L; Esc cancels; Backspace clears it). A key another action has in the same place (the truck, or on foot) is swapped over to the old key; the same key may do different jobs in the truck and on foot (E, G, F) and a dev tool may share a key with a gameplay action (the key mode decides). RESET ALL TO DEFAULTS puts the game's keys back. Layouts are the `key_*` lines of `settings.txt` (Shift combos add 4096 to the key code). Every hint and the controls overlay (H) show the keys as you set them. The table with each action's default is `kInfo` in `src/keybinds.cpp`; to make a saved layout the new defaults, run F12 → TOOLS → EXPORT KEYBINDS AS DEFAULTS (it writes `build/keybinds-defaults.txt`, the first two fields of every row) and paste it over the table's.
+Esc → Settings → Controls lists every action in groups (DRIVING, RECOVERY, ON FOOT, CAMERA AND VIEW, GAME, MENUS, FREE CAM, DEV), each with its key and its pad binding (`W  /  RT`). OK (Enter, or A on the pad) on a row, then press a key or a pad button: a key becomes the key binding (Shift+key makes a combo like the lights' Shift+L), a pad button the pad binding (hold LB and / or VIEW with it for a chord like LB + A; VIEW tapped alone is a binding of its own). Esc or Start cancels; Backspace clears the key. On a row, R (Y on the pad) puts that action's defaults back and T (X on the pad) clears the key (the pad button, from the pad). A key or button another action has in the same place (the truck, on foot, a menu, the free cam) is swapped over to the old one, or left without one if that would clash elsewhere; the page says which. The same key may do different jobs in the truck and on foot (E, G, F) and a dev tool may share a key with a gameplay action (the key mode decides). RESET ALL TO DEFAULTS puts every key and button back. Layouts are the `key_*` and `pad_*` lines of `settings.txt` (Shift combos add 4096 to the key code; a file from before the pad bindings gets the default pad map). The MENUS group is the menus' own keys (up, down, left, right, OK, back, the tabs, the garage's extras, the repair dialog's two choices); Esc, Enter and the arrows, and the pad's A, B and Start, always work in the menus whatever is bound, so the menus can't be lost. Every hint and the controls overlay (H) show the keys as you set them, or the pad's buttons when the pad was the last thing used. The table with each action's default is `kInfo` in `src/keybinds.cpp`; to make a saved layout the new defaults, run F12 → TOOLS → EXPORT KEYBINDS AS DEFAULTS (it writes `build/keybinds-defaults.txt`, the first two fields of every row) and paste it over the table's.
 
 ### Dev menu and dev keys
 
-The test and debug tools are not loose keys any more. **F12** (or Esc → DEV MENU) opens the dev menu, which works with the mouse, keyboard and controller: SPAWN VEHICLE (swap the one you drive for the Blazer, Bronco, 4Runner, Tacoma, Jesko or Baja Bug), SPAWN AHEAD (parked or AI vehicles, remove this one), TELEPORT (map spawn, each obstacle section, any place), WORLD (time of day, slow motion, reload the map), VEHICLE (repair, respawn, flip upright, refuel), VIEW (beam views, FPS counter) and TOOLS (level editor, new section, model lab, reload the new build, a scenario's checks list). Teleport, reload the map and refuel are refused in a multiplayer session; the rest does for guests what the old keys did.
+The test and debug tools are not loose keys any more. **F12** (or Esc → SETTINGS → DEV tab) opens the dev menu, which works with the mouse, keyboard and controller: SPAWN VEHICLE (swap the one you drive for the Blazer, Bronco, 4Runner, Tacoma, Jesko or Baja Bug), SPAWN AHEAD (parked or AI vehicles, remove this one), TELEPORT (map spawn, each obstacle section, any place), WORLD (time of day, slow motion, reload the map), VEHICLE (repair, respawn, flip upright, refuel), VIEW (free cam, beam views, FPS counter) and TOOLS (level editor, new section, model lab, reload the new build, a scenario's checks list). Teleport, reload the map and refuel are refused in a multiplayer session; the rest does for guests what the old keys did.
 
-For quick testing the old keys come back in **DEV KEYS** mode: press the **grave key** (under Esc) to flip between DEV KEYS and GAMEPLAY KEYS (a DEV KEYS tag shows top left; the mode is saved, GAMEPLAY by default; also Esc → Settings → DEV HOTKEYS, or the dev menu). In DEV KEYS mode: 1-6 swap vehicle (Blazer, Bronco, 4Runner, Tacoma, Jesko, Baja Bug), I parked vehicle ahead, K AI traffic, Delete remove vehicle, N beam view, [ ] slow motion, F2 editor here, J a scenario's checks list. F3 (debug info), F5 (load the new build), F1 (back from a playtest), F12 and the grave key work in both modes. In GAMEPLAY KEYS mode they do nothing (I is the truck inventory on foot, J gets out/in). 
+**FREE CAM** (F8 in DEV KEYS mode, or F12 → VIEW → FREE CAM; `src/freecam.*`) is the drone camera as a dev tool. WASD fly, Q/E down/up, drag looks, Shift goes three times as fast, and the mouse wheel (or - and =) steps the speed from 3 m/s to 800 m/s for crossing kilometres; the procedural world's window and the Backcountry's terrain stream in round the camera. X flies through the ground. The vehicle under the crosshair is outlined and named. Click (or G) picks it up: it hangs in front of the camera, held rigid and at rest, and follows as you fly; R (Shift+R the other way) or Ctrl+wheel turns it 15 degrees; click or G again sets it down upright on its wheels at the crosshair, and a right click (or F) lets go of it where it hangs. B opens a spawn picker (Enter or click: at the crosshair; Shift: already carried). V drives the carried or targeted vehicle. F8 or Esc goes back to your vehicle's camera. Any car can be carried (yours, parked, AI); in multiplayer only the host carries, spawns and switches (the moves reach the others in its states), and a career world needs DEV KEYS on.
+
+For quick testing the old keys come back in **DEV KEYS** mode: press the **grave key** (under Esc) to flip between DEV KEYS and GAMEPLAY KEYS (a DEV KEYS tag shows top left; the mode is saved, GAMEPLAY by default; also Esc → Settings → DEV HOTKEYS, or the dev menu). In DEV KEYS mode: 1-6 swap vehicle (Blazer, Bronco, 4Runner, Tacoma, Jesko, Baja Bug), I parked vehicle ahead, K AI traffic, Delete remove vehicle, N beam view, [ ] slow motion, F2 editor here, F8 free cam, J a scenario's checks list. F3 (debug info), F5 (load the new build), F1 (back from a playtest), F12 and the grave key work in both modes. In GAMEPLAY KEYS mode they do nothing (I is the truck inventory on foot, J gets out/in). 
 
 ## Controller
 
@@ -189,34 +197,48 @@ Xbox, PlayStation and generic pads work through SDL2's game controller API: plug
 
 Driving is analog. The left stick is a real analog steering input: a radial deadzone (0.12 by default), a response curve, and a speed-sensitive ratio. Full stick is what the tires can hold at that speed (the same limit the keys use, a little more room), so it is full lock when parking or crawling and a few degrees at 130 km/h; half a stick is half of that. RT is the throttle and LT the brake, both analog; LT at a standstill puts the car in reverse (RT while rolling backwards brakes, then drives forward), exactly as holding S does.
 
+Every action has a pad binding (the defaults below), and every one can be rebound under Settings → Controls. The pad has three layers: buttons alone, LB + a button, and VIEW (Back / Select / Touchpad) + a button; LB + VIEW + a button are the dev tools (DEV KEYS mode). VIEW tapped on its own is the map.
+
 | Button | Action |
 | --- | --- |
-| Left stick | Steer |
-| RT / LT | Throttle / brake (LT at a stop: reverse) |
-| A or B | Handbrake (hold) |
-| X / Y | Shift down / up (switches to manual) |
+| Left stick | Steer (on foot: walk; the drone and free cam: fly) |
+| RT / LT | Throttle / brake (LT at a stop: reverse; the drone: up / down) |
+| A | Handbrake (hold; on foot: jump) |
+| X / Y | Shift down / up (switches to manual); on foot: hold X to work, Y the truck inventory |
+| B | On foot: put down what you carry |
 | Right stick | Look around (the chase camera recentres on its own) |
 | R3 (hold) | Look back; let go to reset the view |
 | RB | Camera: chase / orbit / cockpit / drone |
 | D-pad up | 4x4 mode (L) |
-| D-pad left / right | Front / rear locker |
-| D-pad down | Front sway bar disconnect |
+| D-pad left / right | Front / rear locker (on foot, left: pour the fuel can) |
+| D-pad down | Front sway bar disconnect (on foot: crouch) |
 | L3 | Headlights |
-| Back (View) | The map: sticks pan, RT / LT zoom, A sets the waypoint, Back or B closes |
-| Start (Menu) | Pause menu |
+| VIEW (tap) | The map: sticks or D-pad pan, RT / LT zoom, A sets the waypoint, X pings GO HERE at the centre, Y pings HELP at your truck, VIEW or B closes (keys: the menu keys, WASD, Z / X, Enter, T / R) |
+| Start (Menu) | Pause menu (always) |
 | LB + D-pad up / down | Winch / tow strap hints (the hook-up itself is on foot: hold X at the bumper) |
-| LB + RT / LT | Winch in / out (right stick up and down sets the winch speed) |
+| LB + RT / LT | Winch in / out |
+| LB + right stick up / down | Winch speed up / down |
 | LB + D-pad left / right | Air down / pump up the tires (hold, stopped) |
-| LB + A | Repair in place (twice quickly: back to the start) |
+| LB + A | Repair (twice quickly: back to the start; a career asks first) |
 | LB + B | Back on its wheels |
 | LB + X | Traction control on/off |
 | LB + Y | Get out / get in |
 | LB + RB | Manual / automatic gearbox |
 | LB + L3 | Autopilot on/off |
-| LB + Back | Next vehicle |
-| LB + Start | The controls list (shows the pad's map) |
+| LB + R3 (hold) | Horn |
+| LB + Start | The controls list (shows the pad's map as bound) |
+| VIEW + A | Parking brake |
+| VIEW + B | Garage |
+| VIEW + X | Steering assist |
+| VIEW + Y | Jobs on offer here |
+| VIEW + RB | Next vehicle |
+| VIEW + D-pad up / down | Throttle limit / autopilot: where to |
+| VIEW + D-pad left / right | Chat / hide the HUD |
+| VIEW + L3 (hold) / R3 | The full HUD / debug info |
+| VIEW + Start | Fullscreen |
+| VIEW + right stick | The dev menu (down), DEV KEYS / GAMEPLAY KEYS (left), back to the editor (right), load the new build (up) |
 
-Picking a winch anchor or tow-strap point: right stick aims the crosshair, A selects the highlighted point, B cancels. With a mouse, point and click; middle-drag looks and the wheel zooms. Menus, the title screen, the level list and the garage: D-pad or left stick move (hold to repeat), A selects, B or Start goes back. On foot the left stick walks, A jumps, and the right stick looks; Y with LB gets back in. The drone camera flies with the left stick and looks with the right.
+Menus, the title screen, the level list, the garage, the inventory, the update card and the free cam's spawn picker: D-pad or left stick move (hold to repeat), A selects, B or Start goes back, LB / RB switch the settings tabs and the garage's categories (the garage: X tries a part on the truck, Y puts the factory part back, VIEW the speedo recalibration, RT / LT zoom, the right stick turns the model; the career worlds: X deletes one; the CONTROLS tab: Y defaults, X clears). The career repair dialog (R / LB + A): X repairs on the spot, Y respawns repaired at the nearest station, or the D-pad and A; B (or LB + A again) cancels (keys: 1, 2, the arrows and Enter, Esc or R again). The free cam (DEV KEYS: LB + VIEW + L3): A picks up / sets down, B lets go, X turns it (LB + X back), Y spawns, RB drives it, L3 through the ground, D-pad up / down the speed, Start leaves. Hot-plugging is live, and with several pads connected the one last used is the one that plays. With a mouse, point and click; middle-drag looks and the wheel zooms.
 
 **Rumble** (settings, CONTROLLER page: OFF / LOW / HIGH): a thump on impacts, a rumble over rough ground, a buzz from tires sliding and from the engine on its limiter. It only runs while the pad is the last thing you used and the window has the focus. The same page sets STEERING (SOFT / NORMAL / SHARP: how the stick maps to the wheels) and STICK DEADZONE (SMALL / MEDIUM / LARGE). Multiplayer needs nothing: each machine reads its own pad.
 
@@ -428,7 +450,7 @@ The Bronco, the 4Runner, the Tacoma, the rock buggy and the side-by-side have re
 
 ## Autopilot
 
-Esc → Autopilot picks where and how; U starts and stops it (steering or the pedals take over too).
+Shift+U (rebindable) opens the autopilot page to pick where and how; U starts and stops it (steering or the pedals take over too).
 
 - **Drive to:** the nearest repair station, any station, the trailhead, the summit lookout, the crawl park, the Widowmaker Spur, Boulder Gully, the lake (proving ground: spawn, crash wall, jumps, washboard), wherever the camera is looking, following any other vehicle (yours or a buddy's), or cruising the loop road with traffic.
 - **Speed:** 5–100 km/h. It slows for bends, steep descents and rough ground, and stops at the end.
@@ -516,7 +538,7 @@ The idea: trucks break, and your buddies get you home. (Until multiplayer lands,
 
 ## Maps
 
-Pick the map in the pause menu (Esc); the game remembers it. All maps are on the list (and in the editor). From the command line, `--map N`: `0` proving ground, `1` mountain, `2` freeway, `3` Frontier, `4` Backcountry. (The seeded Wilderness map was removed for now, commit `c735d9e` has the generator; `5` is now the plain **open country** the obstacle-section levels are set in: rolling land with nothing laid out on it. The game ships a level for each obstacle section on it: STEEP HILL, MUD PIT, ROCKY RIVER, ROCK WALL, DUNES, CLIFF SHELF and TIMBER, each on country of its own kind.)
+Pick the map in the main menu; the game remembers it. All maps are on the list (and in the editor). From the command line, `--map N`: `0` proving ground, `1` mountain, `2` freeway, `3` Frontier, `4` Backcountry. (The seeded Wilderness map was removed for now, commit `c735d9e` has the generator; `5` is now the plain **open country** the obstacle-section levels are set in: rolling land with nothing laid out on it. The game ships a level for each obstacle section on it: STEEP HILL, MUD PIT, ROCKY RIVER, ROCK WALL, DUNES, CLIFF SHELF and TIMBER, each on country of its own kind.)
 
 ### Backcountry
 
@@ -525,7 +547,15 @@ Pick the map in the pause menu (Esc); the game remembers it. All maps are on the
 - **East and west:** Ranger Flats (meadows, west) and Bear Creek Canyon (a gorge Elk River has cut through a plateau, east).
 - **South:** Lakeshore (a 1 km lake with a sandy beach, south-west), the south uplands, and Badlands Wash (mesas, sand and hardpan, south-east).
 
-Elk River runs right across the map. Outside the middle it is about 0.9 m deep (snorkel water), with a 0.4 m riffle every 500 m to wade. The new country's trails, places and caches come later (docs/plans/big-maps.md).
+Elk River runs right across the map. Outside the middle it is about 0.9 m deep (snorkel water), with a 0.4 m riffle every 500 m to wade.
+
+**The trail network** (src/bctrails.cpp; drawn on the M map in its ratings' colours, names when zoomed in; a rating sign with the trail's name at both ends of each): about 45 km of marked trails and two-tracks out into the new country.
+- **Green two-tracks** link the districts: Ranger Road (the trailhead down through Elk River's canyon at Ranger Ford to the ranger station), Timber Road, Copper Valley Road (Ranger Flats under Copper Peak to High Lakes, across Copper Creek), Lakeshore Road, South Fork Road, Rim Road.
+- **Blue trails** to the places off them (the fishing shack, the badlands and the Lost Mine, the Bear Creek ford, the falls, the north rim and High Lakes, the loggers' camp, the cabins); **black** over the high ground (Copper Ridge, the summit ridge, High Lakes Peak, Bald Knob, the spur up Copper Peak); and **faint two-tracks** (tan on the map, a cairn at each end) everywhere else.
+- **COPPER PASS (red, 2.9 km)**, over the big mountain: from Pass Hut up **the Notch** (a rock garden and four rock ledges in the crags), down across **Copper Creek**, up **the Scree** and seven tight **switchbacks**, through **the Choke** (two boulders a truck's width apart, rock steps between), then **the Shelf**: a ledge climbing diagonally across the **Rimrock**, a 32 m cliff band round **Copper Peak** (312 m, snow on top, the highest ground on the map), the drop growing beside it, with **the Slab** (one huge rock jutting out over the drop) to drive out onto; over the saddle (COPPER PASS lookout, 205 m) and down to the Surveyor's Cabin. A set-up rig (low range, lockers, aired down) makes it; a stock car stops at the first rocks.
+- **Obstacle trails** built from the proving ground's sections, longer, in country of their kind: **Timber Trail** (timber, a mud pit, timber; Timber Basin), **Boulder Gully** (steep hill, rocky river, steep hill; the south uplands), **Slickrock Crawl** (rock wall, cliff shelf, rock wall; the edge of the badlands).
+- **Rock**: big boulders (car-sized and bigger) all over the new country, outcrops, tors, slabs to drive up, boulder fields; **Slab City** (a playground of slabs and boulders by Ranger Flats), **Balanced Rock** (on Copper Valley Road) and **the Tors** (south uplands). Bushes, copses, lone trees and logs fill the open country.
+- New places: Copper Peak, Copper Pass, the Notch, the Switchbacks, the Shelf, Copper Creek Crossing, Bald Knob Fire Lookout, four cabins (Line Shack, Prospector's Cabin, Beaver Pond Cabin, Copper Mountain Hut), and eleven supply caches at the hardest spots (the summit register, under the Slab, the obstacle trails' ends).
 
 Forested hill country for crawling, mudding and exploring with buddies. You start at **Trailhead Camp** in the south and a network of trails (about 4 km in all) radiates from it, each its own challenge and rated on its signs: green easy, blue, black hard, red extreme. Elk River runs east to west across the middle, and the trails loop so a group can split up and meet again: Mud Run → Sawmill → ford → Far Side Camp on one side, Creek Crawl → mine → Slickrock Ridge → deep crossing → Far Side Camp on the other. Fuel is something to plan for (the camps have the shops).
 
@@ -575,7 +605,7 @@ Everything in one 1 km map. You start in the paddock in the middle.
 - **Repair stations:** in the paddock, at the desert outpost, at the lakeside garage, at the mountain hut, and at Cold Creek Lodge.
 - **Surfaces:** every surface type is somewhere on the map.
 
-The autopilot (Esc → Autopilot) can drive you to the paddock, the mesa climb, the slickrock bowl, THE WALL, the summit, the tarn, the Snake River ford, the beach, the bog, the delta, Blackwater Bayou, the edge of THE WALLOW, the top of MUD HILL, Cold Creek valley or Cold Creek Lodge.
+The autopilot (Shift+U) can drive you to the paddock, the mesa climb, the slickrock bowl, THE WALL, the summit, the tarn, the Snake River ford, the beach, the bog, the delta, Blackwater Bayou, the edge of THE WALLOW, the top of MUD HILL, Cold Creek valley or Cold Creek Lodge.
 
 ### Mountain
 

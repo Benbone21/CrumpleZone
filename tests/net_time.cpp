@@ -55,7 +55,7 @@ struct NetSessionTimeTest {
         s.applyRemotes(sim, now);
         s.release(&sim);
     }
-    static void datagram(NetSession& s, Sim& sim, const std::vector<uint8_t>& d) { s.onDatagram(sim, d.data(), d.size(), 0x7f000001, 1, s.curNow); }
+    static void datagram(NetSession& s, Sim& sim, const std::vector<uint8_t>& d) { s.onDatagram(&sim, d.data(), d.size(), 0x7f000001, 1, s.curNow); }
     static uint64_t token(const NetSession& s) { return s.udpToken; }
     static void setToken(NetSession& s, uint64_t t) { s.udpToken = t; }
 };
@@ -152,7 +152,10 @@ SCENARIO(netClockSync, "net/clock-sync", "A guest's idea of the host's clock con
     ctx.check("nonsense answers are thrown away", !c.add(1, NAN, 2) && !c.add(2, 5, 1) && !c.add(0, 1e300, 1) && !c.add(0, 1, 100) && !c.synced);
 }
 
-SCENARIO(netTimeline, "net/timeline", "Two guests, one 50 ms and one 200 ms from the host with jitter and loss, show the host's truck where it was at the same moment on the shared clock, and its chatter at the moment it was said") {
+namespace {
+// predict: the vehicles shown now (NetSession::predict), else at the view (as chatter is).
+void timeline(Ctx& ctx, bool predict) {
+    const std::string how = predict ? " (shown now)" : " (at the view)";
     Sim origin;
     origin.setupEmpty();
     origin.addCar(vehicleCatalog()[2], V3(-40, 0.6, -40), 0, V3(0.4, 0.5, 0.6));
@@ -182,6 +185,7 @@ SCENARIO(netTimeline, "net/timeline", "Two guests, one 50 ms and one 200 ms from
         Guest& x = *guests[g];
         x.sim.setupEmpty();
         TT::asClient(x.net, 1 + g);
+        x.net.predict = predict;
         TT::spawn(host, x.net, x.sim, car);
     }
     Queue q;
@@ -242,7 +246,7 @@ SCENARIO(netTimeline, "net/timeline", "Two guests, one 50 ms and one 200 ms from
             TT::play(x->net, x->sim, mine);
             if (x->sim.cars.empty() || !x->net.clockSynced()) continue;
             const V3 at = x->sim.cars[0].frame().com;
-            const double shownAt = x->net.viewTime();
+            const double shownAt = predict ? x->net.vehicleTime() : x->net.viewTime();
             if (t > 5) {
                 x->shown.push_back({shownAt, at});
                 x->truthErr.push_back(len(at - circle(shownAt)));
@@ -258,16 +262,19 @@ SCENARIO(netTimeline, "net/timeline", "Two guests, one 50 ms and one 200 ms from
     }
     for (Guest* x : guests) {
         std::sort(x->truthErr.begin(), x->truthErr.end());
-        const std::string n = x->name;
+        const std::string n = x->name + how;
         ctx.metric(n + ": clock error", std::fabs(x->net.clockOffset() + x->clockAhead) * 1000, "ms", 0, 15);
-        ctx.metric(n + ": shown this far behind", x->net.viewDelay() * 1000, "ms", 0, 600);
-        ctx.metric(n + ": truck vs where it really was then (95%)", x->truthErr.empty() ? 99 : x->truthErr[x->truthErr.size() * 95 / 100], "m", 0, 0.1);
-        ctx.metric(n + ": truck vs where it really was then (worst)", x->truthErr.empty() ? 99 : x->truthErr.back(), "m", 0, 0.5);
+        ctx.metric(n + ": chatter shown this far behind", x->net.viewDelay() * 1000, "ms", 0, 600);
+        // (Shown now, it's run on from a state 50 to 260 ms old, along the arc it was on.)
+        const double tol95 = predict ? 0.15 : 0.1, tolWorst = predict ? 0.4 : 0.5;
+        ctx.metric(n + ": truck vs where it really was then (95%)", x->truthErr.empty() ? 99 : x->truthErr[x->truthErr.size() * 95 / 100], "m", 0, tol95);
+        ctx.metric(n + ": truck vs where it really was then (worst)", x->truthErr.empty() ? 99 : x->truthErr.back(), "m", 0, tolWorst);
         ctx.check(n + ": heard every mark", x->events >= 30, std::to_string(x->events));
+        if (predict) continue;  // (shown now, the truck is ahead of the chatter by the view delay: as it should be)
         ctx.metric(n + ": chatter vs the moment it was said", x->worstEvent * 1000, "ms", 0, 12);
         ctx.metric(n + ": the truck when it's heard vs where it was when said", x->worstEventPlace, "m", 0, 0.3);
     }
-    ctx.check("the far guest is shown further behind than the near one", a.net.viewDelay() < b.net.viewDelay() && b.net.viewDelay() > 0.2,
+    ctx.check("the far guest's chatter is held further behind than the near one's" + how, a.net.viewDelay() < b.net.viewDelay() && b.net.viewDelay() > 0.2,
               std::to_string(a.net.viewDelay()) + " vs " + std::to_string(b.net.viewDelay()));
     // At the same moment on the shared clock, both have the truck in the same place.
     double worst = 0;
@@ -279,7 +286,13 @@ SCENARIO(netTimeline, "net/timeline", "Two guests, one 50 ms and one 200 ms from
         if (b.shown[j + 1].first - b.shown[j].first > 0.05) continue;
         worst = std::max(worst, len(s.second - (b.shown[j].second + (b.shown[j + 1].second - b.shown[j].second) * u)));
     }
-    ctx.metric("the two guests' trucks at the same shared moment", worst, "m", 0, 0.5);
+    ctx.metric("the two guests' trucks at the same shared moment" + how, worst, "m", 0, predict ? 0.6 : 0.5);
+}
+}  // namespace
+
+SCENARIO(netTimeline, "net/timeline", "Two guests, one 50 ms and one 200 ms from the host with jitter and loss, show the host's truck where it is now (or, at the view, where it was at the same moment on the shared clock), and its chatter at the moment it was said") {
+    timeline(ctx, false);
+    timeline(ctx, true);
 }
 
 SCENARIO(netDeltaLoss, "net/delta-loss", "States told only by the dents that moved, against the newest the receiver said it has, over a lossy 100 ms line: every state taken is right to the dent step, and two seconds of total loss is recovered from with a whole one") {

@@ -12,6 +12,12 @@ uniform sampler2DArray uGroundB;  // RG tangent normal, B roughness, A ambient o
 #define GQ 2
 #endif
 const int uGroundQ = GQ;
+// The far forest's field (farforest.h): far off, the ground under a wood takes the canopy's colour (its trees there are pictures,
+// thinned out with distance; between them it reads as a wood, not as bare grass). uFFFade: from x to y metres; y 0: off.
+uniform sampler2D uFFCover;
+uniform vec4 uFFGrid;
+uniform vec2 uFFFade;
+uniform vec3 uSnowLook;  // natural ground's snow: the metres it comes in over, the most of the ground it covers, how much lower on a north face
 
 #if GQ <= 1
 // LOW and POTATO: value noise from one texture tap (a table of the same lattice hash: the patches fall where HIGH puts them; the bilinear weights are put through the smoothstep by
@@ -83,13 +89,14 @@ void addSlot(int v, float w){
 #endif
 // Per-pixel environment, worked out once.
 float gN1, gDry, gForest, gSteep, gHigh, gSnowH, gAlt, gBald;
+float gMeadow;  // how much the natural ground is meadow (the proving ground's and the freeway's; the big map's regions: regionLook)
 #if GQ >= 2
 float gNoiseA, gNoiseB;
 #else
 // (LOW and POTATO work these two out where a paint needs them: meadow and forest floor need neither.)
 float gNA = -1.0, gNB = -1.0;
-float noiseA(){ if (gNA < 0.0) gNA = fbmFew(vPos.xz * 0.35 + 5.0, 2, 3); return gNA; }
-float noiseB(){ if (gNB < 0.0) gNB = fbmFew(vPos.xz * 0.55 - 3.0, 1, 2); return gNB; }
+float noiseA(){ if (gNA < 0.0) gNA = fbmFew(NP.xz * 0.35 + 5.0, 2, 3); return gNA; }
+float noiseB(){ if (gNB < 0.0) gNB = fbmFew(NP.xz * 0.55 - 3.0, 1, 2); return gNB; }
 #define gNoiseA noiseA()
 #define gNoiseB noiseB()
 #endif
@@ -98,23 +105,25 @@ float gDens;
 void naturalGround(float w){
   float rockW = max(gSteep, gHigh * 0.8);
   float flatW = (1.0 - rockW) * (1.0 - gSnowH) * w;
-  bool meadow = uMap == 0 || uMap == 2;
   float t = smoothstep(0.35, 0.65, gN1);
-  if (meadow) {
+  if (gMeadow > 0.001) {
+    float fw = flatW * gMeadow;
     float bare = gBald * 0.5;
-    addSlot(5, flatW * (1.0 - t) * (1.0 - gDry) * (1.0 - bare));
-    addSlot(4, flatW * t * (1.0 - gDry) * (1.0 - bare));
-    addSlot(14, flatW * gDry * (1.0 - bare));
-    addSlot(2, flatW * bare);
-  } else {
+    addSlot(5, fw * (1.0 - t) * (1.0 - gDry) * (1.0 - bare));
+    addSlot(4, fw * t * (1.0 - gDry) * (1.0 - bare));
+    addSlot(14, fw * gDry * (1.0 - bare));
+    addSlot(2, fw * bare);
+  }
+  if (gMeadow < 0.999) {
+    float fw = flatW * (1.0 - gMeadow);
     float lit = gForest * (1.0 - gBald * 0.3);
     float gr = 1.0 - lit;
     float bare = gBald * 0.55 * (1.0 - lit * 0.5);
-    addSlot(3, flatW * lit);
-    addSlot(5, flatW * gr * (1.0 - t) * (1.0 - gDry) * (1.0 - bare));
-    addSlot(4, flatW * gr * t * (1.0 - gDry) * (1.0 - bare));
-    addSlot(14, flatW * gr * gDry * (1.0 - bare));
-    addSlot(2, flatW * (gr * bare + lit * gBald * 0.3));
+    addSlot(3, fw * lit);
+    addSlot(5, fw * gr * (1.0 - t) * (1.0 - gDry) * (1.0 - bare));
+    addSlot(4, fw * gr * t * (1.0 - gDry) * (1.0 - bare));
+    addSlot(14, fw * gr * gDry * (1.0 - bare));
+    addSlot(2, fw * (gr * bare + lit * gBald * 0.3));
   }
   float rw = rockW * (1.0 - gSnowH) * w;
 #if GQ >= 2
@@ -160,15 +169,45 @@ void expandPaint(int paint, float w){
 }
 
 // ---- Sampling ----
-// One tap, or two of different size and turn blended by a noise and put back to the layer's contrast.
-vec4 planarTap(sampler2DArray s, float L, vec2 p, float scale, vec2 gx, vec2 gy, float m, vec4 avg, bool two){
-  vec4 a = textureGrad(s, vec3(p * scale, L), gx * scale, gy * scale);
-  if (!two) return a;
-  const mat2 R = mat2(0.8, 0.6, -0.6, 0.8);
-  float s2 = scale * 0.73;
-  vec4 b = textureGrad(s, vec3(R * p * s2 + vec2(0.37, 0.71), L), R * gx * s2, R * gy * s2);
-  float k = inversesqrt((1.0 - m) * (1.0 - m) + m * m);
-  return avg + (mix(a, b, m) - avg) * k;
+// Anti-tiling: hex tiling (Mikkelsen), with a random turn (0..360 degrees), flip and offset from a hash of each hex cell.
+// Three taps, blended by the triangle grid's weights (cells overlap, so no seam shows), and put back to the layer's contrast.
+// The turn is the same for a layer's albedo and its normal map: a normal map's xy is turned back (by the transpose of the
+// turn the lookup took, the flip included) so the lighting stays right. One tap further than 250 m (the layer eases to
+// its average there; LOW and POTATO take the plain tap).
+vec3 hexHash(vec2 c){
+  vec3 q = fract(vec3(c.x * 0.1031, c.y * 0.1030, c.x * 0.0973 + c.y * 0.1099));
+  q += dot(q, q.yzx + 33.33);
+  return fract((q.xxy + q.yzz) * q.zyx);
+}
+mat2 hexTurn(vec3 h){
+  float a = h.x * 6.2831853, c = cos(a), s = sin(a);
+  return mat2(c, s, -s, c) * mat2(h.y < 0.5 ? -1.0 : 1.0, 0.0, 0.0, 1.0);
+}
+vec4 hexOne(sampler2DArray s, float L, vec2 uv, vec2 gx, vec2 gy, vec2 vtx, bool nrm){
+  vec3 h = hexHash(vtx);
+  mat2 M = hexTurn(h);
+  vec4 t = textureGrad(s, vec3(M * uv + h.yz * 7.0, L), M * gx, M * gy);
+  if (nrm) t.xy = (vec2(0.5) + (t.xy - 0.5) * M) ;  // (row vector times M: Mᵀ of the column vector)
+  return t;
+}
+vec4 planarTap(sampler2DArray s, float L, vec2 p, float scale, vec2 gx, vec2 gy, vec4 avg, bool hex, bool nrm){
+  vec2 uv = p * scale, dx = gx * scale, dy = gy * scale;
+#if GQ >= 2
+  if (hex) {
+    vec2 st = uv * 0.8660254;  // (a hex cell about 1.15 of the image across)
+    vec2 sk = vec2(st.x, -0.57735027 * st.x + 1.15470054 * st.y) * 2.0;
+    vec2 base = floor(sk), fr = sk - base;
+    float z = 1.0 - fr.x - fr.y;
+    float sg = step(0.0, -z), s2 = 2.0 * sg - 1.0;
+    vec3 w = vec3(-z * s2, sg - fr.y * s2, sg - fr.x * s2);
+    vec4 a = hexOne(s, L, uv, dx, dy, base + vec2(sg), nrm) * w.x
+           + hexOne(s, L, uv, dx, dy, base + vec2(sg, 1.0 - sg), nrm) * w.y
+           + hexOne(s, L, uv, dx, dy, base + vec2(1.0 - sg, sg), nrm) * w.z;
+    float k = inversesqrt(dot(w, w));
+    return avg + (a - avg) * k;
+  }
+#endif
+  return textureGrad(s, vec3(uv, L), dx, dy);
 }
 // World direction of a tangent-space normal t (OpenGL: +y toward the top of the image) in a frame of
 // right R, up U, out N, whiteout-blended onto the surface normal g.
@@ -190,8 +229,8 @@ void sideFrames(vec3 g, vec3 dPx, vec3 dPy){
   sideZ.R = vec3(sz, 0.0, 0.0);  sideZ.N = vec3(0.0, 0.0, sz);
   float wx = pow(abs(g.x), 4.0), wz = pow(abs(g.z), 4.0);
   sideX.w = wx / max(wx + wz, 1e-5); sideZ.w = 1.0 - sideX.w;
-  sideX.uv = vec2(dot(vPos, sideX.R), -vPos.y); sideX.gx = vec2(dot(dPx, sideX.R), -dPx.y); sideX.gy = vec2(dot(dPy, sideX.R), -dPy.y);
-  sideZ.uv = vec2(dot(vPos, sideZ.R), -vPos.y); sideZ.gx = vec2(dot(dPx, sideZ.R), -dPx.y); sideZ.gy = vec2(dot(dPy, sideZ.R), -dPy.y);
+  sideX.uv = vec2(dot(NP, sideX.R), -vPos.y); sideX.gx = vec2(dot(dPx, sideX.R), -dPx.y); sideX.gy = vec2(dot(dPy, sideX.R), -dPy.y);
+  sideZ.uv = vec2(dot(NP, sideZ.R), -vPos.y); sideZ.gx = vec2(dot(dPx, sideZ.R), -dPx.y); sideZ.gy = vec2(dot(dPy, sideZ.R), -dPy.y);
 }
 vec4 sideTap(sampler2DArray s, float L, Side f, float scale){
   return textureGrad(s, vec3(f.uv * scale, L), f.gx * scale, f.gy * scale);
@@ -203,7 +242,7 @@ void main(){
   oCol = vec4(vPos * 0.001 + vNrm, 1.0); return;
 #endif
   vec3 N0 = normalize(vNrm);
-  vec2 p = vPos.xz;
+  vec2 p = NP.xz, pr = vPos.xz;  // (patterns follow the world, the terrain's texels the window: kCommonFS uNoiseOff)
   vec3 dPx = dFdx(vPos), dPy = dFdy(vPos);
   float dist = length(vPos - uCam);
 
@@ -216,9 +255,11 @@ void main(){
 #endif
   gDry = smoothstep(0.6, 0.8, (lo == 1 ? fbmFew(p * 0.006 + 3.1, 1, 3) : fbm(p * 0.006 + 3.1, 3)));
   gBald = smoothstep(0.60, 0.80, (lo == 1 ? fbmFew(p * 0.30 + 9.0, 2, 3) : fbm(p * 0.30 + 9.0, 3)));
-  gSteep = (uMap == 0 || uMap == 2) ? smoothstep(0.84, 0.62, N0.y + 0.14 * (gN1 - 0.5)) : smoothstep(0.72, 0.55, N0.y + 0.14 * (gN1 - 0.5));
-  gHigh = smoothstep(uRockSnow.x, uRockSnow.x + 90.0, vPos.y + 30.0 * gN1);
-  gSnowH = smoothstep(uRockSnow.y, uRockSnow.y + 50.0, vPos.y + 70.0 * gN1) * smoothstep(0.5, 0.75, N0.y);
+  vec3 lk = regionLook(p);
+  gMeadow = lk.x;
+  gSteep = mix(smoothstep(0.72, 0.55, N0.y + 0.14 * (gN1 - 0.5)), smoothstep(0.84, 0.62, N0.y + 0.14 * (gN1 - 0.5)), gMeadow);
+  gHigh = smoothstep(lk.y, lk.y + 90.0, vPos.y + 30.0 * gN1);
+  gSnowH = smoothstep(lk.z, lk.z + uSnowLook.x, vPos.y + 70.0 * gN1 + uSnowLook.z * clamp(N0.z * 3.0, 0.0, 1.0)) * uSnowLook.y * smoothstep(0.5, 0.75, N0.y);
   gForest = smoothstep(0.40, 0.65, (lo == 1 ? fbmFew(p * 0.012 + vec2(7.0, -3.0), 1, 3) : fbm(p * 0.012 + vec2(7.0, -3.0), 3))) * smoothstep(6.0, 22.0, vPos.y);
 
 #ifdef X_NONOISE
@@ -229,8 +270,8 @@ void main(){
 #endif
   // ---- The four cells round this point, from a slightly wobbled spot so edges are ragged, not 1 m stairs ----
   vec2 wob = lo == 1 ? vec2(0.0) : (vec2(vnoise(p * 0.8), vnoise(p.yx * 0.8 + 7.0)) - 0.5) * 1.4;
-  vec2 gp = p + wob + (uTerrainN - 1.0) * 0.5;
-  ivec2 i0 = clamp(ivec2(floor(gp)), ivec2(0), ivec2(int(uTerrainN) - 2));
+  vec2 gp = pr + wob + (uTerrainN - 1.0) * 0.5;
+  ivec2 i0 = ivec2(floor(gp));  // (unclamped: past the grid terrainCell gives plain ground, not the edge's paint run on)
   vec2 f = clamp(gp - vec2(i0), 0.0, 1.0);
   f = f * f * (3.0 - 2.0 * f);
   vec4 c00 = terrainCell(i0), c10 = terrainCell(i0 + ivec2(1, 0));
@@ -303,7 +344,6 @@ void main(){
 #endif
   // ---- Photo layers ----
   bool two = uGroundQ >= 2 && dist < 250.0;
-  float mix2 = 0.15 + 0.7 * smoothstep(0.25, 0.75, vnoise(p * 0.11 + 4.0));
   float wTop = smoothstep(0.55, 0.93, N0.y);  // how much the top-down mapping counts on a slope
   bool steepFace = uGroundQ >= 2 && wTop < 0.999 && dist < 400.0;
 #if GQ >= 2
@@ -317,7 +357,7 @@ void main(){
     int v = selV[k];
     Lr[k] = float(kVLayer[v]); scl[k] = 1.0 / kVTile[v];
     avgA[k] = textureLod(uGroundA, vec3(0.5, 0.5, Lr[k]), 12.0);
-    vec4 a = planarTap(uGroundA, Lr[k], p, scl[k], dPx.xz, dPy.xz, mix2, avgA[k], two);
+    vec4 a = planarTap(uGroundA, Lr[k], p, scl[k], dPx.xz, dPy.xz, avgA[k], two, false);
     if (steepFace) {
       vec4 sd = vec4(0.0);
       if (sideX.w > 0.02) sd += sideTap(uGroundA, Lr[k], sideX, scl[k]) * sideX.w;
@@ -325,7 +365,7 @@ void main(){
       a = mix(sd / max(sideX.w * step(0.02, sideX.w) + sideZ.w * step(0.02, sideZ.w), 1e-3), a, wTop);
     }
     // Far off, each layer eases toward its own average colour: no tiling to see from across the valley.
-    a.rgb = mix(a.rgb, avgA[k].rgb, smoothstep(180.0, 700.0, dist) * 0.6);
+    a.rgb = mix(a.rgb, avgA[k].rgb, smoothstep(120.0, 600.0, dist) * 0.7);
     A[k] = a;
     A[k].a = clamp(A[k].a, 0.0, 1.0);
   }
@@ -351,7 +391,7 @@ void main(){
 #ifdef X_NONORM
     vec4 b = vec4(0.5, 0.5, 0.7, 1.0);
 #else
-    vec4 b = planarTap(uGroundB, Lr[k], p, scl[k], dPx.xz, dPy.xz, mix2, textureLod(uGroundB, vec3(0.5, 0.5, Lr[k]), 12.0), two);
+    vec4 b = planarTap(uGroundB, Lr[k], p, scl[k], dPx.xz, dPy.xz, textureLod(uGroundB, vec3(0.5, 0.5, Lr[k]), 12.0), two, true);
 #endif
     float st = kVBump[v] * distFade;
     vec3 nY = reorient(tangentNormal(b, st), vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, -1.0), vec3(0.0, 1.0, 0.0), N0);
@@ -380,6 +420,7 @@ void main(){
   // ---- Large-scale variation: patches of lighter and darker, warmer and cooler ground ----
   float bright = 0.80 + 0.40 * (lo == 1 ? fbmFew(p * 0.045 + 11.0, 1, 3) : fbm(p * 0.045 + 11.0, 3));
   vec3 warm = mix(vec3(1.05, 1.0, 0.92), vec3(0.94, 0.99, 1.04), vnoise(p * 0.02 - 6.0));
+  bright *= 0.9 + 0.2 * vnoise(p * 0.007 + 2.0);  // (and broad patches, a few hundred metres across)
   alb *= bright * warm;
   // ---- Wheel tracks worn into trails and roads, and packed down in snow ----
   float sl = vCol.g;
@@ -399,7 +440,7 @@ void main(){
     nrm = normalize(mix(nrm, N0, pud * 0.85));
   }
   // ---- Wet ground at the water's edge, and a dark silty bed under it ----
-  float wl = terrainCell(ivec2(floor(p + uTerrainN * 0.5))).a;
+  float wl = terrainCell(ivec2(floor(pr + uTerrainN * 0.5))).a;
   float wet = 1.0 - smoothstep(0.0, 0.5, vPos.y - wl);
   alb *= mix(1.0, 0.40, wet);
   rough = mix(rough, 0.25, wet * 0.7);
@@ -413,13 +454,25 @@ void main(){
 #endif
   // ---- Light it ----
   vec3 lin = mix(alb, pow(max(procBase, vec3(0.0)), vec3(2.2)), clamp(gProc, 0.0, 1.0));
+  if (uFFFade.y > 0.0) {
+    float k = smoothstep(uFFFade.x, uFFFade.y, length(vPos.xz - uCam.xz));
+    vec2 fuv = ((vPos.xz - uFFGrid.xy) / uFFGrid.z + 0.5) / uFFGrid.w;
+    if (k > 0.0 && fuv.x > 0.0 && fuv.y > 0.0 && fuv.x < 1.0 && fuv.y < 1.0) {
+      vec4 cv = texture(uFFCover, fuv);
+      float wood = clamp(cv.r * 255.0 * 1.2 / 200.0, 0.0, 1.0);  // (trees a hectare, over a closed wood's)
+      vec3 canopy = mix(vec3(0.030, 0.140, 0.014), vec3(0.010, 0.062, 0.026), clamp(cv.g / max(1.0 - cv.b, 0.05), 0.0, 1.0));  // (broadleaf, conifer)
+      lin = mix(lin, canopy, k * wood * 0.85);
+    }
+  }
   vec3 n = normalize(mix(nrm, N0, clamp(gProc, 0.0, 1.0)));
+  float NL = max(dot(n, uSun), 0.0);
 #ifdef X_NOSH
   float sh = 1.0;
 #else
-  float sh = shadowAt(vPos, N0);
+  // (Turned from the light, the sun's term is nothing anyway: no shadow lookups. A lee slope, now the ground casts, is the
+  // dear part of a low sun's picture: the edges of its shade want every PCF tap.)
+  float sh = NL > 0.0 || gProc > 0.001 ? shadowAt(vPos, N0) : 1.0;
 #endif
-  float NL = max(dot(n, uSun), 0.0);
   vec3 V = normalize(uCam - vPos);
   vec3 H = normalize(V + uSun);
   float aoD = mix(1.0, ao, 0.55);

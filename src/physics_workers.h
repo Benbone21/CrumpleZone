@@ -30,7 +30,16 @@ public:
     template <class F> void run(int count, const F& job) {
         runRaw(count, [](const void* f, int i) { (*static_cast<const F*>(f))(i); }, &job);
     }
+    // Contention guard: when the caller keeps finishing its share and then sitting idle for a worker (one that's been
+    // descheduled: a busy machine), the next batches run on the caller alone for a while, then the workers are tried again.
+    // Which thread runs a job never changes its result (each job is one car's own), only how long the batch takes.
+    bool serialNow() const { return serialLeft > 0; }
+    long fallbacks() const { return fallbackCount; }  // (tests, F3) times it fell back
+    static constexpr int kSerialBatches = 4000;       // ~1 s of physics batches
 private:
+    double stallScore = 0;  // decaying count of recent batches whose wait was far over the caller's own work
+    int serialLeft = 0;
+    long fallbackCount = 0;
     typedef void (*Thunk)(const void*, int);
     void runRaw(int count, Thunk thunk, const void* job);
     std::vector<std::thread> workers;

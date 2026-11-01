@@ -42,6 +42,7 @@ enum Act {
     RELOAD,           // load the new build (key F5)
     SCENARIO_CHECKS,  // a scenario playback's checks list (key J)
     EXPORT_KEYBINDS,  // the keybinds as the new defaults, to build/keybinds-defaults.txt
+    FREE_CAM,         // the dev free cam (freecam.h): fly anywhere, carry and spawn vehicles (key F8)
 };
 
 struct Action {

@@ -142,7 +142,7 @@ bool simplified(const ModelDef& def) {
     static const std::set<std::string> own = {"tree_pine", "tree_broadleaf", "tree_snag", "bush", "stump",  // (plants and trees)
                                               "drive_shaft", "tie_rod", "control_arm", "cv_axle", "torn_end", "bed_gate", "tire_part"};  // (a car's)
     if (def.id == "waterfall") return false;  // (its vertex colours are the water shader's coordinates: nothing to merge)
-    static const std::set<std::string> crates = {"crate_engine_v8", "crate_engine_v6", "crate_engine_i4", "supply_crate"};  // (parts drawn as they stand: skids and crates bury faces)
+    static const std::set<std::string> crates = {"crate_engine_v8", "crate_engine_v8_dohc", "crate_engine_v6", "crate_engine_i4", "crate_engine_i3", "crate_engine_flat4", "supply_crate"};  // (parts drawn as they stand: skids and crates bury faces)
     return (def.category != "PARTS" || crates.count(def.id)) && !own.count(def.id);
 }
 

@@ -80,6 +80,7 @@ struct VisualTemplate {
     std::vector<Bind> sculptBind; // authored body mesh, bound to cage / moving panels
     std::vector<Bind> partBind;  // one per part triangle corner
     std::vector<float> partColor;  // r, g, b, material per triangle
+    float bakedPaint[3] = {};      // the body colour the painted parts were made in (a car in another colour: the renderer swaps it)
 
     // The driver's seat (people.h draws the steering wheel, which turns, there; the cockpit view is from where a driver's
     // eyes would be): the hip point on the seat and the wheel's middle, each bound to the body like a part (it rides its

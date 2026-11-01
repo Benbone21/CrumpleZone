@@ -97,7 +97,7 @@ SCENARIO(frameprofSpikes, "perf/spikes", "A spike is a frame over 30 ms and twic
     ctx.check("two hitches, two frames over 30 ms", r.hitches == 2 && r.over30 == 2);
 }
 
-SCENARIO(frameprofCatchUp, "perf/sim-catch-up", "Physics catch-up: slow frames run in real time, a hitch isn't caught up all at once, at most 50 ms of steps a frame") {
+SCENARIO(frameprofCatchUp, "perf/sim-catch-up", "Physics catch-up: slow frames run in real time, a hitch isn't caught up all at once, at most 50 ms of steps a frame (multiplayer: what's owed, within 50 ms of physics)") {
     double usual = 1.0 / 60;
     double ran = 0;
     for (int i = 0; i < 300; i++) ran += simCatchUp(1.0 / 30, usual);  // (a steady 30 fps)
@@ -109,4 +109,10 @@ SCENARIO(frameprofCatchUp, "perf/sim-catch-up", "Physics catch-up: slow frames r
     ctx.check("and the next frame is ordinary", std::fabs(next - 1.0 / 60) < 1e-9);
     ctx.check("50 ms of steps at 2 kHz is 100", simMaxSteps(1.0 / 2000) == 100 && simMaxSteps(0) == 1);
     ctx.check("junk dt runs nothing", simCatchUp(NAN, usual) == 0 && simCatchUp(-1, usual) == 0);
+    // Multiplayer: what's owed, as far as 50 ms of physics goes; never under the 50 ms of steps.
+    const double h = 1.0 / 2000;
+    ctx.check("multiplayer, 12 fps, cheap physics: the whole 83 ms", simNetSteps(h, 1.0 / 12, 0.01) == 167, std::to_string(simNetSteps(h, 1.0 / 12, 0.01)));
+    ctx.check("multiplayer, 0.25 ms a step: 200 steps (50 ms of physics)", simNetSteps(h, 1.0 / 8, 0.25) == 200);
+    ctx.check("multiplayer, physics too dear: still 100", simNetSteps(h, 1.0 / 12, 2.0) == 100 && simNetSteps(h, NAN, -1) == 100);
+    ctx.check("multiplayer, not measured yet: what's owed, to 0.35 s", simNetSteps(h, 5.0, -1) == 700);
 }

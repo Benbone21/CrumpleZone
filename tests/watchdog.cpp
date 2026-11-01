@@ -2,6 +2,7 @@
 // only runs with `run_tests --selftest` (see tests/watchdog_selftest.sh, which checks the runner reports it and exits non-zero).
 #include <thread>
 
+#include "../src/loadprof.h"
 #include "../src/watchdog.h"
 #include "harness.h"
 
@@ -29,6 +30,24 @@ SCENARIO(watchdogUnit, "watchdog/unit", "The hang watchdogs trip on a stalled lo
         wd::FrameWatchdog w(5, 0.3, 5, [&](const std::string& m) { m3 = m; });
         for (int f = 0; f < 30; f++) w.frame(f), sleepMs(20);
         ctx.check("a run over its total limit is reported", w.tripped() && m3.find("limit") != std::string::npos, m3);
+    }
+    {  // the hang report's stages: each thread's phase and the scopes it is inside, gone once it leaves them
+        std::string seen, after;
+        std::thread t([&] {
+            loadprof::nameThread("wdtest");
+            loadprof::phase("wdtest.phase");
+            {
+                LOADPROF("wdtest.scope");
+                seen = loadprof::activeStages();
+            }
+            loadprof::phase(nullptr);
+            after = loadprof::activeStages();
+        });
+        t.join();
+        ctx.check("the report names the thread, its phase and its scope",
+                  seen.find("wdtest #") != std::string::npos && seen.find("wdtest.phase (") != std::string::npos && seen.find("> wdtest.scope (") != std::string::npos, seen);
+        ctx.check("a thread out of them is not reported", after.find("wdtest") == std::string::npos, after);
+        ctx.check("a finished thread is not reported", loadprof::activeStages().find("wdtest") == std::string::npos);
     }
     {  // the generic watchdog: quiet until check() returns something, trips once
         std::atomic<int> trips{0};

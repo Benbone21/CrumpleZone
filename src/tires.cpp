@@ -64,9 +64,6 @@ void shiftSpareMass(Car& c, double kg) {
     for (Node& n : c.nodes) n.invm = 1.0 / n.m;
 }
 
-// Spin inertia of a hub and rotor alone (kg m^2).
-constexpr double kBareHubI = 0.3;
-
 }  // namespace
 
 V3 Car::spareAt() const {

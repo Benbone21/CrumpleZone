@@ -140,6 +140,9 @@ SCENARIO(lowRangeSwap, "drivetrain/low-range-swap", "Every low-range truck with 
         ctx.run(0.5, [&] { c.throttle = 0; });
         ctx.run(2, [&] { c.throttle = 1; });
         ctx.check(std::string(spec.id) + ": a stab to the floor in 4L breaks nothing", shaftsGone(c) == 0);
+        // (Parked once it's done: left floored, each truck drove on off the pad while the next ones
+        // ran, ~500 m into the hills by the end, and could tumble down one.)
+        c.throttle = 0, c.brake = 1;
     }
     ctx.check("some low-range trucks were tried", lane >= 3);
 }

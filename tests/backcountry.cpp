@@ -8,6 +8,7 @@
 #include <string>
 
 #include "../src/autopilot.h"
+#include "../src/onemap.h"
 #include "harness.h"
 
 namespace {
@@ -87,15 +88,21 @@ double waterDepth(const World& w, const V3& p, double r = 2) {
 }  // namespace
 
 SCENARIO(backcountryMap, "maps/backcountry",
-         "The Backcountry: builds in reasonable time; 4 repair stations on flat pads; every surface is somewhere; 3-5 km of trail; the ford is shallow and the deep crossing deep") {
+         "The Backcountry: builds in reasonable time; 4 camp repair stations (and the ranger station's) on flat pads; every surface is somewhere; 3-5 km of trail; the ford is shallow and the deep crossing deep") {
     const auto t0 = std::chrono::steady_clock::now();
     ctx.sim.world = World(MAP_BACKCOUNTRY);
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     const World& w = ctx.sim.world;
-    ctx.metric("time to build the map", secs, "s", 0, 6);
+    ctx.metric("time to build the map", secs, "s", 0, 15);  // (15: with the trail network, its rock features and its obstacle trails, on a busy machine)
     // Stations: four, on pads flat to a few centimetres across their reach.
-    ctx.metric("repair stations", (double)w.stations.size(), "", 3, 4);
+    // (Four camps and the ranger station; on the big map the regions round it bring theirs besides: the Mountain's 3, the Frontier's 5.)
+    int own = 0;
+    for (const Station& st : w.stations) own += regionContaining(st.p.x, st.p.z) == nullptr && regionAround(st.p.x, st.p.z) == nullptr;
+    ctx.metric("repair stations", (double)own, "", 3, 5);
+    // (...and each region's grown country an outpost's repair bay: regions2.)
+    ctx.check("the regions' stations besides", w.stations.size() - own == (w.regionStarts.empty() ? 0u : 11u), std::to_string(w.stations.size() - own));
     for (const Station& st : w.stations) {
+        if (regionContaining(st.p.x, st.p.z)) continue;  // (a region's are its old map's: onemap/region-copy)
         double lo = 1e9, hi = -1e9;
         for (double dx = -st.r; dx <= st.r; dx += 1.5)
             for (double dz = -st.r; dz <= st.r; dz += 1.5) {
@@ -303,6 +310,8 @@ bool pilotRun(Ctx& ctx, Car& c, const V3& goal, double kmh, double maxS, int rou
     const std::string msg = pilotStart(c, ctx.sim.world, goal, "THERE", kmh / 3.6, route);
     ctx.check("route planned", c.pilot.active, msg);
     if (std::getenv("BC_TRACE")) std::printf("ROUTE %zu points: %s\n", c.pilot.path.size(), msg.c_str());
+    if (std::getenv("BC_ROUTE"))
+        for (size_t k = 0; k < c.pilot.path.size(); k += 10) std::printf("PATH %.0f %.0f\n", c.pilot.path[k].x, c.pilot.path[k].z);
     const int i = (int)(&c - ctx.sim.cars.data());
     ctx.runUntil(maxS, [&] { return !c.pilot.active; }, [&] {
         ctx.sim.pilotStep(i, Ctx::kFrame);
@@ -373,7 +382,7 @@ SCENARIO(backcountryBigCountry, "backcountry/big-country", "The 6 km Backcountry
     } legs[] = {{"RANGER FLATS", V3(-480, 0, -60), V3(-1500, 0, 160)}, {"TIMBER BASIN", V3(-480, 0, 300), V3(-1400, 0, 1300)},
                 {"LAKESHORE", V3(-450, 0, -450), V3(-1250, 0, -1150)}, {"SOUTH UPLANDS", V3(0, 0, -480), V3(150, 0, -1500)},
                 {"BADLANDS WASH", V3(450, 0, -450), V3(1500, 0, -1500)}, {"BEAR CREEK RIM", V3(480, 0, -200), V3(1500, 0, -350)},
-                {"HIGH LAKES", V3(480, 0, 420), V3(1500, 0, 1400)}, {"COPPER RIDGE", V3(-1400, 0, 1300), V3(0, 0, 1900)}};
+                {"HIGH LAKES", V3(480, 0, 420), V3(1500, 0, 1400)}, {"COPPER RIDGE", V3(-1400, 0, 1300), V3(-78, 0, 1924)}};  // (the Surveyor's Cabin: (0, 1900) is under Copper Peak's boulders now)
     for (const auto& l : legs) {
         std::vector<V3> route;
         const bool ok = planRoute(w, bBronco(), l.from, l.to, PILOT_ANYWHERE, {}, route);

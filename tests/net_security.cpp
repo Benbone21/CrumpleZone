@@ -33,7 +33,7 @@ struct NetSessionSecTest {
     static void handle(NetSession& s, Sim* sim, Conn* c, const std::vector<uint8_t>& msg) { s.handle(sim, c, msg); }
     static bool apply(NetSession& s, Sim& sim, const std::vector<uint8_t>& msg, int from) { return s.apply(sim, msg, from); }
     static void datagram(NetSession& s, Sim& sim, const std::vector<uint8_t>& d, uint32_t ip, uint16_t port) {
-        s.onDatagram(sim, d.data(), d.size(), ip, port, 1.0);
+        s.onDatagram(&sim, d.data(), d.size(), ip, port, 1.0);
     }
     static void snapshot(NetSession& s, Sim& sim, uint32_t netId, const std::vector<uint8_t>& d) { s.takeSnapshot(sim, netId, d, 1.0); }
     static void fragment(NetSession& s, Sim& sim, uint32_t netId, uint32_t seq, uint8_t f, uint8_t n, const std::vector<uint8_t>& d) {
@@ -196,7 +196,7 @@ bool rawJoin(Rig& rig, Raw& g, int port, const std::string& name, const std::str
         while (g.next(type, body)) {
             if (type == CHALLENGE && body.size() == 16 && !password.empty())
                 g.send(frameOf(AUTH, net::hmacSha256(password, body)));
-            if (type == WELCOME && body.size() == 10) {
+            if (type == WELCOME && body.size() >= 10) {  // (8: and the host's build after)
                 g.id = body[0];
                 std::memcpy(&g.token, body.data() + 2, 8);
                 return true;
