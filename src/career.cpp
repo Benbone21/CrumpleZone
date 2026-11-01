@@ -30,25 +30,25 @@ struct Loot {
 
 // Out where it takes some getting to: the harder the place, the better the find.
 const Loot kFrontier[] = {
-    {"THE WALL TOP", "walltop", 4, 3, "blazer", MOD_ENGINE, "454 BIG BLOCK", 0},
+    {"THE WALL TOP", "walltop", 4, 3, "blazer", MOD_ENGINE, "BIG V8", 0},
     {"SUMMIT", "summit", 5, -4, "", MOD_TIRES, "RACE SLICK", 0},
-    {"FROZEN TARN", "tarn", -6, 4, "", MOD_TIRES, "SNOW", 0},
+    {"FROZEN TARN", "tarn", -6, 4, "", MOD_TIRES, "ALL-TERRAIN", 0},
     {"MUD HILL", "mudhill", 5, 5, "", MOD_TIRES, "MUD-TERRAIN", 0},
-    {"THE WALLOW", "wallow2", 4, -4, "bronco", MOD_SUSPENSION, "3 IN LIFT AND 37S", 0},
-    {"MESA STAIRS", "mesaclimb", 3, 6, "4runner", MOD_TRANSMISSION, "4.88 AND LOCKERS", 0},
-    {"ABOVE THE LODGE", "lodge", 30, -26, "tacoma", MOD_ENGINE, "MAGNUSON SUPERCHARGER", 0},
+    {"THE WALLOW", "wallow2", 4, -4, "bronco", MOD_SUSPENSION, "BIG LIFT", 0},
+    {"MESA STAIRS", "mesaclimb", 3, 6, "4runner", MOD_TRANSMISSION, "LOCKERS", 0},
+    {"ABOVE THE LODGE", "lodge", 30, -26, "tacoma", MOD_ENGINE, "SUPERCHARGED V6", 0},
     {"SLICKROCK BOWL", "bowl", 4, 4, nullptr, 0, nullptr, 1500},
     {"MUD DELTA", "delta", -5, 5, nullptr, 0, nullptr, 800},
     {"ECHO LAKE BEACH", "lake", -78, 34, nullptr, 0, nullptr, 1000},
 };
 const Loot kBackcountry[] = {
-    {"OLD MINE", "mine", 4, 4, "blazer", MOD_ENGINE, "ZZ4 CRATE 350", 0},
-    {"CLIFF OVERLOOK", "overlook", 4, -3, "buggy", MOD_ENGINE, "7.0 LS7", 0},
-    {"HEARTBREAK HILL", "hilltop", 4, 4, "blazer", MOD_TRANSMISSION, "4.56 GEARS AND LOCKERS", 0},
+    {"OLD MINE", "mine", 4, 4, "blazer", MOD_ENGINE, "HOT ROD V8", 0},
+    {"CLIFF OVERLOOK", "overlook", 4, -3, "buggy", MOD_ENGINE, "BIG V8", 0},
+    {"HEARTBREAK HILL", "hilltop", 4, 4, "blazer", MOD_TRANSMISSION, "LOCKERS", 0},
     {"THE SINK", "bog3", 5, -5, "", MOD_TIRES, "MUD-TERRAIN", 0},
-    {"WRECK SITE", "wreck", 4, 4, "4runner", MOD_SUSPENSION, "LONG TRAVEL AND 37S", 0},
+    {"WRECK SITE", "wreck", 4, 4, "4runner", MOD_SUSPENSION, "BIG LIFT", 0},
     {"FIRE TOWER", "towerlook", 5, 4, "", MOD_TIRES, "ALL-TERRAIN", 0},
-    {"DEEP CROSSING", "deepbank", -4, -4, "tacoma", MOD_TRANSMISSION, "CRAWL BOX", 0},
+    {"DEEP CROSSING", "deepbank", -4, -4, "tacoma", MOD_TRANSMISSION, "CRAWL GEARS", 0},
     {"SLAB POINT", "slab", 4, 4, nullptr, 0, nullptr, 1200},
     {"DUNE BOWL", "dunering", -5, 5, nullptr, 0, nullptr, 900},
     {"TRAPPER'S CABIN", "cabinend", 5, 5, nullptr, 0, nullptr, 2000},
@@ -78,7 +78,7 @@ std::vector<std::string> cacheGear(int i) {
 // are where they are).
 const Loot kProving[] = {
     {"YARD CRATE A", nullptr, -22, -28, "", MOD_TIRES, "MUD-TERRAIN", 0},
-    {"YARD CRATE B", nullptr, -22, -52, "blazer", MOD_ENGINE, "454 BIG BLOCK", 0},
+    {"YARD CRATE B", nullptr, -22, -52, "blazer", MOD_ENGINE, "BIG V8", 0},
     {"YARD CRATE C", nullptr, -22, -76, nullptr, 0, nullptr, 1000},
 };
 
@@ -89,8 +89,8 @@ std::string lootKey(const Loot& l) {
 }
 
 // The best parts: a level's first gold gives one you haven't got.
-const char* kGoldParts[][3] = {{"jesko", "0", "RACE FUEL AND BOOST"}, {"buggy", "0", "BLOWN 6.2"}, {"civic", "0", "B18C TYPE R SWAP"},
-                               {"jesko", "2", "TRACK DIFF MAP"},      {"bronco", "1", "SASQUATCH PACKAGE"}, {"utv", "0", "STAGE 2 TUNE"}};
+const char* kGoldParts[][3] = {{"jesko", "0", "RACE TUNE"},        {"buggy", "0", "SUPERCHARGED V8"}, {"civic", "0", "RACE ENGINE"},
+                               {"jesko", "1", "TRACK SUSPENSION"}, {"bronco", "1", "LIFT KIT"},       {"utv", "0", "RACE TUNE"}};
 
 const char* kMedalName[] = {"", "BRONZE", "SILVER", "GOLD"};
 const int kMedalPay[] = {0, 400, 800, 1500};
@@ -168,16 +168,7 @@ bool Career::owns(int vehicle, int slot, int option) const {
 
 int Career::tier(int vehicle, int slot, int option) {
     if (modPartKey(vehicle, slot, option).empty()) return 3;
-    const ModOption& o = modOptions(vehicle, slot)[option];
-    if (o.fromVehicle < 0)  // a tread
-        return o.fromOption == TIRE_RACE_SLICK ? 3 : o.fromOption == TIRE_SEMI_SLICK || o.fromOption == TIRE_MUD_TERRAIN ? 2 : 1;
-    if (slot == MOD_ENGINE) {
-        ModSet ms;
-        ms.pick[MOD_ENGINE] = o.fromOption;
-        const double hp = peakPower(tunedSpec(o.fromVehicle, ms)) / 745.7;
-        return hp < 220 ? 1 : hp < 480 ? 2 : 3;
-    }
-    return o.fromOption == 0 ? 1 : 2;
+    return modOptions(vehicle, slot)[option].tier;  // (set with each part in the catalog: mods.cpp)
 }
 
 int Career::price(int vehicle, int slot, int option) {
@@ -347,6 +338,7 @@ bool parseCareer(std::istream& f, Career& c) {
     c.owned.clear(), c.opened.clear(), c.claimed.clear(), c.stock.clear(), c.vehicles.clear();
     c.cash = 0;
     bool sawCash = false;
+    int parts = 1;  // (no "parts N" line: the vehicles' picks count in the lists from before parts list 2, mods.h)
     std::vector<std::pair<size_t, std::string>> conds;
     std::vector<int> slotOf;  // per veh line in the file (good or not): its place in c.vehicles, -1 if skipped (so "cond N" always means the Nth veh line)
     std::string line;
@@ -356,7 +348,8 @@ bool parseCareer(std::istream& f, Career& c) {
         if (sp == std::string::npos) continue;
         const std::string k = line.substr(0, sp), v = line.substr(sp + 1);
         if (k == "cash") c.cash = std::atoi(v.c_str()), sawCash = true;
-        else if (k == "own") c.owned.insert(v);
+        else if (k == "parts") parts = std::atoi(v.c_str());
+        else if (k == "own") c.owned.insert(modMigrateKey(v));  // (a part that was cut: its nearest one)
         else if (k == "cache") c.opened.insert(v);
         else if (k == "claim") c.claimed.insert(v);
         else if (k == "stock") {  // "stock N KEY"
@@ -382,7 +375,7 @@ bool parseCareer(std::istream& f, Career& c) {
                     if (ps >> b >> a >> f) paintFromText(b, a, f, ov.paint);
                 }
             if (ov.world == "-") ov.world.clear();
-            for (int i = 0; i < MOD_SLOTS; i++) ov.mods.pick[i] = std::min(std::max(p[i], 0), (int)modOptions(ov.vehicle, i).size() - 1);
+            for (int i = 0; i < MOD_SLOTS; i++) ov.mods.pick[i] = p[i];  // (checked below, once the file says which lists they count in)
             slotOf.back() = (int)c.vehicles.size();
             c.vehicles.push_back(ov);
         } else if (k == "cond") {  // "cond N TEXT"
@@ -393,6 +386,16 @@ bool parseCareer(std::istream& f, Career& c) {
     }
     for (const auto& cd : conds)
         if (cd.first < slotOf.size() && slotOf[cd.first] >= 0) c.vehicles[slotOf[cd.first]].condition = cd.second;
+    for (OwnedVehicle& ov : c.vehicles) {
+        if (parts < kPartsVersion) {
+            // A profile from before parts list 2: each fitted part becomes its nearest one today, and that one is
+            // yours (the truck keeps what it had, near enough; another vehicle's engine in it is now one of its own).
+            ov.mods = modLegacyMods(ov.vehicle, ov.mods);
+            for (int i = 0; i < MOD_SLOTS; i++)
+                if (ov.mods.pick[i] > 0 && !modIsFactory(ov.vehicle, i, ov.mods.pick[i])) c.owned.insert(modPartKey(ov.vehicle, i, ov.mods.pick[i]));
+        }
+        for (int i = 0; i < MOD_SLOTS; i++) ov.mods.pick[i] = std::min(std::max(ov.mods.pick[i], 0), (int)modOptions(ov.vehicle, i).size() - 1);
+    }
     if (!sawCash) return false;
     // A career from before anchor gear: the starting set (a strap and a sling are never used up, so none means none yet).
     if (!c.stock.count(anchors::gearKey(GEAR_STRAP)) && !c.stock.count(anchors::gearKey(GEAR_SLING))) {
@@ -411,6 +414,7 @@ bool validCareerText(const std::string& text) {
 
 std::string careerText(const Career& c) {
     std::ostringstream f;
+    f << "parts " << kPartsVersion << '\n';  // (which parts lists the vehicles' picks count in: mods.h)
     f << "cash " << c.cash << '\n';
     for (const auto& k : c.owned) f << "own " << k << '\n';
     for (const auto& k : c.opened) f << "cache " << k << '\n';

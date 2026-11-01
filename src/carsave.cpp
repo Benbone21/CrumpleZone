@@ -172,6 +172,12 @@ bool fields(const std::string& text, std::map<std::string, std::string>& kv) {
     return true;
 }
 
+// A text from before parts list 2 (no "parts=2"): its mods count in the old, longer lists (mods.h).
+bool savedBeforeParts2(const std::map<std::string, std::string>& kv) {
+    const auto it = kv.find("parts");
+    return it == kv.end() || std::atoi(it->second.c_str()) < kPartsVersion;
+}
+
 // Which catalog vehicle and mods a car is (net.cpp's specId does the same for the wire).
 bool identify(const Car& c, int& vehicle, ModSet& mods) {
     mods = ModSet();
@@ -382,6 +388,7 @@ std::string capture(const Sim& sim, const Car& c) {
     s += " veh=" + std::to_string(vehicle);
     s += " mods=";
     for (int k = 0; k < MOD_SLOTS; k++) s += (k ? "," : "") + std::to_string(mods.pick[k]);
+    s += " parts=" + std::to_string(kPartsVersion);  // (the lists the picks count in: mods.h; none means the old ones)
     s += " com=" + num(com.x) + ',' + num(com.y) + ',' + num(com.z);
     s += " rot=" + num(rot.w) + ',' + num(rot.x) + ',' + num(rot.y) + ',' + num(rot.z);
     s += " fuel=" + num(c.fuel) + " jerry=" + num(c.jerry);
@@ -436,10 +443,11 @@ ModSet modsOf(const std::string& text) {
     const int v = vehicleOf(text);
     double p[MOD_SLOTS];
     if (v < 0 || !fields(text, kv) || !nums(kv["mods"], p, MOD_SLOTS)) return m;
+    const bool old = savedBeforeParts2(kv);
     for (int k = 0; k < MOD_SLOTS; k++)
-        if (p[k] < 0 || p[k] >= (double)modOptions(v, k).size() || p[k] != std::floor(p[k])) return ModSet();
+        if (p[k] < 0 || p[k] >= (old ? 256.0 : (double)modOptions(v, k).size()) || p[k] != std::floor(p[k])) return ModSet();
     for (int k = 0; k < MOD_SLOTS; k++) m.pick[k] = (int)p[k];
-    return m;
+    return old ? modLegacyMods(v, m) : m;
 }
 
 bool paintOf(const std::string& text, CarPaint& out) {
@@ -484,6 +492,15 @@ bool restore(Sim& sim, Car& c, const std::string& text) {
     ModSet mods;
     double pm[MOD_SLOTS];
     if (!identify(c, vehicle, mods) || vehicleOf(text) != vehicle || !nums(kv["mods"], pm, MOD_SLOTS)) return false;
+    if (savedBeforeParts2(kv)) {  // (its picks in the old lists: the car is built on today's nearest parts, modsOf)
+        ModSet old;
+        for (int k = 0; k < MOD_SLOTS; k++) {
+            if (pm[k] < 0 || pm[k] > 255 || pm[k] != std::floor(pm[k])) return false;
+            old.pick[k] = (int)pm[k];
+        }
+        const ModSet now = modLegacyMods(vehicle, old);
+        for (int k = 0; k < MOD_SLOTS; k++) pm[k] = now.pick[k];
+    }
     for (int k = 0; k < MOD_SLOTS; k++)
         if (pm[k] != mods.pick[k]) return false;
 

@@ -51,15 +51,134 @@ SCENARIO(careerOwnership, "career/ownership", "Sandbox owns everything; a career
             }
     ctx.check("career: every vehicle's factory parts fit", factory);
     ctx.check("career: nothing else does, to begin with", nothingElse);
-    // The Blazer's 454 is one part, wherever it's offered.
-    const std::string bigBlock = modFindPart("blazer", MOD_ENGINE, "454 BIG BLOCK");
-    const int onBlazer = optionFor(blazer, MOD_ENGINE, bigBlock), onCivic = optionFor(civic, MOD_ENGINE, bigBlock);
-    ctx.check("the 454 is offered on the Blazer and on the Civic", onBlazer > 0 && onCivic > 0, bigBlock);
-    ctx.check("its name", modPartTitle(bigBlock) == "BLAZER: 454 BIG BLOCK", modPartTitle(bigBlock));
+    // The Blazer's big V8 is its own part; the wheel sizes and treads are the same part on every vehicle.
+    const std::string bigBlock = modFindPart("blazer", MOD_ENGINE, "BIG V8");
+    const int onBlazer = optionFor(blazer, MOD_ENGINE, bigBlock);
+    ctx.check("the big V8 is offered on the Blazer, not the Civic", onBlazer > 0 && optionFor(civic, MOD_ENGINE, bigBlock) < 0, bigBlock);
+    ctx.check("its name", modPartTitle(bigBlock) == "BLAZER: BIG V8", modPartTitle(bigBlock));
     c.grant(bigBlock);
-    ctx.check("found once, it fits both", c.owns(blazer, MOD_ENGINE, onBlazer) && c.owns(civic, MOD_ENGINE, onCivic));
+    ctx.check("found, it fits", c.owns(blazer, MOD_ENGINE, onBlazer));
     const std::string slicks = "TIRES:RACE SLICK";
-    ctx.check("race slicks: the same part on every vehicle", optionFor(civic, MOD_TIRES, slicks) > 0 && optionFor(vehicleIndex("bronco"), MOD_TIRES, slicks) > 0);
+    ctx.check("race tires: the same part on every vehicle", optionFor(civic, MOD_TIRES, slicks) > 0 && optionFor(vehicleIndex("bronco"), MOD_TIRES, slicks) > 0);
+    ctx.check("their name", modPartTitle(slicks) == "RACE TIRES", modPartTitle(slicks));
+    const std::string huge = "WHEELS:buggy:0";
+    const int hugeCivic = optionFor(civic, MOD_WHEELS, huge), hugeBlazer = optionFor(blazer, MOD_WHEELS, huge);
+    c.grant(huge);
+    ctx.check("huge wheels: one part, found once, fit both", hugeCivic > 0 && hugeBlazer > 0 && c.owns(civic, MOD_WHEELS, hugeCivic) && c.owns(blazer, MOD_WHEELS, hugeBlazer) &&
+                                                                 modPartTitle(huge) == "HUGE WHEELS", modPartTitle(huge));
+}
+
+SCENARIO(partsSimple, "career/parts-simple", "Every slot of every vehicle: the factory part and two or three more, each named plainly and differently, with no part numbers") {
+    bool sizes = true, distinct = true, plain = true;
+    std::string bad;
+    for (int v = 0; v < (int)vehicleCatalog().size(); v++)
+        for (int k = 0; k < MOD_SLOTS; k++) {
+            const auto& o = modOptions(v, k);
+            const std::string where = std::string(vehicleCatalog()[v].id) + " " + modSlotName(k);
+            if (o.size() < 3 || o.size() > 4) sizes = false, bad += where + " has " + std::to_string(o.size()) + "; ";
+            for (size_t i = 0; i < o.size(); i++) {
+                for (size_t j = 0; j < i; j++)
+                    if (o[i].name == o[j].name) distinct = false, bad += where + " twice: " + o[i].name + "; ";
+                // (A plain name is short and has no codes: a word with letters and digits in it is a count, "3-SPEED",
+                // a V and its cylinders, "V8", or a part number, "ZZ4", "B18C".)
+                bool coded = o[i].name.size() > 20;
+                std::string word;
+                for (char ch : o[i].name + " ") {
+                    if (ch != ' ') {
+                        word += ch;
+                        continue;
+                    }
+                    bool digit = false, letter = false;
+                    for (char w : word) digit |= w >= '0' && w <= '9', letter |= w >= 'A' && w <= 'Z';
+                    const bool vee = word.size() == 2 && word[0] == 'V' && word[1] >= '0' && word[1] <= '9';
+                    if (digit && letter && word.find('-') == std::string::npos && !vee) coded = true;
+                    word.clear();
+                }
+                if (coded) plain = false, bad += where + ": " + o[i].name + "; ";
+            }
+        }
+    ctx.check("3 or 4 options in every slot", sizes, bad);
+    ctx.check("each named differently", distinct, bad);
+    ctx.check("plain names (no part numbers, 20 letters at most)", plain, bad);
+}
+
+SCENARIO(partsMigrate, "career/parts-migrate", "Saves from before parts list 2 load: a garage, a career's owned parts and its vehicles, and a car's condition text each get the nearest part today") {
+    const int civic = vehicleIndex("civic"), blazer = vehicleIndex("blazer"), bronco = vehicleIndex("bronco"), runner = vehicleIndex("4runner");
+    auto pickNamed = [](int v, int k, const char* name) {
+        for (int o = 0; o < (int)modOptions(v, k).size(); o++)
+            if (modOptions(v, k)[o].name == name) return o;
+        return -1;
+    };
+    // The old lists, one by one: every old pick maps onto a real option today, and a part still there is itself.
+    const int oldSizes[MOD_SLOTS] = {31, 32, 32, 9, 6};
+    bool real = true, kept = true;
+    for (int v = 0; v < (int)vehicleCatalog().size(); v++)
+        for (int k = 0; k < MOD_SLOTS; k++)
+            for (int o = 0; o < oldSizes[k]; o++) {
+                const std::string old = modLegacyKey(v, k, o);
+                const int now = modLegacyPick(v, k, o);
+                real &= !old.empty() && now >= 0 && now < (int)modOptions(v, k).size();
+                for (int n = 0; n < (int)modOptions(v, k).size(); n++)
+                    if (modPartKey(v, k, n) == old) kept &= now == n;
+            }
+    ctx.check("every old pick has a part today", real);
+    ctx.check("a part that's still there is still itself", kept);
+    // The Blazer's old engine list: 0 stock, 1 the 350 four-barrel (cut), 2 the 454, 3 the ZZ4, then the Civic's four, the Jesko's three...
+    ctx.check("old Blazer engines: the 454 is the BIG V8, the four-barrel (cut) the BIG V8 too, the ZZ4 the HOT ROD V8",
+              modLegacyPick(blazer, MOD_ENGINE, 2) == pickNamed(blazer, MOD_ENGINE, "BIG V8") && modLegacyPick(blazer, MOD_ENGINE, 1) == pickNamed(blazer, MOD_ENGINE, "BIG V8") &&
+                  modLegacyPick(blazer, MOD_ENGINE, 3) == pickNamed(blazer, MOD_ENGINE, "HOT ROD V8"));
+    ctx.check("the Jesko's V8 swapped into the Blazer: its strongest engine", modLegacyKey(blazer, MOD_ENGINE, 8) == "ENGINE:jesko:0" &&
+                                                                                 modLegacyPick(blazer, MOD_ENGINE, 8) == pickNamed(blazer, MOD_ENGINE, "HOT ROD V8"));
+    ctx.check("the Civic's 1.6 swapped into the Blazer: its factory engine", modLegacyKey(blazer, MOD_ENGINE, 4) == "ENGINE:civic:0" && modLegacyPick(blazer, MOD_ENGINE, 4) == 0);
+    ctx.check("another truck's wheels: the nearest size (the buggy's: HUGE WHEELS)", modLegacyKey(blazer, MOD_WHEELS, 5) == "WHEELS:buggy:0" &&
+                                                                                      modLegacyPick(blazer, MOD_WHEELS, 5) == pickNamed(blazer, MOD_WHEELS, "HUGE WHEELS"));
+    ctx.check("another truck's suspension: the factory one", modLegacyPick(runner, MOD_SUSPENSION, 13) == 0);
+    ctx.check("snow tires (cut): all-terrains, here the factory tread", modLegacyKey(blazer, MOD_TIRES, 5) == "TIRES:SNOW" && modLegacyPick(blazer, MOD_TIRES, 5) == 0 &&
+                                                                         modLegacyPick(civic, MOD_TIRES, 5) == pickNamed(civic, MOD_TIRES, "ALL-TERRAIN TIRES"));
+    ctx.check("semi-slicks (cut): street tires", modLegacyPick(blazer, MOD_TIRES, 2) == pickNamed(blazer, MOD_TIRES, "STREET TIRES"));
+    ctx.check("cut parts' keys go to the nearest one; others stay", modMigrateKey("ENGINE:blazer:1") == "ENGINE:blazer:2" && modMigrateKey("TIRES:SNOW") == "TIRES:ALL-TERRAIN" &&
+                                                                       modMigrateKey("TIRES:SEMI-SLICK") == "TIRES:STREET" && modMigrateKey("ENGINE:blazer:3") == "ENGINE:blazer:3" &&
+                                                                       modMigrateKey("TIRES:RACE SLICK") == "TIRES:RACE SLICK" && modMigrateKey("TOOL:HAMMER") == "TOOL:HAMMER");
+
+    // An old garage.txt (no "parts" line): the Blazer on the 454, the 4Runner's long travel, the Bronco's 4.70 gears (cut) and buggy wheels.
+    makeDir("build/test-career");
+    const std::string garagePath = "build/test-career/old-garage.txt";
+    {
+        std::ofstream f(garagePath);
+        f << "blazer 2 1 2 5 2\n4runner 0 2 1 0 0\nbronco 0 0 1 5 0\n";
+    }
+    Garage g;
+    ctx.check("an old garage loads", g.load(garagePath));
+    ctx.check("the Blazer: BIG V8, LIFT KIT, LOCKERS, HUGE WHEELS, STREET TIRES",
+              g.fitted[blazer].pick[MOD_ENGINE] == pickNamed(blazer, MOD_ENGINE, "BIG V8") && g.fitted[blazer].pick[MOD_SUSPENSION] == pickNamed(blazer, MOD_SUSPENSION, "LIFT KIT") &&
+                  g.fitted[blazer].pick[MOD_TRANSMISSION] == pickNamed(blazer, MOD_TRANSMISSION, "LOCKERS") &&
+                  g.fitted[blazer].pick[MOD_WHEELS] == pickNamed(blazer, MOD_WHEELS, "HUGE WHEELS") && g.fitted[blazer].pick[MOD_TIRES] == pickNamed(blazer, MOD_TIRES, "STREET TIRES"));
+    ctx.check("the 4Runner: BIG LIFT, and the 4.88 regear (cut) is LOCKERS", g.fitted[runner].pick[MOD_SUSPENSION] == pickNamed(runner, MOD_SUSPENSION, "BIG LIFT") &&
+                                                                              g.fitted[runner].pick[MOD_TRANSMISSION] == pickNamed(runner, MOD_TRANSMISSION, "LOCKERS"));
+    ctx.check("the Bronco: its 4.70 gears (cut) are LOCKERS", g.fitted[bronco].pick[MOD_TRANSMISSION] == pickNamed(bronco, MOD_TRANSMISSION, "LOCKERS"));
+    ctx.check("saved again, it says which lists", g.save(garagePath));
+    Garage h;
+    bool same = h.load(garagePath);
+    for (size_t v = 0; v < g.fitted.size(); v++)
+        for (int k = 0; k < MOD_SLOTS; k++) same &= h.fitted[v].pick[k] == g.fitted[v].pick[k];
+    ctx.check("and loads back the same (not migrated twice)", same);
+    std::remove(garagePath.c_str());
+
+    // An old career: owned parts that were cut, and a vehicle whose picks are in the old lists.
+    std::istringstream oldText("cash 500\nown TIRES:SNOW\nown ENGINE:blazer:1\nown TIRES:RACE SLICK\nveh " + std::to_string(blazer) + " my-world 8 0 0 0 0\n");
+    const std::string careerPath = "build/test-career/old-career.txt";
+    {
+        std::ofstream f(careerPath);
+        f << oldText.str();
+    }
+    Career c;
+    c.on = true;
+    ctx.check("an old career loads", c.load(careerPath));
+    ctx.check("its cut parts are their nearest ones", c.owned.count("TIRES:ALL-TERRAIN") && c.owned.count("ENGINE:blazer:2") && c.owned.count("TIRES:RACE SLICK") &&
+                                                          !c.owned.count("TIRES:SNOW") && !c.owned.count("ENGINE:blazer:1"));
+    ctx.check("its Blazer had the Jesko's V8: now its HOT ROD V8, and that's owned",
+              c.vehicles.size() == 1 && c.vehicles[0].mods.pick[MOD_ENGINE] == pickNamed(blazer, MOD_ENGINE, "HOT ROD V8") && c.owns(blazer, MOD_ENGINE, c.vehicles[0].mods.pick[MOD_ENGINE]));
+    std::remove(careerPath.c_str());
 }
 
 SCENARIO(careerShop, "career/shop", "The stations sell everyday and serious parts (the serious ones dear), not the best ones; buying takes the cash and the part fits every vehicle") {
@@ -67,16 +186,17 @@ SCENARIO(careerShop, "career/shop", "The stations sell everyday and serious part
     c.on = true;
     c.startFresh();
     const int civic = vehicleIndex("civic"), bronco = vehicleIndex("bronco");
-    const int street = optionFor(civic, MOD_TIRES, "TIRES:SNOW"), slick = optionFor(civic, MOD_TIRES, "TIRES:RACE SLICK");
-    const int jeskoV8 = optionFor(civic, MOD_ENGINE, modFindPart("jesko", MOD_ENGINE, "RACE FUEL"));
-    ctx.check("snow tires are everyday kit", Career::tier(civic, MOD_TIRES, street) == 1 && Career::price(civic, MOD_TIRES, street) > 0);
-    ctx.check("race slicks are the best: not for sale", Career::tier(civic, MOD_TIRES, slick) == 3 && Career::price(civic, MOD_TIRES, slick) == 0);
-    ctx.check("the Jesko's race V8: not for sale", jeskoV8 > 0 && Career::price(civic, MOD_ENGINE, jeskoV8) == 0);
+    const int street = optionFor(civic, MOD_TIRES, "TIRES:ALL-TERRAIN"), slick = optionFor(civic, MOD_TIRES, "TIRES:RACE SLICK");
+    const int jesko = vehicleIndex("jesko"), jeskoV8 = optionFor(jesko, MOD_ENGINE, modFindPart("jesko", MOD_ENGINE, "RACE TUNE"));
+    ctx.check("all-terrain tires are everyday kit", Career::tier(civic, MOD_TIRES, street) == 1 && Career::price(civic, MOD_TIRES, street) > 0);
+    ctx.check("race tires are the best: not for sale", Career::tier(civic, MOD_TIRES, slick) == 3 && Career::price(civic, MOD_TIRES, slick) == 0);
+    ctx.check("the Jesko's race tune: not for sale", jeskoV8 > 0 && Career::price(jesko, MOD_ENGINE, jeskoV8) == 0);
     std::string why;
     const int cash0 = c.cash, p = Career::price(civic, MOD_TIRES, street);
-    ctx.check("buys snow tires", c.buy(civic, MOD_TIRES, street, why) && c.cash == cash0 - p, why);
-    const int onBronco = optionFor(bronco, MOD_TIRES, "TIRES:SNOW");
-    ctx.check("...and they fit the Bronco too", onBronco > 0 && c.owns(bronco, MOD_TIRES, onBronco));
+    ctx.check("buys all-terrain tires", c.buy(civic, MOD_TIRES, street, why) && c.cash == cash0 - p, why);
+    const int onJesko = optionFor(jesko, MOD_TIRES, "TIRES:ALL-TERRAIN");
+    ctx.check("...and they fit the Jesko too", onJesko > 0 && c.owns(jesko, MOD_TIRES, onJesko));
+    (void)bronco;
     ctx.check("can't buy them twice", !c.buy(civic, MOD_TIRES, street, why), why);
     // Something dear: more than is left.
     int dear = -1;

@@ -302,7 +302,7 @@ SCENARIO(shopPreview, "shop/preview", "Trying parts on rebuilds the truck on the
 SCENARIO(shopStats, "shop/stats", "The card's numbers are the real ones: power from the tuned spec, weight always shown, a bigger tire shows its size and clearance") {
     const int v = vehicleIndex("bronco");
     ModSet with;
-    with.pick[MOD_ENGINE] = 3;  // (the Raptor V6)
+    with.pick[MOD_ENGINE] = 2;  // (the BIG V6)
     const std::vector<Stat> st = compare(v, ModSet(), with);
     bool power = false, weight = false;
     for (const Stat& s : st) {
@@ -313,7 +313,7 @@ SCENARIO(shopStats, "shop/stats", "The card's numbers are the real ones: power f
     ctx.check("power: fitted and with it, from the specs", power);
     ctx.check("weight: the heavier engine shows", weight);
     ModSet lift;
-    lift.pick[MOD_SUSPENSION] = 2;  // (3 in lift and 37s)
+    lift.pick[MOD_SUSPENSION] = 2;  // (BIG LIFT: 37s)
     bool tire = false, clear = false;
     for (const Stat& s : compare(v, ModSet(), lift)) {
         if (s.label == "TIRE") tire = s.with > s.now;

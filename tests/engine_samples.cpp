@@ -101,8 +101,8 @@ void recordedEngineTests(const std::function<void(const char*, bool)>& check, vo
             mapped &= recording > 0 && recording < kBanks;
         }
     }
-    ModSet b16; b16.pick[MOD_ENGINE] = 2;
-    ModSet raptor; raptor.pick[MOD_ENGINE] = 3;
+    ModSet b16; b16.pick[MOD_ENGINE] = 1;  // (the Civic's SPORT ENGINE)
+    ModSet raptor; raptor.pick[MOD_ENGINE] = 2;  // (the Bronco's BIG V6)
     check("all catalog engines and swaps map to engine-specific recording banks", mapped && forVehicle(tunedSpec(0, b16)) == id("honda_b16a") && forVehicle(tunedSpec(2, raptor)) == id("ford_30_raptor") && forVehicle(vehicleCatalog()[3]) == id("toyota_5vz_supercharged"));
     auto capture = [&](Audio& audio) {
         std::vector<float> output(48000); float block[1024];

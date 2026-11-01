@@ -138,8 +138,8 @@ SCENARIO(jeskoStraightAccel, "dynamics/jesko-straight-accel",
         const VehicleSpec* spec;
     } builds[] = {
         {"stock", &vehicleCatalog()[1]},
-        {"race slicks", &jeskoWith({"RACE SLICKS"})},
-        {"boost, track setup, slicks", &jeskoWith({"RACE FUEL AND BOOST", "TRACK SETUP", "TRACK DIFF MAP", "RACE SLICKS"})},
+        {"race slicks", &jeskoWith({"RACE TIRES"})},
+        {"boost, track setup, slicks", &jeskoWith({"RACE TUNE", "TRACK SUSPENSION", "RACE TIRES"})},
     };
     for (const Build& b : builds) {
         const std::string on = b.name;

@@ -213,7 +213,7 @@ void driveShelf(Ctx& ctx, bool scanned) {
         for (int i = 0; i < (int)o.size(); i++)
             if (o[i].name == name) m.pick[slot] = i;
     };
-    pick(MOD_ENGINE, "ZZ4 CRATE 350"), pick(MOD_SUSPENSION, "4 IN LIFT AND 35S"), pick(MOD_TRANSMISSION, "4.56 GEARS AND LOCKERS");
+    pick(MOD_ENGINE, "HOT ROD V8"), pick(MOD_SUSPENSION, "LIFT KIT"), pick(MOD_TRANSMISSION, "LOCKERS");
     static VehicleSpec spec;
     spec = tunedSpec(v, m);
     const V3 p0 = b.line[3], p1 = b.line[4];
