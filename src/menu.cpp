@@ -174,6 +174,7 @@ bool Settings::save(const std::string& path) const {
     std::fprintf(f, "crouchtoggle %d\n", crouchToggle ? 1 : 0);
     std::fputs(throttle.saveText().c_str(), f);
     for (int a = 0; a < KA_COUNT; a++) std::fprintf(f, "%s %d\n", settingsName((KeyAction)a), keys.saveValue((KeyAction)a));
+    for (int a = 0; a < KA_COUNT; a++) std::fprintf(f, "%s %d\n", padSettingsName((KeyAction)a).c_str(), keys.padSaveValue((KeyAction)a));
 
     std::fclose(f);
     return true;
@@ -404,6 +405,11 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     return r;
 }
 
+// A keybinds row's value: the key, then the pad binding.
+static std::string bindingText(const Keybinds& kb, KeyAction a) {
+    return kb.name(a) + "  /  " + kb.padName(a, pad::ui.style == pad::Style::PlayStation);
+}
+
 const char* PauseMenu::tabName(int t) {
     static const char* n[T_COUNT] = {"GRAPHICS", "CONTROLS", "AUDIO", "GENERAL", "DEV"};
     return t >= 0 && t < T_COUNT ? n[t] : "";
@@ -481,15 +487,23 @@ std::vector<PauseMenu::Row> PauseMenu::rowsFor(int tabIndex, const Settings& s) 
         choice(THROTTLERESP, "THROTTLE RESPONSE", throttle::kResponseNames[resp], 3, respHint[resp]);
         choice(THROTTLEPAD, "APPLIES TO PAD", kOffOn[s.throttle.padToo], 2, "THE LIMIT ALSO SCALES THE TRIGGER (OFF: KEYBOARD ONLY)");
         choice(CROUCHMODE, "CROUCH ON FOOT", s.crouchToggle ? "TOGGLE" : "HOLD", 2, "HOLD THE KEY TO STAY LOW, OR PRESS IT TO CROUCH AND AGAIN TO STAND");
-        header(listening >= 0 ? "PRESS THE NEW KEY (SHIFT+KEY FOR A COMBO). ESC CANCELS, BACKSPACE CLEARS" : keyNote.empty() ? "KEYBOARD KEYS: ENTER ON A ROW, THEN PRESS A KEY" : keyNote);
-        button(CONTROLS_ROW, "SHOW THE CONTROLS OVERLAY", s.keys.name(KA_HELP) + " IN THE GAME");
+        {
+            const bool ps = pad::ui.style == pad::Style::PlayStation;
+            const std::string ok = pad::ui.last ? pad::buttonName(pad::B_A, pad::ui.style) : std::string("ENTER");
+            const std::string def = pad::ui.last ? s.keys.padName(KA_UI_FACTORY, ps) : s.keys.name(KA_UI_FACTORY);
+            const std::string clr = pad::ui.last ? s.keys.padName(KA_UI_SECOND, ps) : s.keys.name(KA_UI_SECOND);
+            header(listening >= 0 ? "PRESS A KEY OR A PAD BUTTON. ESC / START CANCELS, BACKSPACE CLEARS"
+                   : keyNote.empty() ? "KEY / PAD:  " + ok + " REBINDS   " + def + " DEFAULT   " + clr + " CLEARS"
+                                     : keyNote);
+        }
+        button(CONTROLS_ROW, "SHOW THE CONTROLS OVERLAY", s.keys.name(KA_HELP) + " / " + s.keys.padName(KA_HELP, pad::ui.style == pad::Style::PlayStation) + " IN THE GAME");
         for (int g = 0; g < KG_COUNT; g++) {
-            header(g == KG_DEV ? "DEV: ONLY IN DEV KEYS MODE (THE FIRST THREE ALWAYS)" : groupLabel((KeyGroup)g));
+            header(g == KG_DEV ? "DEV: ONLY IN DEV KEYS MODE (THE FIRST FOUR ALWAYS)" : g == KG_MENU ? "MENUS (ESC, ENTER, THE ARROWS, A, B AND START ALWAYS WORK TOO)" : groupLabel((KeyGroup)g));
             for (int a = 0; a < KA_COUNT; a++)
                 if (actionGroup((KeyAction)a) == (KeyGroup)g)
-                    button(KEY_ROW0 + a, actionLabel((KeyAction)a), listening == a ? "PRESS A KEY..." : s.keys.name((KeyAction)a));
+                    button(KEY_ROW0 + a, actionLabel((KeyAction)a), listening == a ? "PRESS A KEY OR BUTTON..." : bindingText(s.keys, (KeyAction)a));
         }
-        button(KEYS_RESET, "RESET ALL TO DEFAULTS", s.keys.isDefault() ? "" : "THE GAME'S OWN KEYS");
+        button(KEYS_RESET, "RESET ALL TO DEFAULTS", s.keys.isDefault() ? "" : "EVERY KEY AND PAD BUTTON");
         button(BACK_ROW, "BACK");
         return r;
     }
@@ -998,16 +1012,17 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
             return {CHANGED};
         }
         if (sc >= 224 && sc < 232 && !(sc == SC_LCTRL && a == KA_CROUCH)) return {};  // (a modifier on its own: wait for the key it goes with)
-        if (!bindable(sc)) {
-            keyNote = "THAT KEY CAN'T BE USED";
+        if (!bindableFor(a, sc)) {
+            keyNote = sc == SC_RETURN ? "ENTER IS ALWAYS OK IN THE MENUS: PICK ANOTHER KEY" : "THAT KEY CAN'T BE USED";
             return {};
         }
+        const int had = s.keys.clashWith(a, sc, shift);
         if (!s.keys.bind(a, sc, shift)) {
-            keyNote = "KEY IN USE: PICK A FREE KEY FOR THE MENU";
+            keyNote = a == KA_MENU || had < 0 ? "KEY IN USE: PICK A FREE KEY FOR THE MENU" : "KEY IN USE BY " + std::string(actionLabel((KeyAction)had)) + ", WHICH CAN'T SWAP: PICK ANOTHER";
             return {};
         }
         listening = -1;
-        keyNote.clear();
+        keyNote = had >= 0 ? "SWAPPED: " + std::string(actionLabel((KeyAction)had)) + " IS NOW " + s.keys.name((KeyAction)had) : std::string();
         return {CHANGED};
     }
     // A text field has focus: the keys edit it (typed characters arrive as text, see textInput).
@@ -1036,6 +1051,26 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
             if (sc != SC_ESCAPE) return {};
         }
     }
+    // Everything else is the menu keys: whatever the player bound turned into the arrows, Enter, Esc and the UK_* keys.
+    sc = s.keys.uiKey(sc, shift);
+    if (page == 1 && tab == T_CONTROLS && (sc == UK_FACTORY || sc == UK_SECOND)) {  // a binding row: its defaults back, or cleared
+        std::vector<Row> r = rows(s);
+        if (sel >= 0 && sel < (int)r.size() && r[sel].id >= KEY_ROW0 && r[sel].id < KEY_ROWN) {
+            const KeyAction a = (KeyAction)(r[sel].id - KEY_ROW0);
+            if (sc == UK_FACTORY) {
+                s.keys.resetAction(a);
+                keyNote = std::string(actionLabel(a)) + ": " + bindingText(s.keys, a);
+            } else if (fromPad) {
+                if (a == KA_MENU) keyNote = "START IS ALWAYS THE MENU";
+                else s.keys.unbindPad(a), keyNote = std::string(actionLabel(a)) + ": NO PAD BUTTON";
+            } else {
+                if (a == KA_MENU) s.keys.bind(a, SC_ESCAPE);
+                else s.keys.unbind(a);
+                keyNote = std::string(actionLabel(a)) + ": " + (a == KA_MENU ? "ESC" : "NO KEY");
+            }
+            return {CHANGED};
+        }
+    }
     if (sc == SC_ESCAPE) {
         if (page != 0) return activate([&] {
                 std::vector<Row> r = rows(s);
@@ -1045,18 +1080,55 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
             }(), s);
         return title ? Result{} : Result{RESUME};  // (the title: nothing to go back to)
     }
-    if (page == 1 && (sc == SC_Q || sc == SC_E)) {  // the tabs (the pad's shoulder buttons arrive as these keys)
-        stepTab(sc == SC_E ? 1 : -1);
+    if (page == 1 && (sc == UK_TAB_PREV || sc == UK_TAB_NEXT)) {  // the tabs (Q / E, the pad's shoulder buttons)
+        stepTab(sc == UK_TAB_NEXT ? 1 : -1);
         return {};
     }
-    if (sc == SC_W || sc == SC_UP) moveSel(-1, s);
-    else if (sc == SC_S || sc == SC_DOWN) moveSel(1, s);
-    else if ((sc == SC_A || sc == SC_LEFT) && page == 2 && switchCard(-1)) return {};
-    else if ((sc == SC_D || sc == SC_RIGHT) && page == 2 && switchCard(1)) return {};
-    else if (sc == SC_A || sc == SC_LEFT) return change(sel, -1, s);
-    else if (sc == SC_D || sc == SC_RIGHT) return change(sel, 1, s);
-    else if (sc == SC_RETURN || sc == SC_KP_ENTER || sc == SC_SPACE) return activate(sel, s);
+    if (sc == SC_UP) moveSel(-1, s);
+    else if (sc == SC_DOWN) moveSel(1, s);
+    else if (sc == SC_LEFT && page == 2 && switchCard(-1)) return {};
+    else if (sc == SC_RIGHT && page == 2 && switchCard(1)) return {};
+    else if (sc == SC_LEFT) return change(sel, -1, s);
+    else if (sc == SC_RIGHT) return change(sel, 1, s);
+    else if (sc == SC_RETURN || sc == SC_KP_ENTER) return activate(sel, s);
     return {};
+}
+
+PauseMenu::Result PauseMenu::padKey(const pad::Press& p, Settings& s) {
+    if (!open || page != 1 || tab != T_CONTROLS || listening < 0) return {};
+    const KeyAction a = (KeyAction)listening;
+    if (p.input == PI_START && !p.modifierTap) {  // (Start cancels, like Esc)
+        listening = -1;
+        keyNote.clear();
+        return {};
+    }
+    int bind;
+    if (isUiAction(a)) {  // a menu key: any button as it is (no layers in the menus)
+        if (p.modifierTap) return {};
+        bind = p.input;
+    } else {  // the game: a button with the layers held, or VIEW tapped on its own (LB is only ever a layer)
+        if (p.modifier) return {};
+        if (p.modifierTap && p.input == PI_LB) {
+            keyNote = "LB IS THE SECOND LAYER: HOLD IT AND PRESS A BUTTON";
+            return {};
+        }
+        bind = p.modifierTap ? p.input : p.input | p.mods;
+    }
+    const bool ps = pad::ui.style == pad::Style::PlayStation;
+    if (!padBindable(a, bind)) {
+        keyNote = a == KA_MENU ? "START IS ALWAYS THE MENU"
+                  : isUiAction(a) && (bind == PI_A || bind == PI_B) ? padBindName(bind, ps) + " IS ALWAYS " + (bind == PI_A ? "OK" : "BACK") + " IN THE MENUS"
+                                                                     : padBindName(bind, ps) + " CAN'T BE USED";
+        return {};
+    }
+    const int had = s.keys.padClashWith(a, bind);
+    if (!s.keys.bindPad(a, bind)) {
+        keyNote = padBindName(bind, ps) + " CAN'T BE USED";
+        return {};
+    }
+    listening = -1;
+    keyNote = had >= 0 ? "SWAPPED: " + std::string(actionLabel((KeyAction)had)) + " IS NOW " + s.keys.padName((KeyAction)had, ps) : std::string();
+    return {CHANGED};
 }
 
 int PauseMenu::hitAt(float x, float y) const {

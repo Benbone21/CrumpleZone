@@ -111,6 +111,8 @@ Pedals pedals(double rt, double lt, double vf, int gear, bool manual) {
 
 void Logic::update(const Raw& raw, Mode ctx, double dt) {
     taps.clear();
+    presses.clear();
+    const Keybinds& kb = binds ? *binds : defaultKeybinds();
     const uint32_t down = raw.buttons, pressed = down & ~prev_, released = prev_ & ~down;
     prev_ = down;
     in = Intent();
@@ -121,94 +123,150 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
     in.anyInput = down != 0 || stickUse || rt > 0.2f || lt > 0.2f;
     // (The HUD switches to button names on a deliberate press, not a drifting stick.)
     if (pressed != 0 || rt > 0.3f || lt > 0.3f || std::hypot(L.x, L.y) > 0.6f || std::hypot(R.x, R.y) > 0.6f) ui.last = true;
-    auto P = [&](Button b) { return (pressed & bit(b)) != 0; };
     auto D = [&](Button b) { return (down & bit(b)) != 0; };
-    auto tap = [&](int sc, bool shift = false) { taps.push_back({sc, shift}); };
+    auto tap = [&](int sc, bool shift, int action) { taps.push_back({sc, shift, action}); };
+
+    // Every input's value now (the held actions read these: buttons 0 / 1, the triggers and stick directions
+    // shaped) and the ones pressed this frame (a button; a trigger past half way; a stick pushed most of the way).
+    float v[PI_COUNT] = {};
+    for (int b = 0; b < B_COUNT; b++) v[b + 1] = D((Button)b) ? 1.0f : 0.0f;
+    v[PI_LT] = lt, v[PI_RT] = rt;
+    v[PI_LS_LEFT] = std::max(0.0f, -L.x), v[PI_LS_RIGHT] = std::max(0.0f, L.x), v[PI_LS_UP] = std::max(0.0f, -L.y), v[PI_LS_DOWN] = std::max(0.0f, L.y);
+    v[PI_RS_LEFT] = std::max(0.0f, -R.x), v[PI_RS_RIGHT] = std::max(0.0f, R.x), v[PI_RS_UP] = std::max(0.0f, -R.y), v[PI_RS_DOWN] = std::max(0.0f, R.y);
+    int fresh[PI_COUNT];
+    int nFresh = 0;
+    for (int b = 0; b < B_COUNT; b++)
+        if (pressed & bit((Button)b)) fresh[nFresh++] = b + 1;
+    for (int i = PI_LT; i < PI_COUNT; i++) {
+        const bool trig = i == PI_LT || i == PI_RT;
+        const bool now = analogOn_[i] ? v[i] > (trig ? 0.3f : 0.4f) : v[i] > (trig ? 0.5f : 0.75f);
+        if (now && !analogOn_[i]) fresh[nFresh++] = i;
+        analogOn_[i] = now;
+    }
+    // The layers: LB and VIEW held. Each is a modifier only while something is pressed with it; let go alone, it was a tap.
+    const int mods = (D(B_LB) ? PM_LB : 0) | (D(B_BACK) ? PM_VIEW : 0);
+    bool lbTap = false, viewTap = false;
+    for (int k = 0; k < nFresh; k++) {
+        const int i = fresh[k];
+        if (i == PI_LB) lbClean_ = !D(B_BACK), viewClean_ = false;
+        else if (i == PI_BACK) viewClean_ = !D(B_LB), lbClean_ = false;
+        else lbClean_ = viewClean_ = false;
+    }
+    if (released & bit(B_LB)) lbTap = lbClean_, lbClean_ = false;
+    if (released & bit(B_BACK)) viewTap = viewClean_, viewClean_ = false;
     if (ctx == Mode::Off) {
         for (bool& d : dir_) d = false;
+        lbClean_ = viewClean_ = false;
         return;
     }
+    for (int k = 0; k < nFresh; k++) {
+        const int i = fresh[k];
+        const bool isMod = i == PI_LB || i == PI_BACK;
+        presses.push_back({i, isMod ? 0 : mods, isMod, false});
+    }
+    if (lbTap) presses.push_back({PI_LB, 0, false, true});
+    if (viewTap) presses.push_back({PI_BACK, 0, false, true});
 
     if (ctx == Mode::Drive) {
-        const bool mod = D(B_LB);
-        in.modifier = mod;
-        if (mod) {  // LB held: the second layer (repairs, recovery, winch, strap, air)
-            if (P(B_A)) tap(SC_R);  // twice quickly: back to the start
-            if (P(B_B)) tap(SC_T);
-            if (P(B_X)) tap(SC_X);
-            if (P(B_Y)) tap(SC_J);
-            if (P(B_RB)) tap(SC_M, true);
-            if (P(B_LSTICK)) tap(SC_U);
-            if (P(B_START)) tap(SC_H);
-            if (P(B_BACK)) tap(SC_TAB);
-            if (P(B_UP)) tap(SC_V);
-            if (P(B_DOWN)) tap(SC_O);
-            in.horn = D(B_RSTICK);
-            if (D(B_LEFT)) in.airing = -1;
-            else if (D(B_RIGHT)) in.airing = 1;
-            if (rt > 0.3f) in.winch = 1;
-            else if (lt > 0.3f) in.winch = -1;
-            // The right stick up and down sets the winch speed (a flick each).
-            if (std::fabs(R.y) < 0.4f) flick_ = false;
-            else if (!flick_ && std::fabs(R.y) > 0.8f) {
-                flick_ = true;
-                tap(R.y < 0 ? SC_EQUALS : SC_MINUS);
+        in.modifier = mods != 0;
+        auto lookup = [&](int input, int m) {
+            int a = kb.padActionFor(input, m, contexts, devKeys);
+            if (a < 0 && fallback) a = kb.padActionFor(input, m, fallback, devKeys);
+            return a;
+        };
+        auto tapAction = [&](int a) {
+            if (a >= 0 && !isHeldAction((KeyAction)a)) tap(defaultKey((KeyAction)a), defaultShift((KeyAction)a), a);
+        };
+        for (int k = 0; k < nFresh; k++) {
+            const int i = fresh[k];
+            if (i == PI_LB || i == PI_BACK || i == PI_GUIDE) continue;  // (the layers answer when let go, below)
+            if (i == PI_START && mods == 0) {  // (Start: the menu, always)
+                tap(SC_ESCAPE, false, KA_MENU);
+                continue;
             }
-        } else {
-            if (P(B_START)) tap(SC_ESCAPE);
-            if (P(B_BACK)) tap(SC_M);
-            if (P(B_X)) tap(SC_Q);
-            if (P(B_Y)) tap(SC_E);
-            if (P(B_RB)) tap(SC_C);
-            if (P(B_LSTICK) && !onFoot) tap(SC_L, true);
-            in.crouchHeld = onFoot && D(B_LSTICK);
-            if (P(B_UP)) tap(SC_L);
-            if (P(B_LEFT)) tap(SC_F);
-            if (P(B_RIGHT)) tap(SC_B);
-            if (P(B_DOWN)) tap(SC_Y);
-            in.throttle = rt;
-            in.brake = lt;
-            in.handbrake = D(B_A) || D(B_B);
-            in.interact = D(B_X);  // (on foot; driving, X is the gear down tap above)
-            in.drop = P(B_B);
-            in.inventory = P(B_Y);  // (driving, Y is the gear up tap above)
-            flick_ = false;
+            tapAction(lookup(i, mods));
         }
-        in.steerStick = std::fabs(L.x) > 0;
-        in.steerTarget = -expoCurve(L.x, steerExponent(tune.steering));  // (stick right = steer right = negative)
-        in.lookX = R.x;
-        in.lookY = mod ? 0.0f : R.y;
-        in.lookBack = D(B_RSTICK) && !mod;
-        in.resetView = (released & bit(B_RSTICK)) != 0 && !mod;
+        if (viewTap) tapAction(lookup(PI_BACK, 0));  // (VIEW alone: the map)
+        if (lbTap) tapAction(lookup(PI_LB, 0));
+        // The held actions, from whatever they are bound to.
+        auto H = [&](KeyAction a) { return kb.padHeld(a, v, mods); };
+        in.throttle = H(KA_THROTTLE);
+        in.brake = H(KA_BRAKE);
+        const float steer = H(KA_STEER_LEFT) - H(KA_STEER_RIGHT);
+        in.steerStick = steer != 0;
+        in.steerTarget = expoCurve(steer, steerExponent(tune.steering));
+        in.handbrake = H(KA_HANDBRAKE) > 0.5f;
+        in.horn = H(KA_HORN) > 0.5f;
+        in.winch = H(KA_WINCH_IN) > 0.3f ? 1 : H(KA_WINCH_OUT) > 0.3f ? -1 : 0;
+        in.airing = H(KA_AIR_DOWN) > 0.5f ? -1 : H(KA_AIR_UP) > 0.5f ? 1 : 0;
+        in.interact = H(KA_INTERACT) > 0.5f;
+        in.crouchHeld = H(KA_CROUCH) > 0.5f;
+        in.hudAll = H(KA_HUD_ALL) > 0.5f;
+        // The right stick looks round, but for the directions a chord with what's held takes (LB: the winch speed).
+        const unsigned all = contexts | fallback;
+        const bool chordX = kb.padChord(PI_RS_LEFT, mods, all) || kb.padChord(PI_RS_RIGHT, mods, all);
+        const bool chordY = kb.padChord(PI_RS_UP, mods, all) || kb.padChord(PI_RS_DOWN, mods, all);
+        in.lookX = chordX ? 0.0f : R.x;
+        in.lookY = chordY ? 0.0f : R.y;
+        in.lookBack = D(B_RSTICK) && mods == 0;
+        in.resetView = (released & bit(B_RSTICK)) != 0 && mods == 0;
         in.walkForward = -L.y;
         in.walkTurn = -L.x;
         return;
     }
 
+    auto H0 = [&](KeyAction a) { return kb.padHeld(a, v, 0); };
     if (ctx == Mode::Map) {
-        if (P(B_BACK)) tap(SC_M);
-        if (P(B_B) || P(B_START)) tap(SC_ESCAPE);
-        in.mapSelect = P(B_A);
-        in.mapPanX = std::fabs(R.x) > std::fabs(L.x) ? R.x : L.x;
-        in.mapPanY = std::fabs(R.y) > std::fabs(L.y) ? R.y : L.y;
-        // Zoom: a step four times a second while a trigger is held.
-        const int z = rt > 0.3f ? 1 : lt > 0.3f ? -1 : 0;
+        for (int k = 0; k < nFresh; k++) {
+            const int i = fresh[k];
+            if (i == PI_B || i == PI_START) tap(SC_ESCAPE, false, KA_UI_BACK);
+            else if (i == kb.pad[KA_MAP]) tap(defaultKey(KA_MAP), defaultShift(KA_MAP), KA_MAP);  // (the map's own button closes it)
+            else if (i == PI_A || kb.padActionFor(i, 0, KCTX_MENU, false) == KA_UI_CONFIRM) in.mapSelect = true;
+            else if (kb.padActionFor(i, 0, KCTX_MENU, false) == KA_UI_BACK) tap(SC_ESCAPE, false, KA_UI_BACK);
+            else if (const int a = kb.padActionFor(i, 0, KCTX_MENU, false); a == KA_UI_SECOND || a == KA_UI_FACTORY) tap(uiCanon((KeyAction)a), false, a);  // (the pings)
+        }
+        in.mapPanX = (std::fabs(R.x) > std::fabs(L.x) ? R.x : L.x) + H0(KA_UI_RIGHT) - H0(KA_UI_LEFT);
+        in.mapPanY = (std::fabs(R.y) > std::fabs(L.y) ? R.y : L.y) + H0(KA_UI_DOWN) - H0(KA_UI_UP);
+        // Zoom: a step four times a second while it's held.
+        const int z = H0(KA_UI_ZOOM_IN) > 0.3f ? 1 : H0(KA_UI_ZOOM_OUT) > 0.3f ? -1 : 0;
         if (z == 0) held_[0] = 0;
         else if ((held_[0] -= (float)dt) <= 0) held_[0] = 0.25f, in.mapZoom = z;
         return;
     }
 
     if (ctx == Mode::Aim) {  // point with the stick, A chooses the highlighted recovery point
-        if (P(B_A)) tap(SC_V);
-        if (P(B_B) || P(B_START)) tap(SC_ESCAPE);
+        for (int k = 0; k < nFresh; k++) {
+            if (fresh[k] == PI_A) tap(defaultKey(KA_WINCH), false, KA_WINCH);
+            if (fresh[k] == PI_B || fresh[k] == PI_START) tap(SC_ESCAPE, false, KA_UI_BACK);
+        }
         in.lookX = std::fabs(R.x) > std::fabs(L.x) ? R.x : L.x;
         in.lookY = std::fabs(R.y) > std::fabs(L.y) ? R.y : L.y;
         return;
     }
 
-    // Menu: D-pad or left stick move (holding repeats), A selects, B / Start back out.
+    // Menu: A is OK, B and Start back out, always; the rest as bound (the D-pad and the left stick move, holding
+    // repeats; LB / RB the tabs...), each arriving as its menu key.
+    static const KeyAction navAct[4] = {KA_UI_UP, KA_UI_DOWN, KA_UI_LEFT, KA_UI_RIGHT};
+    for (int k = 0; k < nFresh; k++) {
+        const int i = fresh[k];
+        if (i == PI_GUIDE) continue;
+        if (i == PI_A) {  // (in a dialog with a layer held, A is back: LB + A asked for the career repair, LB + A again leaves it, as R does)
+            if ((menuContexts & KCTX_DIALOG) && mods) tap(SC_ESCAPE, false, KA_UI_BACK);
+            else tap(SC_RETURN, false, KA_UI_CONFIRM);
+            continue;
+        }
+        if (i == PI_B || i == PI_START) {
+            tap(SC_ESCAPE, false, KA_UI_BACK);
+            continue;
+        }
+        int a = -1;
+        if (menuContexts & KCTX_DIALOG) a = kb.padActionFor(i, 0, KCTX_DIALOG, false);
+        if (a < 0) a = kb.padActionFor(i, 0, KCTX_MENU, false);
+        if (a < 0 || a == KA_UI_UP || a == KA_UI_DOWN || a == KA_UI_LEFT || a == KA_UI_RIGHT) continue;  // (the directions repeat, below)
+        tap(uiCanon((KeyAction)a), false, a);
+    }
     static const int dirKey[4] = {SC_UP, SC_DOWN, SC_LEFT, SC_RIGHT};
-    const bool want[4] = {D(B_UP) || L.y < -0.5f, D(B_DOWN) || L.y > 0.5f, D(B_LEFT) || L.x < -0.5f, D(B_RIGHT) || L.x > 0.5f};
+    const bool want[4] = {H0(navAct[0]) > 0.5f || L.y < -0.5f, H0(navAct[1]) > 0.5f || L.y > 0.5f, H0(navAct[2]) > 0.5f || L.x < -0.5f, H0(navAct[3]) > 0.5f || L.x > 0.5f};
     for (int d = 0; d < 4; d++) {
         if (!want[d]) {
             dir_[d] = false;
@@ -217,19 +275,13 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
         if (!dir_[d]) {
             dir_[d] = true;
             held_[d] = 0.4f;
-            tap(dirKey[d]);
+            tap(dirKey[d], false, navAct[d]);
         } else if ((held_[d] -= (float)dt) <= 0) {
             held_[d] = 0.09f;
-            tap(dirKey[d]);
+            tap(dirKey[d], false, navAct[d]);
         }
     }
-    if (P(B_A)) tap(SC_RETURN);
-    if (P(B_B) || P(B_START)) tap(SC_ESCAPE);
-    if (P(B_Y)) tap(SC_B);  // (the garage: the factory part back)
-    // The garage: X tries the part on the truck, LB / RB the categories either side, the right stick turns the model.
-    if (P(B_X)) tap(SC_T);
-    if (P(B_LB)) tap(SC_Q);
-    if (P(B_RB)) tap(SC_E);
+    // (The garage: the right stick turns the model.)
     in.lookX = R.x, in.lookY = R.y;
 }
 
@@ -365,37 +417,49 @@ const char* buttonName(Button b, Style s) {
 
 const char* hint(const char* keyboard, Button b) { return ui.last ? buttonName(b, ui.style) : keyboard; }
 
-std::vector<std::pair<std::string, std::string>> helpRows(Style s) {
-    auto n = [&](Button b) { return std::string(buttonName(b, s)); };
-    const std::string lb = n(B_LB), lt = s == Style::PlayStation ? "L2" : "LT", rt = s == Style::PlayStation ? "R2" : "RT";
-    const std::string hold = lb + " + ";
-    return {
-        {"LEFT STICK", "STEER (FULL LOCK CRAWLING, GENTLE AT SPEED)"},
-        {rt + " / " + lt, "THROTTLE / BRAKE (" + lt + " AT A STOP: REVERSE)"},
-        {n(B_A) + " OR " + n(B_B), "HANDBRAKE"},
-        {n(B_X) + " / " + n(B_Y), "SHIFT DOWN / UP (ON FOOT: HOLD " + n(B_X) + " TO WORK, " + n(B_Y) + " INVENTORY)"},
-        {"RIGHT STICK", "LOOK AROUND (RECENTRES ON ITS OWN)"},
-        {"R3 (HOLD)", "LOOK BACK (LET GO: RESET THE VIEW)"},
-        {n(B_RB), "CAMERA: CHASE / ORBIT / COCKPIT / DRONE"},
-        {"D-PAD UP", "4X4 MODE (2H 4H 4L)"},
-        {"D-PAD LEFT / RIGHT", "FRONT / REAR LOCKER"},
-        {"D-PAD DOWN", "FRONT SWAY BAR DISCONNECT"},
-        {"L3", "HEADLIGHTS (ON FOOT: CROUCH)"},
-        {n(B_BACK), "MAP (STICK PANS, " + rt + " / " + lt + " ZOOM, " + n(B_A) + " WAYPOINT)"},
-        {n(B_START), "PAUSE MENU (D-PAD / STICK MOVE, " + n(B_A) + " SELECT, " + n(B_B) + " BACK)"},
-        {hold + "D-PAD UP / DOWN", "WINCH HOOK / TOW STRAP"},
-        {hold + rt + " / " + lt, "WINCH IN / OUT (RIGHT STICK UP DOWN: SPEED)"},
-        {hold + "D-PAD LEFT / RIGHT", "AIR DOWN / PUMP UP (HOLD, STOPPED)"},
-        {hold + n(B_A), "REPAIR (TWICE: BACK TO THE START)"},
-        {hold + n(B_B), "BACK ON ITS WHEELS"},
-        {hold + n(B_X), "TRACTION CONTROL"},
-        {hold + n(B_Y), "GET OUT / IN"},
-        {hold + n(B_RB), "MANUAL / AUTOMATIC GEARBOX"},
-        {hold + "L3", "AUTOPILOT"},
-        {hold + "R3 (HOLD)", "HORN"},
-        {hold + n(B_BACK), "NEXT VEHICLE"},
-        {hold + n(B_START), "THIS CONTROLS LIST"},
+std::vector<std::pair<std::string, std::string>> helpRows(Style s, const Keybinds* binds) {
+    const Keybinds& kb = binds ? *binds : defaultKeybinds();
+    const bool ps = s == Style::PlayStation;
+    auto n = [&](KeyAction a) { return kb.padName(a, ps); };
+    auto two = [&](KeyAction a, KeyAction b) { return n(a) + " / " + n(b); };
+    std::vector<std::pair<std::string, std::string>> rows = {
+        {two(KA_THROTTLE, KA_BRAKE), "THROTTLE / BRAKE (" + n(KA_BRAKE) + " AT A STOP: REVERSE)"},
+        {two(KA_STEER_LEFT, KA_STEER_RIGHT), "STEER (FULL LOCK CRAWLING, GENTLE AT SPEED)"},
+        {"LEFT STICK", "WALK ON FOOT, FLY THE DRONE"},
+        {"RIGHT STICK", "LOOK AROUND (R3 HELD: LOOK BACK)"},
+        {n(KA_HANDBRAKE), "HANDBRAKE (ON FOOT: JUMP)"},
+        {two(KA_GEAR_DOWN, KA_GEAR_UP), "SHIFT DOWN / UP"},
+        {two(KA_INTERACT, KA_INVENTORY), "ON FOOT: HOLD TO WORK / INVENTORY"},
+        {two(KA_PUT_DOWN, KA_FUEL_CAN), "ON FOOT: PUT DOWN / POUR THE FUEL CAN"},
+        {n(KA_CROUCH), "ON FOOT: CROUCH"},
+        {n(KA_CAMERA), "CAMERA: CHASE / ORBIT / COCKPIT / DRONE"},
+        {n(KA_TRANSFER), "4X4 MODE (2H 4H 4L)"},
+        {two(KA_LOCK_FRONT, KA_LOCK_REAR), "FRONT / REAR LOCKER"},
+        {n(KA_SWAY), "FRONT SWAY BAR DISCONNECT"},
+        {n(KA_LIGHTS), "HEADLIGHTS"},
+        {n(KA_MAP), "MAP (TAP; HOLD IT FOR THE " + padInputName(PI_BACK, ps) + " LAYER)"},
+        {n(KA_MENU), "PAUSE MENU"},
+        {two(KA_WINCH, KA_STRAP), "WINCH HOOK / TOW STRAP"},
+        {two(KA_WINCH_IN, KA_WINCH_OUT), "WINCH IN / OUT"},
+        {two(KA_WINCH_FASTER, KA_WINCH_SLOWER), "WINCH SPEED UP / DOWN"},
+        {two(KA_AIR_DOWN, KA_AIR_UP), "AIR DOWN / PUMP UP (HOLD, STOPPED)"},
+        {n(KA_REPAIR), "REPAIR"},
+        {n(KA_FLIP), "BACK ON ITS WHEELS"},
+        {n(KA_TRACTION), "TRACTION CONTROL"},
+        {n(KA_GET_IN_OUT), "GET OUT / IN"},
+        {n(KA_MANUAL), "MANUAL / AUTOMATIC GEARBOX"},
+        {two(KA_AUTOPILOT, KA_AUTOPILOT_PICK), "AUTOPILOT / WHERE TO"},
+        {n(KA_HORN), "HORN (HOLD)"},
+        {n(KA_PARK_BRAKE), "PARKING BRAKE"},
+        {n(KA_STEER_ASSIST), "STEERING ASSIST"},
+        {n(KA_THROTTLE_CAP), "THROTTLE LIMIT"},
+        {n(KA_GARAGE), "GARAGE"},
+        {n(KA_NEXT_VEHICLE), "NEXT VEHICLE"},
+        {n(KA_JOBS), "JOBS ON OFFER HERE"},
+        {two(KA_PHOTO, KA_HUD_ALL), "HIDE THE HUD / HOLD: THE FULL HUD"},
+        {n(KA_CHAT), "CHAT"},
+        {n(KA_HELP), "THIS CONTROLS LIST"},
     };
+    return rows;
 }
-
 }  // namespace pad

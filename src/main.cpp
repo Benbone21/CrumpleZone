@@ -116,9 +116,14 @@ int regionSoundMap = -1;
 
 const double kTimeScales[] = {1.0, 0.5, 0.25, 0.1, 0.03};
 
-// The player's bindings, for the hints that name a key (they show the CURRENT binding, never a fixed letter).
+// The player's bindings, for the hints that name a key (they show the CURRENT binding, never a fixed letter): the
+// pad's button when the pad was the last thing used, otherwise the key.
 const Keybinds* gKeys = nullptr;
-std::string K(KeyAction a) { return gKeys ? gKeys->name(a) : keyName(defaultKey(a)); }
+std::string K(KeyAction a) {
+    const Keybinds& kb = gKeys ? *gKeys : defaultKeybinds();
+    if (pad::ui.last) return kb.padName(a, pad::ui.style == pad::Style::PlayStation);
+    return kb.name(a);
+}
 
 struct Options {
     int physicsThreads = -1;  // -1 saved setting; 0 automatic; otherwise a CPU thread budget
@@ -1043,10 +1048,9 @@ void drawRecovery(Renderer& r, const Sim& sim, const HudState& hud, float u, int
     r.rect(bx, by, bw * f, 6 * u, 0.4f + 0.6f * f, 0.85f - 0.6f * f, 0.25f, 0.95f);
     if (rp.kind == ROPE_WINCH && rp.a.car == sim.player) {
         const float sm = px(1.1f * u);
-        char hint[200];
+        char hint[260];
         const double speed = sim.cars[sim.player].winchSpeed;
-        if (pad::ui.last) std::snprintf(hint, sizeof hint, "%s + RT REEL IN   %s + LT PAY OUT   RIGHT STICK UP DOWN: SPEED %.2gX   ON FOOT, HOLD X AT AN END: UNHOOK", pad::hint("", pad::B_LB), pad::hint("", pad::B_LB), speed);
-        else std::snprintf(hint, sizeof hint, "%s REEL IN   %s PAY OUT   %s %s SPEED %.2gX   ON FOOT, HOLD %s AT AN END: UNHOOK", K(KA_WINCH_IN).c_str(), K(KA_WINCH_OUT).c_str(), K(KA_WINCH_SLOWER).c_str(), K(KA_WINCH_FASTER).c_str(), speed, K(KA_INTERACT).c_str());
+        std::snprintf(hint, sizeof hint, "%s REEL IN   %s PAY OUT   %s %s SPEED %.2gX   ON FOOT, HOLD %s AT AN END: UNHOOK", K(KA_WINCH_IN).c_str(), K(KA_WINCH_OUT).c_str(), K(KA_WINCH_SLOWER).c_str(), K(KA_WINCH_FASTER).c_str(), speed, K(KA_INTERACT).c_str());
         // (The key hints stay left of the compass: past that, they break at a gap onto a second line.)
         std::string h1 = hint, h2;
         const int fit = hudlayout::fitChars(sm, hudlayout::topLeftMaxW(u, W) - 18 * u);
@@ -1244,8 +1248,9 @@ float drawKeyLine(Renderer& r, float cx, float y, float s, const std::string& ke
 
 // The key (or the pad's button) the marker's job is done with.
 std::string promptKeyName(const prompts::Marker& m, bool padNow, const std::string& holdWord) {
-    if (m.key == prompts::KEY_GET_IN) return padNow ? "LB+Y" : K(KA_GET_IN_OUT);
-    return (m.hold ? holdWord : std::string()) + (padNow ? "X" : K(KA_INTERACT));
+    (void)padNow;  // (K names the pad's button when the pad was the last thing used)
+    if (m.key == prompts::KEY_GET_IN) return K(KA_GET_IN_OUT);
+    return (m.hold ? holdWord : std::string()) + K(KA_INTERACT);
 }
 
 // The markers (a small diamond at each spot there is something to do; the target's brighter, with corner brackets round
@@ -1467,7 +1472,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph, bool career) {
 
 // The controller's button map (the help overlay when the pad was the last thing used).
 void drawPadHelp(Renderer& r, float u, int W, int H) {
-    const auto rows = pad::helpRows(pad::ui.style);
+    const auto rows = pad::helpRows(pad::ui.style, gKeys);
     const int n = (int)rows.size(), per = (n + 1) / 2;
     float s = px(1.2f * u), lh = 8 * s + 5 * u, keyW[2] = {0, 0}, descW[2] = {0, 0};
     for (int k = 0; k < n; k++) {
@@ -1702,8 +1707,7 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     }
     if (hud.hintTime > 0 && !hud.showHelp) {
         float a = (float)std::min(1.0, hud.hintTime);
-        const std::string line = pad::ui.last ? std::string(pad::hint("", pad::B_LB)) + " + " + pad::hint("", pad::B_START) + ": CONTROLS   " + pad::hint("", pad::B_START) + ": MENU"
-                                              : K(KA_HELP) + ": CONTROLS   " + K(KA_MENU) + ": MENU";
+        const std::string line = K(KA_HELP) + ": CONTROLS   " + K(KA_MENU) + ": MENU";
         centeredPill(r, W / 2.0f, y, px(1.4f * u), line, 0.02f, 0.02f, 0.03f, a, 0.9f, 0.9f, 0.92f);
     }
     if (hud.showFps && !hud.debugOn) {
@@ -2039,6 +2043,7 @@ int main(int argc, char** argv) {
         if (!careerQuiet && career.on && !profileDamaged) career.saveProfile();
     };
     bool repairAsk = false;  // career: R's confirmation is up (repairdeal.h): 1 repairs on the spot, 2 respawns repaired at the nearest station, Esc cancels
+    int repairSel = 0;       // ...the choice highlighted (0 on the spot, 1 the station): the menu keys move it, OK takes it (the pad)
     std::vector<CacheSpot> caches;  // this map's supply caches (a career's)
     int cachesMap = -1;
     AnchorStock anchorSeen;  // the career's anchor gear as the sim last had it
@@ -3250,7 +3255,10 @@ int main(int argc, char** argv) {
     // Menu sounds (quiet; the master volume applies): a click when something's activated, a softer, higher tick when the selection moves.
     auto uiClick = [&]() { if (audioOn) audio.play(SFX_UI_CLICK, 0.35f); };
     auto uiHover = [&]() { if (audioOn) audio.play(SFX_UI_HOVER, 0.16f); };
-    auto activationKey = [](int sc) { return sc == 40 || sc == 88 || sc == 44; };  // (Enter, keypad Enter, Space: the pad's A arrives as Enter)
+    auto activationKey = [&](int sc) {  // (Enter, keypad Enter, the menu's OK key as bound: the pad's A arrives as Enter)
+        const int k = settings.keys.uiKey(sc);
+        return k == 40 || k == 88;
+    };
     // The dev free cam's state (freecam.h; what it does is with the dev tools, below).
     struct {
         bool on = false;
@@ -4472,14 +4480,26 @@ int main(int argc, char** argv) {
 
         // ---- gamepad: what the pad is doing this frame (its presses are fed in as keys below) ----
         padCtx = editor.active || coop.typing || playback.active() || !padDev.connected() ? pad::Mode::Off
-                 : menu.open || garageShop.open || inv.open                                 ? pad::Mode::Menu
+                 : menu.open || garageShop.open || inv.open || updatecard::shown() || repairAsk || (fc.on && fc.picker) ? pad::Mode::Menu
                  : coop.mapOpen                                                           ? pad::Mode::Map
                                                                                           : pad::Mode::Drive;
         padLogic.tune = {settings.padSteering, settings.padDeadzone, settings.padRumble, settings.throttle.padScale()};
-        padLogic.onFoot = walker.active;
+        // (The pad's bindings are the keybinds table's: where a press is looked up, as for a key.)
+        padLogic.binds = &settings.keys;
+        padLogic.devKeys = settings.devHotkeys;
+        padLogic.contexts = fc.on ? (unsigned)KCTX_FREECAM : (walker.active ? KCTX_FOOT : KCTX_DRIVE) | (playback.active() ? KCTX_SCENARIO : 0u);
+        padLogic.fallback = fc.on ? (walker.active ? KCTX_FOOT : KCTX_DRIVE) : 0u;  // (the free cam: the game's always-on keys, freecam.h)
+        padLogic.menuContexts = repairAsk && !menu.open && !garageShop.open ? KCTX_DIALOG | KCTX_MENU : KCTX_MENU;
+        mainNav.binds = mpNav.binds = garageShop.binds = &settings.keys;
         padLogic.update(padDev.read((SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0), padCtx, dt);
+        if (menu.listeningForKey()) {  // the CONTROLS tab waits for a binding: the pad's next press is it (and nothing else)
+            for (const pad::Press& p : padLogic.presses)
+                if (menu.listeningForKey()) handleMenu(menu.padKey(p, settings));
+            padLogic.taps.clear();
+        }
         size_t padTap = 0;
         bool fromPad = false;
+        int padAct = -1;  // the action a pad press is (the tap's)
         testCtrl = false;
         {  // (text fields take typed text through SDL's text input; the model lab has its own)
             static bool textOn = false;
@@ -4491,14 +4511,15 @@ int main(int argc, char** argv) {
         auto nextEvent = [&](SDL_Event& ev) {
             fromPad = false;
             padShift = false;
+            padAct = -1;
             if (padTap < padLogic.taps.size()) {
                 const pad::Tap& t = padLogic.taps[padTap++];
                 std::memset(&ev, 0, sizeof ev);
                 ev.type = SDL_KEYDOWN;
-                // (The menu's X is T, the garage's try-on; on the career world list it's Delete.)
-                const int sc = t.scancode == SC_T && mainMenuShown() && mainNav.page == mainmenu::P_WORLDS ? (int)mainmenu::K_DELETE : t.scancode;
-                std::memcpy(ev.padding + 16, &sc, 4);
+                // (The action's default key; in a menu, the menu key it is: keybinds.h uiCanon.)
+                std::memcpy(ev.padding + 16, &t.scancode, 4);
                 padShift = t.shift;
+                padAct = t.action;
                 fromPad = true;
                 return true;
             }
@@ -4538,7 +4559,7 @@ int main(int argc, char** argv) {
             }
             if (updatecard::shown() && e.type != SDL_QUIT) {  // the update card (updater.h) is modal: it takes the keys, the mouse and the pad
                 if (e.type == SDL_KEYDOWN) {
-                    if (updatecard::key(evKeyScancode(e))) uiClick();
+                    if (updatecard::key(fromPad ? evKeyScancode(e) : settings.keys.uiKey(evKeyScancode(e), shiftDown()))) uiClick();
                     continue;
                 }
                 float ux, uy;
@@ -4568,9 +4589,34 @@ int main(int argc, char** argv) {
                 // The map has the mouse (and Esc / M close it).
                 float mx, my;
                 if (e.type == SDL_KEYDOWN) {
-                    const int sc = evKeyScancode(e);
-                    if ((sc == SC_ESCAPE || settings.keys.actionFor(sc, shiftDown(), KCTX_ANY, false) == KA_MAP) && !evKeyRepeat(e)) {
+                    // (The menu keys: back closes it, OK sets the waypoint at the centre, zoom in / out; the directions pan, held, below.)
+                    const int sc = evKeyScancode(e), uk = fromPad ? sc : settings.keys.uiKey(sc, shiftDown());
+                    const bool mapKey = fromPad ? padAct == KA_MAP : settings.keys.actionFor(sc, shiftDown(), KCTX_ANY, false) == KA_MAP;
+                    if ((uk == SC_ESCAPE || mapKey) && !evKeyRepeat(e)) {
                         coop.mapOpen = false;
+                        continue;
+                    }
+                    int dw = 1, dh = 1;
+                    SDL_GL_GetDrawableSize(win, &dw, &dh);
+                    if (uk == UK_ZOOM_IN || uk == UK_ZOOM_OUT) {
+                        coop.mapMouse(dw / 2.0f, dh / 2.0f, uk == UK_ZOOM_IN ? 1 : -1, false, 0, 0);
+                        continue;
+                    }
+                    V3 wp;
+                    if (uk == UK_SECOND || uk == UK_FACTORY) {  // the pings, as the right click (Shift: HELP) does: GO HERE at the map's centre, HELP at your truck
+                        if (!evKeyRepeat(e)) {
+                            if (uk == UK_FACTORY) coop.ping(1, sim.cars[sim.player].frame().com, myName(), net);
+                            else if (coop.mapPoint(dw / 2.0f, dh / 2.0f, wp)) wp.y = sim.world.height(wp.x, wp.z), coop.ping(0, wp, myName(), net);
+                        }
+                        continue;
+                    }
+                    if (uk == SC_RETURN || uk == SC_KP_ENTER) {
+                        if (!evKeyRepeat(e) && coop.mapPoint(dw / 2.0f, dh / 2.0f, wp)) {
+                            wp.y = sim.world.height(wp.x, wp.z);
+                            coop.haveWaypoint = !(coop.haveWaypoint && len(V3(wp.x - coop.waypoint.x, 0, wp.z - coop.waypoint.z)) < 15);
+                            coop.waypoint = wp;
+                            hud.toast(coop.haveWaypoint ? "WAYPOINT SET" : "WAYPOINT CLEARED");
+                        }
                         continue;
                     }
                 } else if (e.type == SDL_MOUSEWHEEL) {
@@ -4666,7 +4712,10 @@ int main(int argc, char** argv) {
                     }
                     break;
                 case SDL_KEYDOWN: {
-                    if (settings.keys.matches(KA_DEV_MENU, evKeyScancode(e), shiftDown()) && !fromPad && !evKeyRepeat(e) && !inv.open && !garageShop.open && !menu.title &&
+                    // (A pad press carries its action; a key is looked up in the bind table.)
+                    const bool devMenuKey = fromPad ? padAct == KA_DEV_MENU : settings.keys.matches(KA_DEV_MENU, evKeyScancode(e), shiftDown());
+                    const bool devToggleKey = fromPad ? padAct == KA_DEV_TOGGLE : settings.keys.matches(KA_DEV_TOGGLE, evKeyScancode(e), shiftDown());
+                    if (devMenuKey && !evKeyRepeat(e) && !inv.open && !garageShop.open && !menu.title &&
                         !menu.listeningForKey()) {  // the dev menu (devmenu.h): F12 opens and closes it, whatever DEV HOTKEYS says
                         if (menu.devOpen()) closeMenu();
                         else {
@@ -4676,7 +4725,7 @@ int main(int argc, char** argv) {
                         }
                         break;
                     }
-                    if (settings.keys.matches(KA_DEV_TOGGLE, evKeyScancode(e), shiftDown()) && !fromPad && !evKeyRepeat(e) && !menu.open && !inv.open && !garageShop.open) {
+                    if (devToggleKey && !evKeyRepeat(e) && !menu.open && !inv.open && !garageShop.open) {
                         settings.devHotkeys = !settings.devHotkeys;  // DEV KEYS <-> GAMEPLAY KEYS (devmenu.h has the table)
                         saveSettings();
                         hud.toast(settings.devHotkeys ? "DEV KEYS: THE DEV KEYS ARE TOOLS (" + K(KA_DEV_TOGGLE) + " FOR GAMEPLAY KEYS)" : "GAMEPLAY KEYS (" + K(KA_DEV_TOGGLE) + " FOR DEV KEYS)");
@@ -4698,7 +4747,7 @@ int main(int argc, char** argv) {
                         }
                         break;
                     }
-                    if (menu.open && menu.title && classicTitle && menu.pageNow() == 0 && evKeyScancode(e) == SC_ESCAPE) {  // (the old title page: Esc is back to the new one)
+                    if (menu.open && menu.title && classicTitle && menu.pageNow() == 0 && settings.keys.uiKey(evKeyScancode(e), shiftDown()) == SC_ESCAPE) {  // (the old title page: back is back to the new one)
                         classicTitle = false;
                         break;
                     }
@@ -4717,6 +4766,7 @@ int main(int argc, char** argv) {
                         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                         menu.shift = ks[SC_LSHIFT] || ks[SC_RSHIFT];
                         menu.ctrl = ks[224] || ks[228] || testCtrl;
+                        menu.fromPad = fromPad;
                         {
                             const int before = menu.selected();
                             const PauseMenu::Result r = menu.key(evKeyScancode(e), settings);
@@ -4724,91 +4774,110 @@ int main(int argc, char** argv) {
                             else if (menu.selected() != before) uiHover();
                             handleMenu(r);
                         }
+                        menu.fromPad = false;
                         break;
                     }
-                    if (inv.open) {  // the inventory takes every key
-                        const int k = evKeyScancode(e);  // (the physical key: WASD are held actions in the game's own switch)
-                        if (k == SC_W || k == SC_UP) inv.move(0, -1);
-                        else if (k == SC_S || k == SC_DOWN) inv.move(0, 1);
-                        else if (k == SC_A || k == SC_LEFT) inv.move(-1, 0);
-                        else if (k == SC_D || k == SC_RIGHT) inv.move(1, 0);
+                    if (inv.open) {  // the inventory takes every key: the menu keys move and choose; back, or its own key, closes it
+                        const int k = evKeyScancode(e), uk = fromPad ? k : settings.keys.uiKey(k, shiftDown());
+                        const bool own = !fromPad && (settings.keys.matches(KA_INVENTORY, k, false) || settings.keys.matches(KA_NEXT_VEHICLE, k, false));
+                        const bool use = !fromPad && settings.keys.matches(KA_INTERACT, k, false);
+                        if (uk == SC_UP) inv.move(0, -1);
+                        else if (uk == SC_DOWN) inv.move(0, 1);
+                        else if (uk == SC_LEFT) inv.move(-1, 0);
+                        else if (uk == SC_RIGHT) inv.move(1, 0);
                         else if (evKeyRepeat(e)) {
-                        } else if (k == SC_ESCAPE || k == SC_TAB || k == SC_Q || settings.keys.matches(KA_INVENTORY, k, false) || settings.keys.matches(KA_NEXT_VEHICLE, k, false)) closeInventory();
-                        else if (k == SC_E || k == SC_RETURN || k == SC_KP_ENTER) {
+                        } else if (uk == SC_ESCAPE || own) closeInventory();
+                        else if (uk == SC_RETURN || uk == SC_KP_ENTER || use) {
                             if (inv.sel != INV_NONE) inventoryChoose(inv.sel);
                         }
                         break;
                     }
-                    if (fc.on && !garageShop.open && !coop.typing && !(freecam::passesThrough(evKeyScancode(e)) && !fc.picker)) {  // the dev free cam takes every key but the always-on ones (freecam.h)
+                    const unsigned kctx = (walker.active ? KCTX_FOOT : KCTX_DRIVE) | (playback.active() ? KCTX_SCENARIO : 0u);
+                    if (fc.on && !garageShop.open && !coop.typing) {  // the dev free cam takes every key but the always-on ones (freecam.h)
                         const int k = evKeyScancode(e);
                         const bool shift = shiftDown();
+                        // The free cam's own keys first; then the game's (only the always-on ones get through).
+                        int fa = fromPad ? padAct : settings.keys.actionFor(k, shift, KCTX_FREECAM, false);
+                        if (!fromPad && fa < 0) fa = settings.keys.actionFor(k, shift, kctx, settings.devHotkeys);
                         const std::vector<int>& listed = listedVehicles();
-                        if (k == freecam::K_EXIT || settings.keys.matches(KA_DEV_FREECAM, k, shift)) {
-                            if (evKeyRepeat(e)) break;
-                            if (fc.picker) fc.picker = false;
-                            else fcExit();
-                            break;
-                        }
-                        if (fc.picker) {  // the spawn picker: up / down, Enter (Shift: carried) or G, B or Esc to close
+                        if (fc.picker) {  // the spawn picker: the menu keys (up / down, OK spawns it: Shift or the second action, carried), back or B closes
+                            const int uk = fromPad ? k : settings.keys.uiKey(k, shift);
                             const int n = (int)listed.size();
-                            if (k == freecam::K_FORWARD || k == SC_UP) fc.pickSel = (fc.pickSel + n - 1) % std::max(1, n);
-                            else if (k == freecam::K_BACK || k == SC_DOWN) fc.pickSel = (fc.pickSel + 1) % std::max(1, n);
+                            if (uk == SC_UP) fc.pickSel = (fc.pickSel + n - 1) % std::max(1, n);
+                            else if (uk == SC_DOWN) fc.pickSel = (fc.pickSel + 1) % std::max(1, n);
                             else if (evKeyRepeat(e)) {
-                            } else if (k == SC_RETURN || k == SC_KP_ENTER || k == freecam::K_GRAB) fc.picker = false, fcSpawn(shift);
-                            else if (k == freecam::K_SPAWN) fc.picker = false;
+                            } else if (uk == SC_RETURN || uk == SC_KP_ENTER || fa == KA_FC_GRAB) fc.picker = false, fcSpawn(shift);
+                            else if (uk == UK_SECOND) fc.picker = false, fcSpawn(true);
+                            else if (uk == SC_ESCAPE || fa == KA_FC_SPAWN || fa == KA_DEV_FREECAM) fc.picker = false;
                             break;
                         }
-                        if (evKeyRepeat(e)) break;
-                        switch (k) {
-                            case freecam::K_GRAB:  // pick up what's under the crosshair, or set the carried one down at it
-                                if (fc.carry.on()) fcSetDown(true);
-                                else fcPickUp(fc.target);
-                                break;
-                            case freecam::K_LET_GO: fcLetGo(); break;
-                            case freecam::K_TURN:
-                                if (fc.carry.on()) fc.carry.yaw += (shift ? -1 : 1) * M_PI / 12;
-                                else hud.toast("FREE CAM: PICK A VEHICLE UP FIRST (" + std::string("G OR CLICK") + ")");
-                                break;
-                            case freecam::K_SPAWN: fc.picker = true; break;
-                            case freecam::K_DRIVE: fcDrive(); break;
-                            case freecam::K_THROUGH:
-                                fc.through = !fc.through;
-                                hud.toast(fc.through ? "FREE CAM: FLIES THROUGH THE GROUND" : "FREE CAM: STAYS ABOVE THE GROUND");
-                                break;
-                            case freecam::K_SLOWER: fc.speed = std::max(0, fc.speed - 1); break;
-                            case freecam::K_FASTER: fc.speed = std::min(freecam::kSpeedCount - 1, fc.speed + 1); break;
-                            default: break;
+                        if (k == SC_ESCAPE || fa == KA_DEV_FREECAM) {  // (Esc, the pad's Start, the FREE CAM key: out)
+                            if (!evKeyRepeat(e)) fcExit();
+                            break;
                         }
-                        break;
+                        if (!freecam::passesThroughAction(fa)) {
+                            if (evKeyRepeat(e)) break;
+                            switch (fa) {
+                                case KA_FC_GRAB:  // pick up what's under the crosshair, or set the carried one down at it
+                                    if (fc.carry.on()) fcSetDown(true);
+                                    else fcPickUp(fc.target);
+                                    break;
+                                case KA_FC_LET_GO: fcLetGo(); break;
+                                case KA_FC_TURN:
+                                case KA_FC_TURN_BACK:
+                                    if (fc.carry.on()) fc.carry.yaw += (fa == KA_FC_TURN_BACK ? -1 : 1) * M_PI / 12;
+                                    else hud.toast("FREE CAM: PICK A VEHICLE UP FIRST (" + K(KA_FC_GRAB) + " OR CLICK)");
+                                    break;
+                                case KA_FC_SPAWN: fc.picker = true; break;
+                                case KA_FC_DRIVE: fcDrive(); break;
+                                case KA_FC_THROUGH:
+                                    fc.through = !fc.through;
+                                    hud.toast(fc.through ? "FREE CAM: FLIES THROUGH THE GROUND" : "FREE CAM: STAYS ABOVE THE GROUND");
+                                    break;
+                                case KA_FC_SLOWER: fc.speed = std::max(0, fc.speed - 1); break;
+                                case KA_FC_FASTER: fc.speed = std::min(freecam::kSpeedCount - 1, fc.speed + 1); break;
+                                default: break;
+                            }
+                            break;
+                        }
                     }
                     if (evKeyRepeat(e)) break;
                     // The key as the in-game switch knows it: the player's keyboard bindings turned back into
-                    // the default keys the switch is written against (a gamepad press already is one).
-                    const unsigned kctx = (walker.active ? KCTX_FOOT : KCTX_DRIVE) | (playback.active() ? KCTX_SCENARIO : 0u);
-                    const Keybinds::Press kh = settings.keys.resolve(evKeyScancode(e), shiftDown(), fromPad, kctx, settings.devHotkeys);
+                    // the default keys the switch is written against (a gamepad press already is one, its action with it).
+                    Keybinds::Press kh = settings.keys.resolve(evKeyScancode(e), shiftDown(), fromPad, kctx, settings.devHotkeys);
+                    if (fromPad) kh.action = padAct;
                     const int gsc = kh.key;
                     if (!fromPad && kh.action >= 0) shiftForce = kh.shift ? 1 : 0;  // (the switch asks shiftDown(): the action's own answer)
                     if (garageShop.open) {
-                        // (Its own keys, as pressed; a rebound garage key closes it too.)
-                        const int sc = kh.action == KA_GARAGE ? (int)shop::K_G : (int)evKeyScancode(e);
+                        // (The menu keys go to it as pressed (it turns them); the GARAGE key, wherever it is, closes it.)
+                        const int raw = evKeyScancode(e);
+                        int sc = raw;
+                        if (!fromPad && settings.keys.uiKey(raw, shiftDown()) == raw) sc = kh.action == KA_GARAGE ? (int)shop::K_G : raw == (int)shop::K_G ? 0 : raw;
                         shopResult(garageShop.key(sc, career));
                         break;
                     }
-                    if (repairAsk) {  // (career R's confirmation: its own keys; anything else carries on)
-                        const bool pick = gsc == SC_1 || gsc == SC_2, cancel = gsc == SC_ESCAPE || kh.action == KA_REPAIR;
-                        if (pick) repairDeal(gsc == SC_1 ? repairdeal::SPOT : repairdeal::STATION);
+                    if (repairAsk) {  // (career R's confirmation: its own keys, the choices, Enter, the arrows, Esc; anything else carries on)
+                        const int uk = fromPad ? evKeyScancode(e) : settings.keys.uiKey(evKeyScancode(e), shiftDown(), KCTX_DIALOG);
+                        const int pick = uk == UK_CHOICE1 ? 1 : uk == UK_CHOICE2 ? 2 : uk == SC_RETURN || uk == SC_KP_ENTER ? repairSel + 1 : 0;
+                        const bool move = uk == SC_UP || uk == SC_DOWN, cancel = uk == SC_ESCAPE || kh.action == KA_REPAIR;
+                        if (move) repairSel = 1 - repairSel;
+                        if (pick) repairDeal(pick == 1 ? repairdeal::SPOT : repairdeal::STATION);
                         else if (cancel) repairAsk = false;
-                        if (pick || cancel) break;
+                        if (pick || cancel || move) break;
+                        if (fromPad) break;  // (the pad's other menu keys mean nothing here)
                     }
                     if (kh.action == KA_CHAT) {
                         coop.typing = true;
                         coop.draft.clear(), coop.draftEd.reset();
                         break;
                     }
-                    if (kh.action >= 0 && isDevAction((KeyAction)kh.action) &&  // (the dev tools: DEV KEYS mode only, resolve left them out otherwise; the dev menu has them all)
-                        devmenu::dispatchKey(settings.keys, evKeyScancode(e), shiftDown(), settings.devHotkeys, kctx,
-                                             [](void* fn, const devmenu::Action& a) { (*static_cast<std::function<void(const devmenu::Action&)>*>(fn))(a); }, &runDev))
-                        break;
+                    if (kh.action >= 0 && isDevAction((KeyAction)kh.action)) {  // (the dev tools: DEV KEYS mode only, resolve left them out otherwise; the dev menu has them all)
+                        const devmenu::Action da = devmenu::forKeyAction((KeyAction)kh.action);
+                        if (da) {
+                            runDev(da);
+                            break;
+                        }
+                    }
                     if (kh.action == KA_AUTOPILOT_PICK || kh.action == KA_JOBS) {  // (their pages, straight from the game: no longer rows of the pause menu)
                         if (!editor.active && !inv.open) {
                             openMenu();
@@ -4836,7 +4905,7 @@ int main(int argc, char** argv) {
                         case SC_R:
                             if (career.on && !run.active()) {  // career: nothing for free; ask what to pay for (repairdeal.h). Sandbox and level runs carry on below
                                 const Car& pc = sim.cars[sim.player];
-                                if (!pc.remote && !pc.isProp() && !walker.active) repairAsk = true;
+                                if (!pc.remote && !pc.isProp() && !walker.active) repairAsk = true, repairSel = 0;
                                 break;
                             }
                             // R: fixed up where it stands. R twice quickly: back to where it started
@@ -4909,8 +4978,10 @@ int main(int argc, char** argv) {
                             hud.toast(std::string("DRIVING ") + sim.cars[sim.player].spec->name);
                             break;
                         case SC_C: {
-                            static const char* names[] = {"CAMERA: CHASE", "CAMERA: ORBIT", "CAMERA: COCKPIT",
-                                                          "CAMERA: DRONE (WASD FLY, Q E DOWN UP, DRAG LOOK, SHIFT FAST; F10 HIDES THE HUD)"};
+                            const std::string drone = pad::ui.last ? "CAMERA: DRONE (LEFT STICK FLY, " + K(KA_THROTTLE) + " " + K(KA_BRAKE) + " UP DOWN, RIGHT STICK LOOK; " + K(KA_PHOTO) + " HIDES THE HUD)"
+                                                                   : "CAMERA: DRONE (" + K(KA_THROTTLE) + K(KA_STEER_LEFT) + K(KA_BRAKE) + K(KA_STEER_RIGHT) + " FLY, " + K(KA_GEAR_DOWN) + " " + K(KA_GEAR_UP) +
+                                                                         " DOWN UP, DRAG LOOK, SHIFT FAST; " + K(KA_PHOTO) + " HIDES THE HUD)";
+                            const std::string names[] = {"CAMERA: CHASE", "CAMERA: ORBIT", "CAMERA: COCKPIT", drone};
                             cam.mode = (cam.mode + 1) % 4;
                             if (cam.mode == 3) {  // the drone takes off from where the camera was
                                 cam.droneEye = lastView.eye;
@@ -5209,7 +5280,10 @@ int main(int argc, char** argv) {
             if (right) m -= l;
             if (kb.held(KA_GEAR_UP, keys, shiftHeld)) m.y += 1;
             if (kb.held(KA_GEAR_DOWN, keys, shiftHeld)) m.y -= 1;
-            if (padCtx == pad::Mode::Drive) m += f * (double)padLogic.in.walkForward + l * (double)padLogic.in.walkTurn;  // (gamepad: left stick flies)
+            if (padCtx == pad::Mode::Drive) {  // (gamepad: the left stick flies, the pedals go up and down)
+                m += f * (double)padLogic.in.walkForward + l * (double)padLogic.in.walkTurn;
+                m.y += padLogic.in.throttle - padLogic.in.brake;
+            }
             if (len(m) > 0) cam.droneEye += norm(m) * (speed * dt);
             if (opt.eyeFly != 0 && opt.eyeSet) {
                 const double over = cam.droneEye.y - sim.world.height(cam.droneEye.x, cam.droneEye.z);
@@ -5764,7 +5838,6 @@ int main(int argc, char** argv) {
                         const bool reach = onYou || trunk::kitInReach(sim, walker.p);
                         interact.kit = onYou ? have : trunk::reachKit(have, reach, hd, walker.holdingJack);
                         if (inv.open && (inv.car < 0 || inv.car >= (int)sim.cars.size() || len(walker.p - trunk::gateAt(sim.cars[std::max(inv.car, 0)])) > trunk::kReach)) closeInventory();  // (walked off)
-                        if (padCtx == pad::Mode::Drive && padLogic.in.inventory) toggleInventory();
                     }
                     interact.hover = PartHit();  // the car part under the crosshair (carparts.h), nearest car part wins
                     if (cam.mode != 3) {
@@ -5838,12 +5911,7 @@ int main(int argc, char** argv) {
                         if (openCache(interact.openedSpot, "") && net.active()) net.sendGame("cache " + std::to_string(sim.world.map) + " " + interact.openedSpot);
                         interact.openedSpot.clear();
                     }
-                    if (padCtx == pad::Mode::Drive && padLogic.in.drop) {
-                        if (sim.handLine.on()) { sim.dropHandLine(); hud.toast("LET GO OF THE LINE: IT SPOOLS BACK"); }
-                        else if (walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);
-                        else if (walker.holdingJack) Interact::dropJack(sim, walker);
-                        else if (walker.hand.any()) hud.toast("PUT IT BACK IN THE TRUCK: PRESS " + K(KA_INTERACT) + " AT ITS BACK");
-                    }
+                    // (The pad's put-down and inventory are their actions' presses now: the key switch, PUT DOWN and TRUCK INVENTORY.)
                 }
                 up = down = left = right = false;
                 hb = true;
@@ -6744,6 +6812,17 @@ int main(int argc, char** argv) {
                 hud.toast(coop.haveWaypoint ? "WAYPOINT SET" : "WAYPOINT CLEARED");
             }
         }
+        if (coop.mapOpen && !menu.open && !editor.active && !coop.typing) {  // the keyboard pans the map with the menu's direction keys (and the arrows)
+            const uint8_t* mk = SDL_GetKeyboardState(nullptr);
+            const bool msh = mk[SC_LSHIFT] || mk[SC_RSHIFT];
+            const float px_ = (settings.keys.held(KA_UI_RIGHT, mk, msh) || mk[SC_RIGHT] ? 1.0f : 0.0f) - (settings.keys.held(KA_UI_LEFT, mk, msh) || mk[SC_LEFT] ? 1.0f : 0.0f);
+            const float py_ = (settings.keys.held(KA_UI_DOWN, mk, msh) || mk[SC_DOWN] ? 1.0f : 0.0f) - (settings.keys.held(KA_UI_UP, mk, msh) || mk[SC_UP] ? 1.0f : 0.0f);
+            if (px_ != 0 || py_ != 0) {
+                int dw = 1, dh = 1;
+                SDL_GL_GetDrawableSize(win, &dw, &dh);
+                coop.mapMouse(dw / 2.0f, dh / 2.0f, 0, true, -px_ * 600.0f * (float)dt, -py_ * 600.0f * (float)dt);
+            }
+        }
         if (walker.active && padCtx == pad::Mode::Drive && cam.mode != 3) {  // (gamepad: the right stick looks around on foot)
             float lx = padLogic.in.lookX, ly = -padLogic.in.lookY;
             if (settings.padInvertLookX) lx = -lx;
@@ -7297,7 +7376,7 @@ int main(int argc, char** argv) {
             hud.nearTruck = walker.active && len(walker.p - pc.frame().com) < 8;
             hud.trunkOpen = inv.open;
             hud.ctx.settingFull = settings.fullHud;
-            hud.ctx.holdFull = settings.keys.held(KA_HUD_ALL, SDL_GetKeyboardState(nullptr), shiftDown());
+            hud.ctx.holdFull = settings.keys.held(KA_HUD_ALL, SDL_GetKeyboardState(nullptr), shiftDown()) || (padCtx == pad::Mode::Drive && padLogic.in.hudAll);
             {  // (the proving ground's lap timer: only on the loop, driving, outside a level)
                 const Car& lc = sim.cars[sim.player];
                 if (lapStamp != sim.world.stamp) lapStamp = sim.world.stamp, lapTimer.setLoop(sim.world);
@@ -7406,13 +7485,21 @@ int main(int argc, char** argv) {
             std::snprintf(sp, sizeof sp, "SPEED %d/%d %.0f %s", fc.speed + 1, freecam::kSpeedCount, settings.mph ? mps * 2.23694 : mps * 3.6, settings.mph ? "MPH" : "KM/H");
             const std::string head = std::string("FREE CAM  ") + sp + (fc.through ? "  THROUGH THE GROUND" : "") +
                                      (fc.carry.on() && freecam::valid(sim, fc.carry) ? std::string("  CARRYING ") + sim.cars[fc.carry.car].spec->name : "");
-            const std::string keys = fc.carry.on() ? "CLICK/G SET DOWN AT THE CROSSHAIR  RMB/F LET GO  R OR CTRL+WHEEL TURN  V DRIVE IT  " + K(KA_DEV_FREECAM) + "/ESC LEAVE"
-                                                   : "WASD Q E FLY  SHIFT FAST  WHEEL OR - = SPEED  CLICK/G CARRY  B SPAWN  V DRIVE IT  X THROUGH GROUND  " + K(KA_DEV_FREECAM) + "/ESC LEAVE";
+            const bool padNow = pad::ui.last;  // (K: the pad's buttons when it was last used)
+            const std::string leave = K(KA_DEV_FREECAM) + (padNow ? "/" + std::string(pad::buttonName(pad::B_START, pad::ui.style)) : std::string("/ESC")) + " LEAVE";
+            const std::string fly = padNow ? "LEFT STICK FLY  " + K(KA_THROTTLE) + " " + K(KA_BRAKE) + " UP DOWN  " + K(KA_FC_SLOWER) + " " + K(KA_FC_FASTER) + " SPEED"
+                                           : K(KA_THROTTLE) + K(KA_STEER_LEFT) + K(KA_BRAKE) + K(KA_STEER_RIGHT) + " " + K(KA_GEAR_DOWN) + " " + K(KA_GEAR_UP) + " FLY  SHIFT FAST  WHEEL OR " +
+                                                 K(KA_FC_SLOWER) + " " + K(KA_FC_FASTER) + " SPEED";
+            const std::string keys = fc.carry.on() ? (padNow ? "" : "CLICK/") + K(KA_FC_GRAB) + " SET DOWN AT THE CROSSHAIR  " + (padNow ? "" : "RMB/") + K(KA_FC_LET_GO) + " LET GO  " + K(KA_FC_TURN) + " " +
+                                                         K(KA_FC_TURN_BACK) + " TURN  " + K(KA_FC_DRIVE) + " DRIVE IT  " + leave
+                                                   : fly + "  " + (padNow ? "" : "CLICK/") + K(KA_FC_GRAB) + " CARRY  " + K(KA_FC_SPAWN) + " SPAWN  " + K(KA_FC_DRIVE) + " DRIVE IT  " + K(KA_FC_THROUGH) +
+                                                         " THROUGH GROUND  " + leave;
             centeredPill(renderer, cx, H - 64 * u, ls, head, 0, 0, 0, 0.9f, 0.45f, 0.85f, 1.0f);
             centeredPill(renderer, cx, H - 36 * u, s, keys, 0, 0, 0, 0.85f);
             if (fc.picker) {  // the spawn picker: the listed vehicles
                 const std::vector<int>& listed = listedVehicles();
-                const std::string foot = "ENTER/CLICK AT THE CROSSHAIR  SHIFT: CARRIED";
+                const std::string foot = pad::ui.last ? std::string(pad::buttonName(pad::B_A, pad::ui.style)) + " AT THE CROSSHAIR  " + K(KA_UI_SECOND) + ": CARRIED"
+                                                      : "ENTER/CLICK AT THE CROSSHAIR  SHIFT OR " + K(KA_UI_SECOND) + ": CARRIED";
                 const float lh = 10 * s + 4 * u, bw = std::max(260 * u, renderer.textWidth(foot, s) + 24 * u), bx = 24 * u, by = H * 0.18f;
                 pill(renderer, bx, by, bw, 20 * u + lh * (float)(listed.size() + 2), 0, 0, 0, 0.6f);
                 renderer.text(bx + 12 * u, by + 8 * u, s, "SPAWN", 0.45f, 0.85f, 1.0f, 1);
@@ -7432,7 +7519,7 @@ int main(int argc, char** argv) {
             if (!inv.open && !std::getenv("CZ_OLDHUD")) drawFocus(renderer, focus, interact, sim, view, walker, W, H, padNow);
             else if (interact.current.kind != IA_NONE && !inv.open) {
                 const bool tap = interact.current.hold <= 0 && !interact.current.continuous;  // (E opens a menu: no holding)
-                const std::string line = std::string(padNow ? (tap ? "X  " : "HOLD X  ") : (tap ? K(KA_INTERACT) + "  " : "HOLD " + K(KA_INTERACT) + "  ")) + interact.current.prompt;
+                const std::string line = (tap ? K(KA_INTERACT) + "  " : "HOLD " + K(KA_INTERACT) + "  ") + interact.current.prompt;  // (K: the pad's button when it was last used)
                 const float ps = tap ? px(1.8f * u) : s;
                 centeredPill(renderer, W / 2.0f, H / 2.0f + 40 * u, ps, line, 0, 0, 0, 0.6f, 1.0f, 0.85f, 0.45f);
                 if (interact.progress > 0) {
@@ -7481,20 +7568,20 @@ int main(int argc, char** argv) {
                 }
             }
             if (walker.hand.any() && !walker.carrying && !inv.open) {
-                const std::string line = "IN YOUR HAND: " + trunk::name(walker.hand) + (padNow ? "   (X AT THE BACK OF YOUR TRUCK: PUT IT BACK)" : "   (" + K(KA_INTERACT) + " AT THE BACK OF YOUR TRUCK: PUT IT BACK)");
+                const std::string line = "IN YOUR HAND: " + trunk::name(walker.hand) + "   (" + K(KA_INTERACT) + " AT THE BACK OF YOUR TRUCK: PUT IT BACK)";
                 drawPrompt(renderer, u, W, H, 0, line, 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
             }
             if (sim.handLine.on() && sim.handLine.car < (int)sim.cars.size()) {
                 const Sim::HandLine& hl = sim.handLine;
                 const double out = len(hl.hand - sim.cars[hl.car].hookPoint(hl.hook)), most = sim.handLineReach(hl) + 3.2;
-                char lb[160];
+                char lb[200];
                 std::snprintf(lb, sizeof lb, "%s: %.0f OF %.0f M OUT   WALK IT TO AN ANCHOR, HOLD %s TO HOOK   %s: LET GO", hl.kind == ROPE_WINCH ? "WINCH LINE" : "TOW STRAP", out, most,
-                              padNow ? "X" : K(KA_INTERACT).c_str(), padNow ? "B" : K(KA_PUT_DOWN).c_str());
+                              K(KA_INTERACT).c_str(), K(KA_PUT_DOWN).c_str());
                 drawPrompt(renderer, u, W, H, 0, lb, 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
             }
             if (walker.carrying) {
                 const std::string line = "CARRYING A " + walker.carrying->sizeName() + (walker.carrying->tireOnly ? "" : " WHEEL") +
-                                         (walker.carrying->popped ? " (FLAT)" : "") + (padNow ? "   B: PUT IT DOWN" : "   G: PUT IT DOWN");
+                                         (walker.carrying->popped ? " (FLAT)" : "") + "   " + K(KA_PUT_DOWN) + ": PUT IT DOWN";
                 drawPrompt(renderer, u, W, H, 0, line, 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
             }
         }
@@ -7653,9 +7740,14 @@ int main(int argc, char** argv) {
             float r1, g1, b1, r2, g2, b2;
             col(cash >= repairdeal::price(repairdeal::SPOT, dmg), r1, g1, b1);
             col(haveSt && cash >= repairdeal::price(repairdeal::STATION, dmg), r2, g2, b2);
-            drawPrompt(renderer, u, W, H, 3, "REPAIR - YOUR CASH $" + std::to_string(cash) + "   " + K(KA_REPAIR) + " OR ESC: CANCEL", 0, 0, 0, 0.7f, 0.9f, 0.92f, 0.95f);
-            drawPrompt(renderer, u, W, H, 2, repairdeal::lineSpot(dmg), 0.02f, 0.08f, 0.04f, 0.9f, r1, g1, b1);
-            drawPrompt(renderer, u, W, H, 1, haveSt ? repairdeal::lineStation(dmg) : std::string("2: NO REPAIR STATION ON THIS MAP"), 0.02f, 0.08f, 0.04f, 0.9f, r2, g2, b2);
+            // (The choices by their keys as bound, the pad's when it was last used; the highlighted one is what OK takes.)
+            const bool padNow = pad::ui.last;
+            const std::string cancel = padNow ? std::string(pad::buttonName(pad::B_B, pad::ui.style)) : std::string("ESC");
+            drawPrompt(renderer, u, W, H, 3, "REPAIR - YOUR CASH $" + std::to_string(cash) + "   " + K(KA_REPAIR) + " OR " + cancel + ": CANCEL", 0, 0, 0, 0.7f, 0.9f, 0.92f, 0.95f);
+            const std::string l1 = K(KA_UI_CHOICE1) + repairdeal::lineSpot(dmg).substr(1);
+            const std::string l2 = K(KA_UI_CHOICE2) + (haveSt ? repairdeal::lineStation(dmg).substr(1) : std::string(": NO REPAIR STATION ON THIS MAP"));
+            drawPrompt(renderer, u, W, H, 2, (repairSel == 0 ? "> " : "") + l1, 0.02f, 0.08f, 0.04f, repairSel == 0 ? 1.0f : 0.8f, r1, g1, b1);
+            drawPrompt(renderer, u, W, H, 1, (repairSel == 1 ? "> " : "") + l2, 0.02f, 0.08f, 0.04f, repairSel == 1 ? 1.0f : 0.8f, r2, g2, b2);
         }
         if (garageShop.open && !menu.open) {
             const int at = sim.stationAt(sim.cars[sim.player].frame().com);

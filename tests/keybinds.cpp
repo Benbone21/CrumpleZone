@@ -165,7 +165,7 @@ SCENARIO(keysTable, "keybinds/table", "Every keyboard action is in the table onc
         for (int a = 0; a < KA_COUNT; a++) {
             const KeyAction ka = (KeyAction)a;
             const unsigned c = actionContexts(ka);
-            const unsigned one = c & KCTX_DRIVE ? KCTX_DRIVE : c & KCTX_FOOT ? KCTX_FOOT : KCTX_SCENARIO;
+            const unsigned one = c & (~c + 1);  // (its first context: driving, on foot, a scenario, a menu, a dialog, the free cam)
             if (kb.resolve(defaultKey(ka), defaultShift(ka), false, one, true).action != a) return false;
         }
         return true;

@@ -104,21 +104,28 @@ SCENARIO(settingsMouse, "pausemenu/tab-mouse", "Clicking a tab switches to it; a
     ctx.check("a click above the strip does not switch", m.tabNow() == PauseMenu::T_AUDIO);
 }
 
-SCENARIO(settingsPad, "pausemenu/tab-pad", "The pad's shoulder buttons are Q and E in a menu, and Q / E are what switch tabs") {
+SCENARIO(settingsPad, "pausemenu/tab-pad", "The pad's shoulder buttons are the menu's tab keys (as Q and E are), and those switch tabs") {
     using namespace pad;
     Logic l;
     Raw r;
     r.buttons = 1u << B_RB;
     l.update(r, Mode::Menu, 1.0 / 60);
     bool e = false, q = false;
-    for (const Tap& t : l.taps) e |= t.scancode == SC_E;
-    ctx.check("RB taps E", e);
+    for (const Tap& t : l.taps) e |= t.scancode == UK_TAB_NEXT && t.action == KA_UI_TAB_NEXT;
+    ctx.check("RB taps the next tab", e);
     r = Raw();
     l.update(r, Mode::Menu, 1.0 / 60);
     r.buttons = 1u << B_LB;
     l.update(r, Mode::Menu, 1.0 / 60);
-    for (const Tap& t : l.taps) q |= t.scancode == SC_Q;
-    ctx.check("LB taps Q", q);
+    for (const Tap& t : l.taps) q |= t.scancode == UK_TAB_PREV;
+    ctx.check("LB taps the previous tab", q);
+    Settings s;
+    PauseMenu m;
+    m.show(0, 0);
+    m.select(s, "SETTINGS");
+    m.key(SC_RETURN, s);
+    ctx.check("the next-tab key the pad sends switches the tab, as E does", (m.key(UK_TAB_NEXT, s), m.tabNow() == PauseMenu::T_CONTROLS) && (m.key(SC_E, s), m.tabNow() == PauseMenu::T_AUDIO));
+    ctx.check("and back", (m.key(UK_TAB_PREV, s), m.tabNow() == PauseMenu::T_CONTROLS) && (m.key(SC_Q, s), m.tabNow() == PauseMenu::T_GRAPHICS));
 }
 
 SCENARIO(settingsDev, "pausemenu/dev-tab", "F12 opens Settings on the DEV tab: the groups, one group's rows (FREE CAM), BACK a step at a time") {

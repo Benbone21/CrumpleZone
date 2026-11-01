@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "keybinds.h"
 #include "softbody.h"
 #include "vehicles.h"
 
@@ -12,6 +13,19 @@ const std::vector<int>& keys() {
     static const std::vector<int> k = {K_FORWARD, K_BACK, K_LEFT, K_RIGHT, K_DOWN, K_UP, K_GRAB, K_LET_GO, K_TURN,
                                        K_SPAWN, K_DRIVE, K_THROUGH, K_SLOWER, K_FASTER, K_EXIT};
     return k;
+}
+
+bool passesThroughAction(int a) {
+    switch (a) {
+        case KA_DEBUG_INFO:
+        case KA_DEV_RELOAD:
+        case KA_HUD_ALL:
+        case KA_PHOTO:
+        case KA_FULLSCREEN:
+        case KA_DEV_MENU:
+        case KA_DEV_TOGGLE: return true;
+        default: return false;
+    }
 }
 
 bool passesThrough(int sc) {

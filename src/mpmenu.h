@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "keybinds.h"
 #include "textedit.h"
 
 namespace mpmenu {
@@ -123,7 +124,8 @@ public:
     void open(Page p, const View& v);
     std::vector<Row> rows(const View& v) const;
     int count(const View& v) const { return (int)rows(v).size(); }
-    Result key(int scancode, bool ctrl, bool shift, const View& v);
+    Result key(int scancode, bool ctrl, bool shift, const View& v);  // (a physical key: turned into the menu key it's bound to, keybinds.h uiKey)
+    const Keybinds* binds = nullptr;  // the player's bindings (null: the defaults)
     Result text(const std::string& typed, const View& v);
     Result choose(int i, const View& v);   // a click or Enter on row i
     Result back(const View& v);

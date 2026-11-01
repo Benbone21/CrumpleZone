@@ -326,13 +326,13 @@ Result Nav::key(int sc, bool ctrl, bool shift, const View& v) {
         const te::KeyResult k = te::key(*value, ted, sc, ctrl, shift, rules, !hidden);
         if (k.handled) return k.changed ? Result{focusText == R_HOSTPW && page == P_FRIENDS ? A_SETTINGS_LIVE : A_CHANGED} : Result{};
     }
+    if (focusText < 0) sc = (binds ? *binds : defaultKeybinds()).uiKey(sc, shift);  // (the player's menu keys; a text field has the letters)
     if (sc == SC_ESCAPE) return back(v);
-    if (sc == SC_BACKSPACE && focusText < 0) return back(v);
-    if (sc == SC_RETURN || sc == SC_KP_ENTER || (sc == SC_SPACE && focusText < 0)) return choose(sel, v);
-    if (sc == SC_UP || (sc == K_W && focusText < 0)) move(-1, v);
-    else if (sc == SC_DOWN || sc == SC_TAB || (sc == K_S && focusText < 0)) move(shift && sc == SC_TAB ? -1 : 1, v);
-    else if (sc == SC_LEFT || sc == SC_RIGHT || ((sc == K_A || sc == K_D) && focusText < 0)) {
-        if (!r.empty() && r[sel].kind == CHOICE) return change(id, sc == SC_LEFT || sc == K_A ? -1 : 1, v);
+    if (sc == SC_RETURN || sc == SC_KP_ENTER) return choose(sel, v);
+    if (sc == SC_UP) move(-1, v);
+    else if (sc == SC_DOWN || sc == SC_TAB) move(shift && sc == SC_TAB ? -1 : 1, v);
+    else if (sc == SC_LEFT || sc == SC_RIGHT) {
+        if (!r.empty() && r[sel].kind == CHOICE) return change(id, sc == SC_LEFT ? -1 : 1, v);
     }
     return {};
 }

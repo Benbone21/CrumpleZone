@@ -226,10 +226,11 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
     const RowStyle st{ts, small, u, rowH, headH, a, 250 * u};
     float cy = y + pad + 8 * title + 18 * u;
     for (int k = 0; k < (int)rs.size(); k++) cy += drawRow(r, rs[k], idx[k], x, w, cy, st);
-    std::string keys = page == 0 && this->title ? "W S SELECT   A D CHANGE   ENTER OK"
-                       : page == 0                ? "W S SELECT   A D CHANGE   ENTER OK   ESC RESUME"
-                       : standalone && !this->title ? "W S SELECT   A D CHANGE   ENTER OK   ESC CLOSE"
-                                                  : "W S SELECT   A D CHANGE   ENTER OK   ESC BACK";
+    const std::string nav = s.keys.name(KA_UI_UP) + " " + s.keys.name(KA_UI_DOWN) + " SELECT   " + s.keys.name(KA_UI_LEFT) + " " + s.keys.name(KA_UI_RIGHT) + " CHANGE   ENTER OK";
+    std::string keys = page == 0 && this->title ? nav
+                       : page == 0                ? nav + "   ESC RESUME"
+                       : standalone && !this->title ? nav + "   ESC CLOSE"
+                                                  : nav + "   ESC BACK";
     if (pad::ui.last) {  // the controller was the last thing used
         keys = "D-PAD SELECT   LEFT RIGHT CHANGE   " + std::string(pad::hint("", pad::B_A)) + " OK";
         if (!(page == 0 && this->title)) keys += "   " + std::string(pad::hint("", pad::B_B)) + (page == 0 || (standalone && !this->title) ? " RESUME" : " BACK");
@@ -318,14 +319,16 @@ void PauseMenu::drawSettings(Renderer& r, const Settings& s, int W, int H, float
     float cy = g.rowsY;
     for (int q : idx) cy += drawRow(r, all[q], q, g.x, g.w, cy, st);
     if ((int)idx.size() < (int)all.size()) {
-        const char* more = "MORE: W S SCROLLS";
+        const std::string more = pad::ui.last ? std::string("MORE: D-PAD SCROLLS") : "MORE: " + s.keys.name(KA_UI_UP) + " " + s.keys.name(KA_UI_DOWN) + " SCROLLS";
         r.text(g.x + g.w - pad - r.textWidth(more, small), g.y + g.h - pad - 8 * small - 14 * u, small, more, 0.55f, 0.57f, 0.62f, a);
     }
     // The hint line.
     const bool back = this->title || settingsFromPause;
-    std::string keys = std::string("Q E TABS   W S SELECT   A D CHANGE   ENTER OK   ESC ") + (back ? "BACK" : "CLOSE");
+    std::string keys = s.keys.name(KA_UI_TAB_PREV) + " " + s.keys.name(KA_UI_TAB_NEXT) + " TABS   " + s.keys.name(KA_UI_UP) + " " + s.keys.name(KA_UI_DOWN) + " SELECT   " +
+                       s.keys.name(KA_UI_LEFT) + " " + s.keys.name(KA_UI_RIGHT) + " CHANGE   ENTER OK   ESC " + (back ? "BACK" : "CLOSE");
     if (pad::ui.last) {
-        keys = std::string(pad::hint("", pad::B_LB)) + " " + pad::hint("", pad::B_RB) + " TABS   D-PAD SELECT   LEFT RIGHT CHANGE   " + pad::hint("", pad::B_A) + " OK   " +
+        const bool ps = pad::ui.style == pad::Style::PlayStation;
+        keys = s.keys.padName(KA_UI_TAB_PREV, ps) + " " + s.keys.padName(KA_UI_TAB_NEXT, ps) + " TABS   D-PAD SELECT   LEFT RIGHT CHANGE   " + pad::hint("", pad::B_A) + " OK   " +
                pad::hint("", pad::B_B) + (back ? " BACK" : " CLOSE");
     }
     r.text(g.x + (g.w - r.textWidth(keys, small)) / 2, g.y + g.h - pad - 8 * small + 6 * u, small, keys, 0.55f, 0.57f, 0.62f, a);
@@ -422,7 +425,9 @@ void PauseMenu::drawMulti(Renderer& r, const Settings& s, int W, int H, float a)
             pill(r, x0, y - 4 * u, bw, base.rowH + 8 * u, 0.03f, 0.035f, 0.045f, 0.85f * a);
             y += drawRow(r, rs[k], k, x0, bw, y, base);
         }
-    std::string keys = joining ? "ESC CANCEL" : "W S SELECT   A D CARD / CHANGE   ENTER OK   ESC BACK";
+    std::string keys = joining ? "ESC CANCEL"
+                               : s.keys.name(KA_UI_UP) + " " + s.keys.name(KA_UI_DOWN) + " SELECT   " + s.keys.name(KA_UI_LEFT) + " " + s.keys.name(KA_UI_RIGHT) +
+                                     " CARD / CHANGE   ENTER OK   ESC BACK";
     if (pad::ui.last)
         keys = joining ? std::string(pad::hint("", pad::B_B)) + " CANCEL"
                        : "D-PAD SELECT   LEFT RIGHT CARD   " + std::string(pad::hint("", pad::B_A)) + " OK   " + std::string(pad::hint("", pad::B_B)) + " BACK";
