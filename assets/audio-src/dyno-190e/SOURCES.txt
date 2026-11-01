@@ -1,0 +1,15 @@
+Raw source recordings, not loaded by the game and not copied into release builds (the Makefile packages assets/audio only).
+Cut what the game uses into assets/audio/ with tools/sfx_prepare.py and list it in assets/audio/sfx/SOURCES.txt.
+
+"The Dyno Sessions: 190E" by Chippy569 on Freesound: https://freesound.org/people/Chippy569/packs/9658/
+Recorded by David of Track Time Audio. All 64 sounds are Creative Commons 0 (public domain, no attribution required):
+http://creativecommons.org/publicdomain/zero/1.0/
+File names are the names as downloaded; _readme_and_license.txt is the pack's own readme, with each sound's Freesound URL.
+
+What is in it (a Mercedes 190E on a dyno, plus the cabin):
+19_*, 20_*, 21_*     engine held at 500 / 2500 / 6500 rpm (takes 19-21), mostly from three mics (4062, d6, distant)
+17_*, 18_*, acceleration-sweep-4062   rev sweeps (short, medium, a full acceleration)
+23_start*            engine starts (big and small)
+34ebrake*, 50driverswindow*, 58frontdoor*, 60trunk*, 63horn*   e-brake, driver's window, front door, trunk, horn (two takes each)
+000-* to 013-*       cabin switches and knobs, close and from the passenger seat (clock, window switch, turn signal,
+                     windshield washer, high beam, gauge brightness, horn button, HVAC knobs and sliders, antenna, headlights)
