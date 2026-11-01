@@ -1,6 +1,7 @@
 // Offscreen OpenGL integration checks, including an emulated driver rejecting HDR MSAA.
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 #include "../src/render.h"
 #include "../src/carparts.h"
 #include "../src/carvisual.h"
@@ -93,11 +94,23 @@ int main() {
         attachment = reinterpret_cast<decltype(attachment)>(SDL_GL_GetProcAddress("glGetFramebufferAttachmentParameteriv"));
         if (!getError || !attachment) throw std::runtime_error("missing core GL test function");
         validateProgram = reinterpret_cast<void (*)(GLuint)>(SDL_GL_GetProcAddress("glValidateProgram"));
-        gl::traceErrors(getError, traceReport);
+        // Every call checked, so a failure names its call: on by default, except on macOS, whose software renderer syncs on each
+        // glGetError (the whole check ran past 40 minutes on a hosted Mac); CZ_GL_TRACE=1 or 0 turns it on or off anywhere.
+#ifdef __APPLE__
+        bool trace = false;
+#else
+        bool trace = true;
+#endif
+        if (const char* t = std::getenv("CZ_GL_TRACE")) trace = std::strcmp(t, "0") != 0;
+        if (trace) gl::traceErrors(getError, traceReport);
         auto clean = [&] {
             if (tracedError) throw std::runtime_error(tracedCall);
             const GLenum error = getError();
-            if (error) { char s[64]; std::snprintf(s, sizeof s, "OpenGL error 0x%x", error); throw std::runtime_error(s); }
+            if (error) {
+                char s[128];
+                std::snprintf(s, sizeof s, "OpenGL error 0x%x%s", error, trace ? "" : " (run with CZ_GL_TRACE=1 to name the call)");
+                throw std::runtime_error(s);
+            }
         };
         struct GpuCase { const char* vendor; const char* renderer; GpuVendor expected; };
         const GpuCase gpuCases[] = {
