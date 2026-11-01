@@ -228,7 +228,7 @@ jobs:
           python3 -u - <<'PY'
           import subprocess
           # Hosted Macs use Apple Software Renderer; the full graphics checks take 5-25 minutes (quality 1 alone has taken 7).
-          subprocess.run(['./build/mac/test_render'], check=True, timeout=2400)
+          subprocess.run(['./build/mac/test_render'], check=True, timeout=10800)  # TEMP (wip/mac-render): measure the full run
           PY
           python3 - <<'PY'
           import re, subprocess
