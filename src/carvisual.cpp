@@ -2,6 +2,7 @@
 #include "thread_cache.h"
 #include "loadprof.h"
 #include "carvisual.h"
+#include "attachments.h"
 
 #include "bodyshell.h"
 #include "modelkit.h"
@@ -488,7 +489,7 @@ void buildJeskoMesh(const Car& car, VisualTemplate& out) {
 
 // ---- Part geometry helpers (car-local coordinates) -------------------------------
 
-enum PartGroup { ON_BODY, ON_ENGINE, ON_GEARBOX, ON_LEFT_DOOR, ON_RIGHT_DOOR, ON_HOOD, ON_LIFTGATE };
+enum PartGroup { ON_BODY, ON_ENGINE, ON_GEARBOX, ON_LEFT_DOOR, ON_RIGHT_DOOR, ON_HOOD, ON_LIFTGATE, ON_BUMPER };
 struct PartBuilder {
     std::vector<V3> corners;  // 3 per triangle
     std::vector<float> color;  // 4 per triangle
@@ -629,6 +630,7 @@ void buildExtras(const Car& car, PartBuilder& pb) {
         // back for clearance; winch in a center cradle with a fairlead, shackles, two lights.
         const double xf = L / 2 + 0.05, y0 = floorY - 0.04, y1 = floorY + 0.36, ym = 0.5 * (y0 + y1);
         const double half = W / 2 + 0.03;
+        if (!vs.steelBumper) {  // (the steel bumper attachment takes the front one's place: buildAttachments)
         pb.box(V3(xf, ym + 0.04, 0), V3(0.12, (y1 - y0) / 2 - 0.04, half * 0.62), steel, SM_MATTE);
         for (int sd = -1; sd <= 1; sd += 2) {
             const V3 ax = norm(V3(0.6, 0, -sd * 1.0)), ay(0, 1, 0), az = norm(cross(ax, ay));
@@ -639,9 +641,12 @@ void buildExtras(const Car& car, PartBuilder& pb) {
             pb.box(V3(xf + 0.101, y1 + 0.03, sd * 0.42), V3(0.002, 0.035, 0.048), V3(1.0, 0.98, 0.9), SM_EMISSIVE);
         }
         pb.box(V3(xf + 0.03, y0 + 0.03, 0), V3(0.1, 0.05, half * 0.5), steel, SM_MATTE);  // bash plate
-        pb.cylinder(V3(xf + 0.06, ym + 0.02, -0.24), V3(xf + 0.06, ym + 0.02, 0.24), 0.07, 12, V3(0.08, 0.08, 0.09), SM_METAL);  // winch
-        pb.cylinder(V3(xf + 0.06, ym + 0.02, -0.06), V3(xf + 0.06, ym + 0.02, 0.06), 0.077, 12, V3(0.75, 0.72, 0.62), SM_MATTE);  // rope
-        pb.box(V3(xf + 0.125, ym - 0.06, 0), V3(0.012, 0.03, 0.1), V3(0.55, 0.55, 0.57), SM_METAL);  // fairlead
+        if (vs.extras & EXTRA_WINCH) {  // (NO WINCH: the cradle stands empty)
+            pb.cylinder(V3(xf + 0.06, ym + 0.02, -0.24), V3(xf + 0.06, ym + 0.02, 0.24), 0.07, 12, V3(0.08, 0.08, 0.09), SM_METAL);  // winch
+            pb.cylinder(V3(xf + 0.06, ym + 0.02, -0.06), V3(xf + 0.06, ym + 0.02, 0.06), 0.077, 12, V3(0.75, 0.72, 0.62), SM_MATTE);  // rope
+            pb.box(V3(xf + 0.125, ym - 0.06, 0), V3(0.012, 0.03, 0.1), V3(0.55, 0.55, 0.57), SM_METAL);  // fairlead
+        }
+        }
         // Rear: steel bumper with a hitch receiver and the tire carrier's swing post.
         const double xr = -L / 2 - 0.07;
         pb.box(V3(xr, ym + 0.02, 0), V3(0.1, (y1 - y0) / 2 - 0.06, half * 0.98), steel, SM_MATTE);
@@ -649,7 +654,7 @@ void buildExtras(const Car& car, PartBuilder& pb) {
         for (int sd = -1; sd <= 1; sd += 2)
             pb.box(V3(xr - 0.101, ym + 0.08, sd * half * 0.82), V3(0.002, 0.03, 0.06), V3(0.8, 0.05, 0.03), SM_EMISSIVE);
     }
-    if ((vs.extras & EXTRA_WINCH) && !armor && vs.model == 2) {
+    if ((vs.extras & EXTRA_WINCH) && !armor && vs.model == 2 && !vs.steelBumper) {
         // Winch tucked behind the Bronco's steel bumper: hawse fairlead and the hook.
         const double xf = L / 2 + 0.103, y = floorY + 0.12;
         pb.box(V3(xf, y, 0), V3(0.008, 0.032, 0.11), V3(0.6, 0.6, 0.62), SM_METAL);
@@ -841,6 +846,7 @@ void buildExtras(const Car& car, PartBuilder& pb) {
         // Push bar: two uprights from the frame head to over the nose's lip, a top bar and a low
         // bar, braced back to the beam.
         const double yb0 = floorY - 0.02, yb1 = topAt(0) + 0.06, zb = 0.42;
+        if (!vs.steelBumper) {  // (the steel bumper attachment takes its place)
         for (int sd = -1; sd <= 1; sd += 2) {
             tube(V3(xf + 0.06, yb0, sd * zb), V3(xf + 0.09, yb1, sd * zb));
             tube(V3(xf + 0.09, yb1, sd * zb), V3(xf - 0.16, floorY + 0.20, sd * zb));  // brace back into the nose's frame head
@@ -852,6 +858,7 @@ void buildExtras(const Car& car, PartBuilder& pb) {
         tube(V3(xf + 0.07, yb0 + 0.16, -zb), V3(xf + 0.07, yb0 + 0.16, zb));
         tube(V3(xf + 0.07, yb0 + 0.16, 0), V3(xf + 0.09, yb1, 0));  // (center upright)
         pb.box(V3(xf + 0.10, yb0 + 0.05, 0), V3(0.03, 0.05, 0.10), V3(0.62, 0.06, 0.04), SM_PAINT);  // red tow loop plate
+        }
         // Exo-cage: from the body at the rear axle over the engine, down to the rear bumper.
         const auto ac = axleColumns(vs);
         const double xa = ac.size() >= 2 ? xAt(ac.back()) + 0.05 : xr + 0.9;
@@ -1103,11 +1110,13 @@ void buildOpenFrame(const Car& car, PartBuilder& pb) {
         M(V3(xH + 0.06, F + 0.22, 0.62), V3(xH - 0.12, F + 0.70, 0.56), 0.024);
         across(xH - 0.12, F + 0.70, 0.56, 0.024);
         M(V3(xH - 0.12, F + 0.70, 0.56), V3(xf + 0.06, sy, shz - 0.02), 0.022);
-        // Winch between the horns, with its fairlead.
-        pb.box(V3(xH - 0.04, F + 0.30, 0), V3(0.10, 0.07, 0.24), V3(0.08, 0.08, 0.09), SM_METAL);
-        pb.cylinder(V3(xH - 0.04, F + 0.30, -0.19), V3(xH - 0.04, F + 0.30, 0.19), 0.065, 12, V3(0.10, 0.10, 0.11), SM_METAL);
-        pb.cylinder(V3(xH - 0.04, F + 0.30, -0.08), V3(xH - 0.04, F + 0.30, 0.08), 0.072, 12, V3(0.75, 0.72, 0.62), SM_MATTE);
-        pb.box(V3(xH + 0.08, F + 0.27, 0), V3(0.012, 0.03, 0.1), V3(0.6, 0.6, 0.62), SM_METAL);
+        // Winch between the horns, with its fairlead. (Taken off: NO WINCH; with the steel bumper it's in that one's cradle.)
+        if ((vs.extras & EXTRA_WINCH) && !vs.steelBumper) {
+            pb.box(V3(xH - 0.04, F + 0.30, 0), V3(0.10, 0.07, 0.24), V3(0.08, 0.08, 0.09), SM_METAL);
+            pb.cylinder(V3(xH - 0.04, F + 0.30, -0.19), V3(xH - 0.04, F + 0.30, 0.19), 0.065, 12, V3(0.10, 0.10, 0.11), SM_METAL);
+            pb.cylinder(V3(xH - 0.04, F + 0.30, -0.08), V3(xH - 0.04, F + 0.30, 0.08), 0.072, 12, V3(0.75, 0.72, 0.62), SM_MATTE);
+            pb.box(V3(xH + 0.08, F + 0.27, 0), V3(0.012, 0.03, 0.1), V3(0.6, 0.6, 0.62), SM_METAL);
+        }
         // Rear bumper and tow loop.
         const double xRb = -Lh + 0.04;
         across(xRb, F + 0.35, 0.60, 0.03);
@@ -1224,6 +1233,138 @@ void buildOpenFrame(const Car& car, PartBuilder& pb) {
     }
 }
 
+// ---- Garage attachments (attachments.h): the winch and the steel bumper -------------------------
+// Placed by attachFit, the same fit the physics uses (the bumper's nodes, the fairlead), from the
+// vehicle's own nose: its length, the height of its bottom rows and its width there.
+
+// A 12,000 lb winch along z, its drum's middle at c, `s` its size against that one: the drum wound with
+// red synthetic line between two flanges, the motor on the right, the gearbox and clutch lever on the
+// left, tie bars between them, the contactor box on top, a hawse fairlead at `fl` and the hook on it.
+void buildWinchModel(PartBuilder& pb, const V3& c, double s, const V3& fl) {
+    const V3 black(0.04, 0.04, 0.045), housing(0.10, 0.10, 0.11), alu(0.70, 0.71, 0.73), line(0.72, 0.1, 0.05);
+    const double drum = 0.115 * s;  // half the drum's length
+    pb.cylinder(c - V3(0, 0, drum), c + V3(0, 0, drum), 0.04 * s, 14, alu, SM_METAL);                      // drum core (ends show)
+    pb.cylinder(c - V3(0, 0, drum - 0.012), c + V3(0, 0, drum - 0.012), 0.062 * s, 16, line, SM_MATTE);    // the line wound on it
+    for (int sd = -1; sd <= 1; sd += 2)
+        pb.cylinder(c + V3(0, 0, sd * (drum - 0.006)), c + V3(0, 0, sd * (drum + 0.004)), 0.08 * s, 16, housing, SM_METAL);  // flanges
+    // Motor: the long round housing on the right, with its end cap and the two cable posts.
+    const double m0 = drum + 0.01, m1 = drum + 0.215 * s;
+    pb.cylinder(c + V3(0, 0, m0), c + V3(0, 0, m1), 0.064 * s, 16, black, SM_METAL);
+    pb.cylinder(c + V3(0, 0, m1), c + V3(0, 0, m1 + 0.015 * s), 0.052 * s, 16, housing, SM_METAL);
+    for (int k = 0; k < 2; k++)
+        pb.box(c + V3(-0.015 * s, 0.066 * s, m0 + (0.06 + 0.06 * k) * s), V3(0.012, 0.012, 0.012) * s, k ? V3(0.7, 0.06, 0.04) : black, SM_MATTE);
+    // Gearbox and its clutch lever on the left.
+    const double gz = -(drum + 0.07 * s);
+    pb.box(c + V3(0, 0, gz), V3(0.072, 0.078, 0.06) * s, housing, SM_METAL);
+    pb.box(c + V3(-0.02 * s, 0.092 * s, gz), V3(0.012, 0.018, 0.035) * s, V3(0.75, 0.08, 0.05), SM_PAINT);
+    // Tie bars between the motor and the gearbox, and the contactor box on top of them.
+    for (int k = 0; k < 3; k++) {
+        const V3 o = k == 0 ? V3(0.058, 0.058, 0) * s : k == 1 ? V3(-0.058, 0.058, 0) * s : V3(-0.058, -0.058, 0) * s;
+        pb.cylinder(c + o + V3(0, 0, gz + 0.05 * s), c + o + V3(0, 0, m0), 0.011 * s, 6, housing, SM_METAL);
+    }
+    pb.box(c + V3(-0.02 * s, 0.098 * s, 0), V3(0.055, 0.032, 0.10) * s, black, SM_MATTE);
+    pb.box(c + V3(0.037 * s, 0.098 * s, 0), V3(0.002, 0.018, 0.06) * s, V3(0.75, 0.08, 0.05), SM_MATTE);  // (its badge)
+    // Feet onto the mount plate.
+    pb.box(c + V3(0, -0.072 * s, 0), V3(0.075 * s, 0.007, drum + 0.2 * s), housing, SM_METAL);
+    // The line from the drum to the hawse fairlead, the fairlead, and the hook clipped on it.
+    const V3 slot = fl + V3(0.012, 0, 0);
+    pb.cylinder(c + V3(0.05 * s, -0.035 * s, 0), slot, 0.0065, 6, line, SM_MATTE);
+    pb.box(fl, V3(0.012, 0.042 * s, 0.13 * s), alu, SM_METAL);
+    pb.box(fl + V3(0.0125, 0, 0), V3(0.002, 0.012 * s, 0.08 * s), black, SM_MATTE);
+    const V3 hk = fl + V3(0.04, 0, 0), dk(0.22, 0.22, 0.24);
+    pb.cylinder(slot, hk, 0.0065, 6, line, SM_MATTE);
+    pb.box(hk + V3(0.008, 0, 0), V3(0.014, 0.016, 0.009) * s, dk, SM_METAL);                               // the clevis
+    pb.cylinder(hk + V3(0.014, -0.005, 0), hk + V3(0.016, -0.075 * s, 0), 0.011 * s, 8, dk, SM_METAL);    // the shank
+    const V3 b0 = hk + V3(0.016, -0.075 * s, 0), b1 = hk + V3(0.045 * s, -0.098 * s, 0), b2 = hk + V3(0.072 * s, -0.078 * s, 0),
+             b3 = hk + V3(0.074 * s, -0.045 * s, 0);
+    pb.cylinder(b0, b1, 0.011 * s, 8, dk, SM_METAL);  // the bend
+    pb.cylinder(b1, b2, 0.011 * s, 8, dk, SM_METAL);
+    pb.cylinder(b2, b3, 0.009 * s, 8, dk, SM_METAL);  // ...and the point
+    pb.box(hk + V3(0.045 * s, -0.04 * s, 0), V3(0.025, 0.004, 0.005) * s, V3(0.85, 0.85, 0.82), SM_METAL);  // the latch
+    pb.box(b1 + V3(0, -0.035 * s, 0), V3(0.006, 0.035, 0.012) * s, V3(0.75, 0.08, 0.05), SM_MATTE);       // red pull strap
+}
+
+void buildAttachments(const Car& car, PartBuilder& pb) {
+    const VehicleSpec& vs = *car.spec;
+    if (car.isProp() || (!vs.steelBumper && !drawsWinchKit(vs))) return;
+    const AttachFit f = attachFit(vs);
+    const V3 steel(0.075, 0.075, 0.08), tube(0.11, 0.11, 0.115), metal(0.55, 0.55, 0.57), red(0.75, 0.08, 0.05);
+    const double s = f.winchScale, gap = 0.30 * s;  // (the winch cradle's half width)
+    const bool winch = drawsWinchKit(vs);
+    if (vs.steelBumper) {
+        pb.current = ON_BUMPER;
+        const double xc = f.noseX + f.depth * 0.5, hd = f.depth * 0.5, yc = 0.5 * (f.y0 + f.y1), hh = 0.5 * (f.y1 - f.y0);
+        const double wing = f.halfW * 0.84;  // where the ends start sweeping back
+        // The main beam: whole across, or either side of the winch's cradle.
+        if (winch) {
+            for (int sd = -1; sd <= 1; sd += 2)
+                pb.box(V3(xc, yc, sd * 0.5 * (gap + wing)), V3(hd, hh, 0.5 * (wing - gap)), steel, SM_MATTE);
+            pb.box(V3(f.noseX + 0.008, yc, 0), V3(0.008, hh, gap), steel, SM_MATTE);                       // the cradle's back
+            pb.box(V3(xc, f.y0 + 0.012, 0), V3(hd, 0.012, gap), steel, SM_MATTE);                          // ...its floor (open on top: the winch shows)
+            pb.box(V3(f.faceX - 0.008, f.winch.y - 0.035 * s, 0), V3(0.008, 0.03 * s, 0.15 * s), steel, SM_MATTE);  // fairlead mount plate
+        } else {
+            pb.box(V3(xc, yc, 0), V3(hd, hh, wing), steel, SM_MATTE);
+        }
+        // Ends swept back round the corners (clear of the tires at lock).
+        for (int sd = -1; sd <= 1; sd += 2) {
+            const V3 ax = norm(V3(0.55, 0, -sd * 1.0)), ay(0, 1, 0), az = norm(cross(ax, ay));
+            const double ext = f.halfW - wing + 0.04;
+            pb.obox(V3(xc - 0.06, yc, sd * (wing + ext * 0.45)), ax, ay, az, hd * 0.9, hh * 0.92, ext * 0.6, steel, SM_MATTE);
+        }
+        // Skid plate under it, the D-ring shackles on their tabs, and a light on each top corner.
+        pb.box(V3(xc - 0.02, f.y0 + 0.008, 0), V3(hd + 0.02, 0.008, f.halfW * 0.55), steel, SM_MATTE);
+        for (int sd = -1; sd <= 1; sd += 2) {
+            const double z = sd * (gap + 0.09);
+            pb.box(V3(f.faceX + 0.02, f.y0 + 0.07, z), V3(0.022, 0.035, 0.012), steel, SM_MATTE);               // tab
+            const V3 p0(f.faceX + 0.035, f.y0 + 0.095, z), p1(f.faceX + 0.075, f.y0 + 0.07, z), p2(f.faceX + 0.075, f.y0 + 0.03, z),
+                p3(f.faceX + 0.035, f.y0 + 0.01, z);
+            pb.cylinder(p0, p1, 0.011, 6, red, SM_PAINT);  // the D-ring's bow
+            pb.cylinder(p1, p2, 0.011, 6, red, SM_PAINT);
+            pb.cylinder(p2, p3, 0.011, 6, red, SM_PAINT);
+            pb.cylinder(p0 + V3(0, 0, -0.016), p3 + V3(0, 0, 0.016), 0.008, 6, metal, SM_METAL);  // its pin
+            const double zl = sd * (wing - 0.06);
+            pb.box(V3(f.faceX - 0.04, f.y1 + 0.035, zl), V3(0.035, 0.035, 0.05), steel, SM_MATTE);
+            pb.box(V3(f.faceX - 0.004, f.y1 + 0.035, zl), V3(0.002, 0.026, 0.04), V3(1.0, 0.98, 0.9), SM_EMISSIVE);
+        }
+        // The grille guard: two uprights from the bumper's top up over the grille, a top bar, two bars across
+        // the grille, and an outer hoop each side over the lamps, leaning back toward the nose as they rise.
+        const double r = 0.026, xb = f.noseX + 0.11, xt = f.noseX + 0.045, zi = std::max(0.22, gap * 0.9), zo = f.guardHalfW;
+        auto gx = [&](double y) { return xb + (xt - xb) * (y - f.y1) / std::max(0.05, f.guardTop - f.y1); };
+        auto G = [&](const V3& a, const V3& b, double rr) { pb.cylinder(a, b, rr, 10, tube, SM_METAL); };
+        for (int sd = -1; sd <= 1; sd += 2) {
+            G(V3(xb, f.y1 - 0.01, sd * zi), V3(xt, f.guardTop, sd * zi), r);
+            // The outer hoop: up beside the lamps, then over and in to the top bar.
+            const double yk = f.guardTop - 0.09;
+            G(V3(xb, f.y1 - 0.01, sd * zo), V3(gx(yk), yk, sd * zo), r * 0.85);
+            G(V3(gx(yk), yk, sd * zo), V3(xt, f.guardTop, sd * (zo - 0.10)), r * 0.85);
+            G(V3(xt, f.guardTop, sd * (zo - 0.10)), V3(xt, f.guardTop, sd * zi), r * 0.85);
+            const double ym = 0.5 * (f.y1 + f.guardTop);
+            G(V3(gx(ym), ym, sd * zi), V3(gx(ym), ym, sd * zo), r * 0.7);  // over the lamp
+            pb.box(V3(xb, f.y1 + 0.004, sd * zi), V3(0.035, 0.006, 0.035), steel, SM_MATTE);  // foot plates
+            pb.box(V3(xb, f.y1 + 0.004, sd * zo), V3(0.03, 0.006, 0.03), steel, SM_MATTE);
+        }
+        G(V3(xt, f.guardTop, -zi), V3(xt, f.guardTop, zi), r);
+        for (double t : {0.36, 0.68}) {
+            const double y = f.y1 + (f.guardTop - f.y1) * t;
+            G(V3(gx(y), y, -zi), V3(gx(y), y, zi), r * 0.6);
+        }
+        G(V3(gx(f.guardTop - 0.02), f.guardTop - 0.02, 0), V3(xb, f.y1 - 0.01, 0), r * 0.6);  // the centre bar down to the hoop
+    } else {
+        // The winch on its own plate, bolted ahead of the nose: a cradle plate under it, a back plate to the
+        // frame, and the fairlead's plate in front.
+        pb.current = ON_BODY;
+        const V3& c = f.winch;
+        const double hw = 0.30 * s;
+        pb.box(V3(0.5 * (f.noseX + f.fairlead.x), c.y - 0.085 * s, 0), V3(0.5 * (f.fairlead.x - f.noseX), 0.007, hw), steel, SM_MATTE);
+        pb.box(V3(f.noseX + 0.004, c.y, 0), V3(0.005, 0.09 * s, hw), steel, SM_MATTE);
+        pb.box(V3(f.fairlead.x - 0.016, c.y - 0.02 * s, 0), V3(0.005, 0.07 * s, 0.16 * s), steel, SM_MATTE);
+        for (int sd = -1; sd <= 1; sd += 2)
+            pb.box(V3(0.5 * (f.noseX + f.fairlead.x), c.y - 0.03 * s, sd * hw), V3(0.5 * (f.fairlead.x - f.noseX), 0.06 * s, 0.005), steel, SM_MATTE);
+    }
+    if (winch) buildWinchModel(pb, f.winch, s, f.fairlead);
+    pb.current = ON_BODY;
+}
+
 void buildParts(const Car& car, PartBuilder& pb) {
     const VehicleSpec& vs = *car.spec;
     const int cells = (int)vs.profile[0].size();
@@ -1259,6 +1400,7 @@ void buildParts(const Car& car, PartBuilder& pb) {
     for (const MassItem& it : vs.items)
         if (std::string(it.name) == "battery") pb.box(V3(it.x, it.y, it.z), V3(0.12, 0.09, 0.08), kBlack, SM_MATTE);
 
+    buildAttachments(car, pb);
     if (vs.openFrame) {  // tube-frame vehicles: their own cage, seats, exhaust and bumpers
         buildExtras(car, pb);
         buildOpenFrame(car, pb);
@@ -1590,6 +1732,7 @@ const VisualTemplate& visualTemplate(const Car& car) {
         int g = pb.group[k / 3];
         if (g == ON_ENGINE) t.partBind.push_back(bindInHex(car, engineHex, pb.corners[k]));
         else if (g == ON_GEARBOX) t.partBind.push_back(bindInHex(car, gearboxHex, pb.corners[k]));
+        else if (g == ON_BUMPER) t.partBind.push_back(car.bumperHex[0] >= 0 ? bindInHex(car, car.bumperHex, pb.corners[k]) : bindPoint(car, pb.corners[k]));
         else if (g >= ON_LEFT_DOOR) {
             const char* names[] = {"LEFT DOOR", "RIGHT DOOR", "HOOD", "LIFTGATE"};
             t.partBind.push_back(bindPanel(car, pb.corners[k], names[g-ON_LEFT_DOOR]));

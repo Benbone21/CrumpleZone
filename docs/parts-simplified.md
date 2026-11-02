@@ -223,3 +223,36 @@ The tests are `career/parts-migrate` (old garage, old career, old picks one by o
 - `tires/treads`: winter tires are no longer sold, so the test fits the snow tread to the Bronco itself, the way the garage used to (the tread is still in the tire model).
 - `garage/swaps/<vehicle>/<slot>`: now only for WHEELS and TIRES, the slots that still have shared parts. The engine, suspension and transmission versions of these tests are removed, because those swaps no longer exist.
 - `mods/<vehicle>/<slot>/<part>`: one test per remaining part, named by its new name. The tests for the cut parts are gone: civic d16-cam-and-header, lowering-springs and short-final-drive; jesko track-diff-map; bronco 2.3-ecoboost-i4 and 4.70-gears; 4runner factory-3.4-v6, factory-height and 4.88-regear; tacoma 4.88-regear; blazer 350-4-barrel. Their `tests/baseline.txt` entries are no longer used, and neither are those of the renamed tests. The baseline was not updated.
+
+## Attachments: winch and steel bumper
+
+Two more garage slots, after the tires, fit every vehicle. Each is on or off, and the two are independent (`MOD_WINCH`, `MOD_BUMPER` in `src/mods.h`; the parts are in `src/attachments.cpp`).
+
+- **WINCH** ("NO WINCH" / "WINCH"): a 12,000 lb winch (53.4 kN stall pull, 40 kg) with its drum of red synthetic line, motor, gearbox, tie bars, contactor box, hawse fairlead and hook. Without the bumper it sits on its own plate bolted ahead of the nose; with the bumper it sits in the bumper's cradle. The winch line leaves from its fairlead: the attachment moves the truck's front recovery point (`Car::hookRest[0]`) there, so hooking up on foot, payout and reel-in all work from it.
+- **Vehicles with a factory winch** (Bronco, 4Runner, rock buggy, side-by-side) keep it as their factory part: option 0 is "WINCH" (as before, so a stock vehicle is unchanged), option 1 is "NO WINCH", which takes it off with its weight. Taking it off is free in a career. With the steel bumper fitted, the factory winch is drawn in the bumper's cradle (sized by its pull) and its line leaves from the bumper's fairlead.
+- **STEEL BUMPER** ("STOCK BUMPER" / "STEEL BUMPER"): a plate-steel bumper with a tube grille guard, D-ring shackles and lights (75 kg). In the sim it is a row of heavy nodes on the bumper's face, one ahead of each node of the nose's bottom two rows. They are tied together and braced back into the nose's first two columns (and bolted to a ladder frame's horns) with boxed-steel members, and the bottom of the nose behind it is boxed in by its mounts. The face nodes collide, so the bumper takes the hit, and the nose behind it crumples less. The members' step margin is h·ω ≈ 0.3 (the explicit limit is 2), because the nodes carry the bumper's weight (~5 kg each).
+- **The fit** comes from each vehicle's own nose: its length, the height of its bottom rows and its width there (`attachFit`). The physics and the drawing use the same fit, so the bumper's nodes, the fairlead and the drawn parts line up on every vehicle, the Jesko and the side-by-side included.
+- **Nothing fitted is the factory vehicle itself**: `bench_sim 12 separated 4000` still prints `adf7525f83403395`.
+
+Measured in `attachments/bumper-wall/*`: the same vehicle into the concrete wall at 50 km/h, with and without the bumper (the body's crush).
+
+| Vehicle | Stock | Steel bumper |
+|---|---|---|
+| Civic | 25.0 cm | 18.4 cm |
+| Jesko | 17.6 cm | 5.4 cm |
+| Blazer | 14.7 cm | 3.8 cm |
+| Bronco | 16.5 cm | 3.1 cm |
+| Tacoma | 20.9 cm | 3.3 cm |
+| 4Runner | 32.7 cm | 3.5 cm |
+| Baja Bug | 18.9 cm | none (its rear engine takes more of a jolt on its mounts) |
+| Side-by-side | 0.1 cm | 0.0 cm (a tube cage barely crushes either way) |
+
+The body-on-frame trucks gain the most, because the bumper bolts to the frame horns and the frame carries the hit.
+
+**Career:** both are tier 1 parts, sold at the stations: $1,800 for the winch, $1,400 for the bumper. Sandbox has everything.
+
+**Saves:** the garage file, a career's vehicles and a car's condition text now hold seven picks. A save with five (from before the attachments) loads with the factory's winch and bumper. An older build reads the first five picks of a new garage line. Multiplayer sends all seven picks (`SpecId`), so other players see the attachments: protocol 12 (`net::kVersion`, first release 0.4.15).
+
+**Screenshots:** `docs/review/attachments/`.
+
+**Tests:** `attachments/every-vehicle`, `attachments/winch-kit`, `attachments/bumper-wall/<vehicle>`, `attachments/bumper-stable/<vehicle>`, `attachments/old-saves`, `attachments/net`. The per-part scenarios (`mods/<vehicle>/winch/...`, `mods/<vehicle>/bumper/...`) and the fitment sweeps (`fitment/<vehicle>/winch`, `.../bumper`) now cover them as well. `career/parts-simple` allows two options in the attachment slots.

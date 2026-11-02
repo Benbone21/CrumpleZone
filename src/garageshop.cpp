@@ -29,6 +29,8 @@ const SlotName kSlotNames[] = {
     {MOD_TRANSMISSION, "TRANSMISSION", "GEARS AND LOCKERS"},
     {MOD_WHEELS, "WHEELS", "BIGGER OR SMALLER WHEELS"},
     {MOD_TIRES, "TIRES", "TREADS FOR THE GROUND YOU DRIVE"},
+    {MOD_WINCH, "WINCH", "A 12,000 LB WINCH ON THE FRONT"},
+    {MOD_BUMPER, "BUMPER", "A STEEL BUMPER AND GRILLE GUARD"},
 };
 // ...and a kind of rack item, by its key's prefix.
 struct RackName {
@@ -195,6 +197,8 @@ std::vector<Stat> compare(int vehicle, const ModSet& fitted, const ModSet& with)
     add("FINAL DRIVE", F.finalDrive, W.finalDrive, "", 0, 2, false);
     add("LOW RANGE", F.lowRange, W.lowRange, "", 0, 2, false);
     add("LOCKERS", (F.lockerFront ? 1 : 0) + (F.lockerRear ? 1 : 0), (W.lockerFront ? 1 : 0) + (W.lockerRear ? 1 : 0), "", 1, 0, false);
+    auto pull = [](const VehicleSpec& s) { return (s.extras & EXTRA_WINCH) ? s.winchPull / 4.448 : 0.0; };
+    add("WINCH PULL", pull(F), pull(W), "LB", 1, 0, false);
     return out;
 }
 
@@ -211,6 +215,8 @@ Display displayFor(const Item& it, int vehicle, const ModSet& fitted) {
         switch (it.slot) {
             case MOD_ENGINE: showLook(d, engineLook(W)); break;
             case MOD_SUSPENSION: d.id = W.leafSprings && W.leafFront ? "leaf_pack" : "coilover"; break;
+            case MOD_WINCH: d.id = "winch"; break;
+            case MOD_BUMPER: d.id = "steel_bumper"; break;
             case MOD_TRANSMISSION:
                 // A new gearbox shows the box; new axle gears or lockers the axle's centre; a deeper low range the transfer case.
                 if (it.option == 0 || W.gearboxName != stock.gearboxName || W.gears != stock.gears) showLook(d, gearboxLook(W));

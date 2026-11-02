@@ -5,7 +5,9 @@
 // so a lift kit really raises the body on the springs and bigger tires really change
 // the gearing. Option 0 of every slot is the factory part. Each slot has the factory part and
 // two or three upgrades with plain names ("BIG V8", "LIFT KIT", "MUD TIRES"). What the lists
-// were before parts list 2 and where each old part went: docs/parts-simplified.md.
+// were before parts list 2 and where each old part went: docs/parts-simplified.md. Two more slots are
+// attachments that fit every vehicle (attachments.h): a winch and a steel bumper with a grille guard,
+// each on or off ("NO WINCH" / "WINCH", "STOCK BUMPER" / "STEEL BUMPER"): docs/parts-simplified.md, "Attachments".
 #pragma once
 #include <functional>
 #include <string>
@@ -14,7 +16,11 @@
 #include "paint.h"
 #include "vehicles.h"
 
-enum ModSlot { MOD_ENGINE, MOD_SUSPENSION, MOD_TRANSMISSION, MOD_WHEELS, MOD_TIRES, MOD_SLOTS };
+enum ModSlot { MOD_ENGINE, MOD_SUSPENSION, MOD_TRANSMISSION, MOD_WHEELS, MOD_TIRES, MOD_WINCH, MOD_BUMPER, MOD_SLOTS };
+// The slots a save from before the attachments names (garage.txt, the career's vehicles, a car's condition
+// text): the first five. A save with only these has every attachment slot at its factory part.
+constexpr int kModSlotsBeforeAttachments = MOD_WINCH;
+inline bool modIsAttachment(int slot) { return slot == MOD_WINCH || slot == MOD_BUMPER; }
 const char* modSlotName(int slot);
 
 struct ModOption {
@@ -25,10 +31,11 @@ struct ModOption {
     // -1 and the TireType). The id is the part's number in its key, not its place in the list.
     int fromVehicle = -1, fromOption = 0;
     int tier = 1;  // how a career has it: 1 everyday (shops), 2 serious kit (shops, dear), 3 the best (caches and gold medals)
+    bool removal = false;  // takes a factory part off (NO WINCH on a truck that came with one): nothing to buy
 };
 
 struct ModSet {
-    int pick[MOD_SLOTS] = {0, 0, 0, 0, 0};
+    int pick[MOD_SLOTS] = {};
     bool stock() const {
         for (int p : pick)
             if (p) return false;

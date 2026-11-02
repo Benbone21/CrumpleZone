@@ -275,6 +275,9 @@ struct VehicleSpec {
     int lampStyle = LAMP_RECT, grilleStyle = GRILLE_CENTER;
     unsigned extras = 0;
     double winchPull = 44000;      // N the winch stalls at (EXTRA_WINCH): a 9,500 lb winch on its first layer
+    // Garage attachments (attachments.h): the bolt-on 12,000 lb winch on its own plate or in the bumper, and the
+    // steel bumper with its grille guard (extra frame nodes and beams across the nose: carbuild.cpp).
+    bool winchKit = false, steelBumper = false;
     float coverColor[3] = {0.05f, 0.05f, 0.05f};  // engine cover
     float paintColor[3] = {-1, -1, -1};  // factory color (< 0: picked from the palette)
     float trimColor[3] = {0, 0, 0};      // two-tone lower body and flares...
@@ -282,7 +285,7 @@ struct VehicleSpec {
     int wheelStyle = WHEEL_ALLOY;
     // Set on tuned copies (see mods.h): which catalog vehicle, and the mods fitted.
     int model = -1;
-    int mods[5] = {0, 0, 0, 0, 0};  // the garage's pick in each slot (mods.h ModSlot)
+    int mods[7] = {};  // the garage's pick in each slot (mods.h ModSlot, MOD_SLOTS of them)
     int engineOrigin = -1;          // the catalog vehicle whose engine is fitted (-1: its own): picks its recorded sound
     std::string modSummary;  // "STAGE 1 / COILOVERS / STOCK" (empty when stock)
 

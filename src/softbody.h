@@ -602,6 +602,10 @@ public:
     // shackle sits (rest position in the car's frame).
     std::vector<int> hooks[2];
     V3 hookRest[2];
+    // The steel bumper attachment (attachments.h): its face nodes, and the hex (nose to face, bit-ordered
+    // corners) its drawing rides on; -1 without one.
+    std::vector<int> bumperNodes;
+    int bumperHex[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
 
     Autopilot pilot;  // drives to a destination (autopilot.h)
     // ---- vehicle tools (vtools.h): this vehicle's own name and autopilot preferences ----

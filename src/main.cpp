@@ -144,7 +144,7 @@ struct Options {
     bool eyeSet = false;          // --eye X,Z,H,YAW,PITCH: the drone camera parked there (H m above the ground; degrees; yaw 0 looks +X, 90 looks -Z)
     double eyeX = 0, eyeZ = 0, eyeH = 1, eyeYaw = 0, eyePitch = 0;
     bool orbitSet = false, showHelp = false, showGarage = false;
-    int mods[5] = {-1, -1, -1, -1, -1};  // --mods E,S,T[,W,R]: fit these to the player's car (testing)
+    int mods[7] = {-1, -1, -1, -1, -1, -1, -1};  // --mods E,S,T[,W,R[,WINCH,BUMPER]]: fit these to the player's car (testing)
     std::string clipboard;        // --clipboard TEXT: put this on the system clipboard first (testing paste); a --press scancode over 1000 is that key with Ctrl held
     int menu = -1;                // --menu P: open the pause menu on page P (testing)
     int mainMenu = -1;            // --main-menu P: the new main menu with its camp scene, on page P (0 front, 1 map, 2 vehicle, 3 dev; with --main-menu-career 1 is the world list, 4 the New World page, 5 its map page, 6 its vehicle page, 7 New World on the custom world); a plain launch shows it too
@@ -449,7 +449,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--eye-fly") o.eyeFly = std::atof(next().c_str());
         else if (a == "--mods") {
             std::string s = next();
-            std::sscanf(s.c_str(), "%d,%d,%d,%d,%d", &o.mods[0], &o.mods[1], &o.mods[2], &o.mods[3], &o.mods[4]);
+            std::sscanf(s.c_str(), "%d,%d,%d,%d,%d,%d,%d", &o.mods[0], &o.mods[1], &o.mods[2], &o.mods[3], &o.mods[4], &o.mods[5], &o.mods[6]);
         }
         else if (a == "--orbit") {
             std::string s = next();
