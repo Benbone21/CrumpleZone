@@ -1583,3 +1583,168 @@ SCENARIO(procErosion, "procworld/erosion", "The land is worn by erosion in fixed
     const uint64_t c3 = other.makeChunk(-40, 70)->hash();
     ctx.check("the same worn chunk from two threads at once, and again from nothing", c1 == c2 && c1 == c3, hex(c1) + " " + hex(c2) + " " + hex(c3));
 }
+
+// (The far-respawn bug, release 0.4.14: "we got really far away from the initial spawn and then I respawned and it completely broke
+// hitboxes, and the world gen was all weird".) The start is a fixed local spot that moves with every slide; a few km out it is
+// outside the window, where there is no land: the heights are the window's edge row stretched out, and no rocks, trees or grid.
+namespace {
+// Slides `s`'s window `n` times by `step` m east (everything moved by the offset, as the game's swap does), the player's truck
+// brought along to the middle of each new window (as if driven there).
+void slideAway(Sim& s, uint64_t seed, int n, double step) {
+    for (int k = 0; k < n; k++) {
+        World next = windowAt(seed, (double)s.world.proc.ox + step, (double)s.world.proc.oz);
+        const V3 d((double)(s.world.proc.ox - next.proc.ox), 0, (double)(s.world.proc.oz - next.proc.oz));
+        s.world = std::move(next);
+        shiftSim(s, d);
+        s.teleportCar(s.player, 0, 0, 0);
+    }
+}
+bool inWindow(const World& w, const V3& p, double margin) { return std::fabs(p.x) < w.halfSize() - margin && std::fabs(p.z) < w.halfSize() - margin; }
+}  // namespace
+
+SCENARIO(procFarRespawn, "procworld/far-respawn", "Respawning at the start after driving km out on the procedural world (R twice, the pause menu's RESET, the tow home): the truck lands on real land inside the window (the start when it's in it, else the nearest station), never off the window's edge") {
+    const uint64_t seed = 6060;
+    int64_t sx0, sz0;
+    double syaw0;
+    ProcWorld::forSeed(seed).start(sx0, sz0, syaw0);
+    ctx.sim.world = windowAt(seed, (double)sx0, (double)sz0);
+    const V3 at = ctx.sim.world.spawn;
+    Car& c0 = ctx.add(p4Runner(), at.x, at.z, 0);
+    ctx.focus(c0);
+    ctx.run(1.0);
+    const V3 home = ProcWorld::toGlobal(ctx.sim.world, ctx.sim.cars[0].spawnPos);
+    // At home the start is in the window: R twice goes back to it, as on any map.
+    ctx.sim.teleportCar(0, at.x + 300, at.z + 200, 0);
+    ctx.sim.respawnPlayer();
+    ctx.metric("near the start, a respawn goes to the start", len(V3(ctx.sim.cars[0].frame().com.x - at.x, 0, ctx.sim.cars[0].frame().com.z - at.z)), "m", 0, 3);
+    // 4 km east (four slides).
+    slideAway(ctx.sim, seed, 4, 1024);
+    ctx.run(0.5);
+    ctx.note("the start is now at local " + std::to_string(ctx.sim.cars[0].spawnPos.x) + ", " + std::to_string(ctx.sim.cars[0].spawnPos.z) + " (the window's half: " + std::to_string(ctx.sim.world.halfSize()) + ")");
+    const char* ways[2] = {"R twice (respawn)", "the pause menu's tow home"};
+    for (int way = 0; way < 2; way++) {
+        ctx.sim.teleportCar(0, 40, -30, 0);
+        if (way == 0) ctx.sim.respawnPlayer();
+        else ctx.sim.towPlayerHome();
+        ctx.run(1.5);
+        const Car& c = ctx.sim.cars[0];
+        const V3 p = c.frame().com;
+        ctx.check(std::string(ways[way]) + ": the truck is inside the window", inWindow(ctx.sim.world, p, 100), std::to_string(p.x) + ", " + std::to_string(p.z));
+        // The land under it is the land: the same height as a window built round where it is (not the window's edge stretched out).
+        const V3 g = ProcWorld::toGlobal(ctx.sim.world, p);
+        World there = windowAt(seed, g.x, g.z);
+        const V3 q = ProcWorld::toLocal(there, g);
+        ctx.metric(std::string(ways[way]) + ": the ground under it vs the land there", std::fabs(ctx.sim.world.height(p.x, p.z) - there.height(q.x, q.z)), "m", 0, 0.05);
+        double low = 1e9;
+        for (const Node& n : c.nodes) low = std::min(low, n.p.y - ctx.sim.world.height(n.p.x, n.p.z));
+        ctx.metric(std::string(ways[way]) + ": its lowest point over the ground (resting on it, not under it or dropped from high)", low, "m", -0.3, 0.6);
+        ctx.check(std::string(ways[way]) + ": the start is kept (back there once it's near again)", len(ProcWorld::toGlobal(ctx.sim.world, c.spawnPos) - home) < 0.5);
+    }
+}
+
+SCENARIO(netMpFarRespawn, "net/mp-far-respawn", "Multiplayer on the procedural world, 4 km from the start: the guest, then the host, respawns (R twice): it lands on land inside the shared window, the other player sees it there, and the host's next slide keeps both players' land (it never strands them both off the window's edge)") {
+    const uint64_t seed = 6060;
+    int64_t sx0, sz0;
+    double syaw0;
+    ProcWorld::forSeed(seed).start(sx0, sz0, syaw0);
+    ctx.sim.world = windowAt(seed, (double)sx0, (double)sz0);
+    const V3 at = ctx.sim.world.spawn;
+    Car& hostCar = ctx.add(p4Runner(), at.x + 12, at.z - 10, 0);
+    ctx.focus(hostCar);
+    NetSession host;
+    const int port = 29600 + (int)(getpid() % 200);
+    ctx.check("host opens a session on the procedural world", host.host(port, "HOSTY", MAP_PROCEDURAL), host.error);
+    host.proc.on = true, host.proc.gen = (uint16_t)kGenVersion, host.proc.seed = seed, host.proc.ox = ctx.sim.world.proc.ox, host.proc.oz = ctx.sim.world.proc.oz;
+    host.adopt(ctx.sim);
+    NetSession client;
+    bool joined = false, done = false;
+    std::thread joiner([&] {
+        joined = client.join("127.0.0.1:" + std::to_string(port), "BUDDY", 3.0);
+        done = true;
+    });
+    for (int k = 0; k < 400 && !done; k++) host.receive(ctx.sim, ctx.t), usleep(5000);
+    joiner.join();
+    ctx.check("guest let in", joined, client.error);
+    if (!joined) return;
+    Sim sim2;
+    sim2.world = windowAt(client.proc.seed, (double)client.proc.ox, (double)client.proc.oz);
+    sim2.setupEmpty();
+    sim2.addCar(p4Runner(), V3(at.x - 10, sim2.world.clearY(at.x - 10, at.z + 8) + 0.6, at.z + 8), 0, V3(0.2, 0.2, 0.2));
+    sim2.player = 0;
+    client.adopt(sim2);
+    auto frameBoth = [&] {
+        host.send(ctx.sim, ctx.t);
+        host.receive(ctx.sim, ctx.t);
+        client.receive(sim2, ctx.t);
+        client.gameIn.clear();
+        sim2.advance(Ctx::kFrame, 1000);
+        client.send(sim2, ctx.t);
+        usleep(300);
+    };
+    ctx.run(1.5, frameBoth);
+    // Both 4 km east: the windows slid together (as the host's procshift has every machine do), the trucks driven along.
+    const double step = 1024;
+    for (int k = 0; k < 4; k++) {
+        World nh = windowAt(seed, (double)ctx.sim.world.proc.ox + step, (double)ctx.sim.world.proc.oz);
+        World ng = windowAt(seed, (double)sim2.world.proc.ox + step, (double)sim2.world.proc.oz);
+        const V3 d((double)(ctx.sim.world.proc.ox - nh.proc.ox), 0, (double)(ctx.sim.world.proc.oz - nh.proc.oz));
+        ctx.sim.world = std::move(nh), shiftSim(ctx.sim, d), host.scheduleShift(host.sharedTime(ctx.t), d), host.shiftNow();
+        sim2.world = std::move(ng), shiftSim(sim2, d), client.scheduleShift(client.sharedTime(ctx.t), d), client.shiftNow();
+        ctx.sim.teleportCar(ctx.sim.player, 20, 0, 0);
+        sim2.teleportCar(0, -20, 12, 0);
+        ctx.run(0.5, frameBoth);
+    }
+    ctx.run(1.0, frameBoth);
+    ctx.check("(4 km out: the start is off this window)", !inWindow(ctx.sim.world, ctx.sim.cars[ctx.sim.player].spawnPos, 0) && !inWindow(sim2.world, sim2.cars[0].spawnPos, 0));
+    auto remoteOf = [](const Sim& s) -> const Car* {
+        for (const Car& c : s.cars)
+            if (c.remote) return &c;
+        return nullptr;
+    };
+    for (int who = 0; who < 2; who++) {  // 0: the guest respawns; 1: the host
+        const std::string tag = who == 0 ? "guest respawns: " : "host respawns: ";
+        Sim& mine = who == 0 ? sim2 : ctx.sim;
+        Sim& theirs = who == 0 ? ctx.sim : sim2;
+        mine.respawnPlayer();
+        ctx.run(1.5, frameBoth);
+        const Car& me = mine.cars[mine.player];
+        const V3 p = me.frame().com;
+        ctx.check(tag + "its truck is inside the window", inWindow(mine.world, p, 100), std::to_string(p.x) + ", " + std::to_string(p.z));
+        double low = 1e9;
+        for (const Node& n : me.nodes) low = std::min(low, n.p.y - mine.world.height(n.p.x, n.p.z));
+        ctx.metric(tag + "its lowest point over the ground", low, "m", -0.3, 0.6);
+        const Car* shown = remoteOf(theirs);
+        ctx.check(tag + "the other player sees it", shown != nullptr);
+        if (shown) {
+            const V3 a = ProcWorld::toGlobal(theirs.world, shown->frame().com), b = ProcWorld::toGlobal(mine.world, p);
+            ctx.metric(tag + "where the other player shows it vs where it is", len(V3(a.x - b.x, 0, a.z - b.z)), "m", 0, 1.5);
+        }
+        // The host's next slide (main.cpp: proc::groupFocus over every vehicle it has, its own and the guest's): both players are
+        // on land in the window it goes to.
+        V3 f;
+        const bool any = groupFocus(ctx.sim, false, ctx.sim.player, f);
+        int64_t ox = ctx.sim.world.proc.ox, oz = ctx.sim.world.proc.oz;
+        if (any && std::max(std::fabs(f.x), std::fabs(f.z)) >= kSlide) ProcWorld::snapOrigin((double)ctx.sim.world.proc.ox + f.x, (double)ctx.sim.world.proc.oz + f.z, ox, oz);
+        double worst = 0;
+        for (const Car& c : ctx.sim.cars) {
+            const V3 g = ProcWorld::toGlobal(ctx.sim.world, c.frame().com);
+            worst = std::max(worst, std::max(std::fabs(g.x - (double)ox), std::fabs(g.z - (double)oz)));
+        }
+        ctx.metric(tag + "the farthest player from the middle of the host's next window (its half: 1536)", worst, "m", 0, kWindowHalf - 100);
+        mine.teleportCar(mine.player, who == 0 ? -20 : 20, who == 0 ? 12 : 0, 0);
+        ctx.run(1.0, frameBoth);
+    }
+    // Players further apart than a window holds (driven apart): the host's window stays with the host, not a middle off everyone's land.
+    {
+        Sim s;
+        s.setupEmpty();
+        s.addCar(p4Runner(), V3(0, 1, 0), 0, V3(0.5, 0.5, 0.5));
+        s.addCar(p4Runner(), V3(3500, 1, 200), 0, V3(0.5, 0.5, 0.5));
+        s.cars[1].remote = true;
+        V3 f;
+        ctx.check("3.5 km apart: the host's window follows the host", groupFocus(s, false, 0, f) && std::fabs(f.x) < 5 && std::fabs(f.z) < 5);
+        ctx.check("1 km apart: the middle of the two, as before", (s.cars[1].translate(V3(-2500, 0, 0)), groupFocus(s, false, 0, f)) && std::fabs(f.x - 500) < 5);
+    }
+    client.close();
+    host.close();
+}

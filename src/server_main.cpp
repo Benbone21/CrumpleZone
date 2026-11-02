@@ -281,14 +281,8 @@ int main(int argc, char** argv) {
             net.proc.ox = sim.world.proc.ox, net.proc.oz = sim.world.proc.oz;
             const double shared = net.sharedTime(t);
             if (!net.shiftPending()) {
-                V3 lo(1e18, 0, 1e18), hi(-1e18, 0, -1e18);
-                for (const Car& c : sim.cars)
-                    if (c.remote && !c.isProp()) {
-                        const V3 p = c.frame().com;
-                        lo = V3(std::min(lo.x, p.x), 0, std::min(lo.z, p.z)), hi = V3(std::max(hi.x, p.x), 0, std::max(hi.z, p.z));
-                    }
-                const V3 focus = (lo + hi) * 0.5;
-                if (lo.x < 1e17 && std::max(std::fabs(focus.x), std::fabs(focus.z)) >= proc::kSlide) {
+                V3 focus;
+                if (proc::groupFocus(sim, true, -1, focus) && std::max(std::fabs(focus.x), std::fabs(focus.z)) >= proc::kSlide) {
                     int64_t ox, oz;
                     proc::ProcWorld::snapOrigin((double)sim.world.proc.ox + focus.x, (double)sim.world.proc.oz + focus.z, ox, oz);
                     const double due = shared + 3.0;

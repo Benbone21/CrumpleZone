@@ -3305,13 +3305,8 @@ int main(int argc, char** argv) {
             case PauseMenu::CONTROLS: closeMenu(); hud.showHelp = true; break;
             case PauseMenu::RESET:
                 closeMenu();
-                if (sim.realRecovery) {
-                    sim.towPlayerHome();
-                    hud.toast("TOWED BACK TO THE START (DAMAGE STAYS)");
-                } else {
-                    sim.respawnPlayer();
-                    hud.toast("RESET");
-                }
+                if (sim.realRecovery) hud.toast(sim.towPlayerHome() ? "TOWED BACK TO THE START (DAMAGE STAYS)" : "TOWED TO THE NEAREST STATION (DAMAGE STAYS)");
+                else hud.toast(sim.respawnPlayer() ? "RESET" : "RESET AT THE NEAREST STATION");
                 break;
             case PauseMenu::QUIT: running = false; break;
             case PauseMenu::DETECT_GFX:
@@ -4081,13 +4076,14 @@ int main(int argc, char** argv) {
                 trafficType = (trafficType + 1) % listed.size();
                 break;
             case REMOVE_VEHICLE: hud.toast(sim.removeCar(sim.player) ? "VEHICLE REMOVED" : "KEEP ONE LOCAL VEHICLE"); break;
-            case TELEPORT_SPAWN:
+            case TELEPORT_SPAWN: {
                 if (walker.active) getIn();
                 if (walker.active) break;
-                sim.towPlayerHome();
+                const bool atStart = sim.towPlayerHome();
                 cam.initialized = false;
-                hud.toast("AT THE MAP SPAWN");
+                hud.toast(atStart ? "AT THE MAP SPAWN" : "AT THE NEAREST STATION (THE SPAWN IS OUT OF THIS WINDOW)");
                 break;
+            }
             case TELEPORT_SECTION:
                 if (da.arg >= 0 && da.arg < (int)sim.world.sections.size()) {
                     const World::SectionSpot& sp = sim.world.sections[da.arg];
@@ -4138,7 +4134,7 @@ int main(int argc, char** argv) {
                 hud.toast("WORLD RESET");
                 break;
             case REPAIR: sim.recoverPlayer(); hud.toast("REPAIRED"); break;
-            case RESPAWN: sim.respawnPlayer(); hud.toast("RESPAWNED AT THE START"); break;
+            case RESPAWN: hud.toast(sim.respawnPlayer() ? "RESPAWNED AT THE START" : "RESPAWNED AT THE NEAREST STATION"); break;
             case FLIP_UPRIGHT: sim.rightPlayer(); hud.toast("BACK ON ITS WHEELS"); break;
             case REFUEL: {
                 Car& c = sim.cars[sim.player];
@@ -4916,8 +4912,7 @@ int main(int argc, char** argv) {
                                     restartLevel();
                                     break;
                                 }
-                                sim.respawnPlayer();
-                                hud.toast("RESPAWNED AT THE START");
+                                hud.toast(sim.respawnPlayer() ? "RESPAWNED AT THE START" : "RESPAWNED AT THE NEAREST STATION");
                             } else if (!run.repairsAllowed()) {
                                 hud.confirmReset = 0.45;
                                 hud.toast("NO REPAIRS ON THIS LEVEL: " + K(KA_REPAIR) + " TWICE TO START AGAIN");
@@ -6127,13 +6122,9 @@ int main(int argc, char** argv) {
                 if (net.role == NetSession::HOST) {
                     // The host slides everyone's window: round the middle of the group (the box round every vehicle), told 3 s ahead
                     // so each machine has it built, and swapped by all at that moment on the shared clock.
-                    V3 lo(1e18, 0, 1e18), hi(-1e18, 0, -1e18);
-                    for (const Car& c : sim.cars)
-                        if (!c.isProp()) {
-                            const V3 p = c.frame().com;
-                            lo = V3(std::min(lo.x, p.x), 0, std::min(lo.z, p.z)), hi = V3(std::max(hi.x, p.x), 0, std::max(hi.z, p.z));
-                        }
-                    if (lo.x < 1e17) focus = (lo + hi) * 0.5;
+                    // (Players km apart: no middle gives anyone land, so the window stays with the host: proc::groupFocus.)
+                    V3 g;
+                    if (proc::groupFocus(sim, false, sim.cars[sim.player].remote ? -1 : sim.player, g)) focus = g;
                     if (!procStream.busy() && !net.shiftPending() && std::max(std::fabs(focus.x), std::fabs(focus.z)) >= proc::kSlide) {
                         int64_t ox, oz;
                         proc::ProcWorld::snapOrigin((double)sim.world.proc.ox + focus.x, (double)sim.world.proc.oz + focus.z, ox, oz);
@@ -6184,7 +6175,13 @@ int main(int argc, char** argv) {
             Car& c = sim.cars[i];
             if (!c.finite()) {
                 sim.dropRopes(i);
-                c.respawn(c.spawnPos, c.spawnYaw);
+                V3 hp;
+                double hy;
+                sim.homeSpot(i, hp, hy);  // (on the procedural world km out: not off the window's edge)
+                const V3 sp = c.spawnPos;
+                const double sy = c.spawnYaw;
+                c.respawn(hp, hy);
+                c.spawnPos = sp, c.spawnYaw = sy;
             }
             if (!c.remote) c.updateStats();
             impact += c.impactEnergy;

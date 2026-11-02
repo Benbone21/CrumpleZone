@@ -3509,14 +3509,40 @@ void Sim::pilotStep(int i, double dt) {
     if (!air0 && ap.airTarget > 0) events.push_back("AUTOPILOT: AIRING DOWN FOR THE ROCKS");
 }
 
-void Sim::respawnPlayer() {
+bool Sim::homeSpot(int car, V3& p, double& yaw) const {
+    const Car& c = cars[car];
+    p = c.spawnPos, yaw = c.spawnYaw;
+    if (world.map != MAP_PROCEDURAL) return true;
+    // The procedural world's window slides with you (procstream.h), and the start, a fixed spot, with it: a few km out it's off the
+    // window's edge, where there is no land (the edge row's heights stretched out; no rocks, trees or grid), and the land that
+    // comes in round it later is hundreds of metres off what it was set down on. So, out there: the nearest station in the window
+    // (an outpost is within ~1.1 km of anywhere), else the window's middle.
+    const double m = world.halfSize() - kHomeMargin;
+    if (std::isfinite(p.x) && std::isfinite(p.z) && std::fabs(p.x) < m && std::fabs(p.z) < m) return true;
+    V3 from = c.frame().com;
+    if (!std::isfinite(from.x) || !std::isfinite(from.y) || !std::isfinite(from.z)) from = V3();  // (an exploded one)
+    const int st = nearestStation(from);
+    if (st >= 0) p = world.stations[st].p, yaw = world.stations[st].yaw;
+    else p = world.spawn, yaw = world.spawnYaw;
+    p.y = world.clearY(p.x, p.z) + 0.05;
+    return false;
+}
+
+bool Sim::respawnPlayer() {
     Car& c = cars[player];
-    if (c.remote) return;  // (someone else's)
+    if (c.remote) return true;  // (someone else's)
     dropRopes(player);
     refillAnchors();  // (a full reset: sandbox gear comes back too)
-    c.respawn(c.spawnPos, c.spawnYaw);
+    V3 p;
+    double yaw;
+    const bool start = homeSpot(player, p, yaw);
+    const V3 sp = c.spawnPos;
+    const double sy = c.spawnYaw;
+    c.respawn(p, yaw);
     if (!c.isProp()) c.setDown(world);
+    c.spawnPos = sp, c.spawnYaw = sy;  // (the start stays the start: R twice goes there once it's in the window again)
     accum = 0;
+    return start;
 }
 
 V3 Sim::poleFreeShift(const Car& c, double* turn) const {
@@ -3621,15 +3647,22 @@ void Sim::rightPlayer() {
     }
 }
 
-void Sim::towPlayerHome() {
+bool Sim::towPlayerHome() {
     Car& c = cars[player];
-    if (c.remote) return;  // (someone else's)
+    if (c.remote) return true;  // (someone else's)
     dropRopes(player);
-    c.placeUpright(world, c.spawnPos.x, c.spawnPos.z, c.spawnYaw);
+    V3 p;
+    double yaw;
+    const bool start = homeSpot(player, p, yaw);
+    const V3 sp = c.spawnPos;
+    const double sy = c.spawnYaw;
+    c.placeUpright(world, p.x, p.z, yaw);
     double turn = 0;
     const V3 s = poleFreeShift(c, &turn);
-    if (len(s) > 0 || turn != 0) c.placeUpright(world, c.spawnPos.x + s.x, c.spawnPos.z + s.z, c.spawnYaw + turn);
+    if (len(s) > 0 || turn != 0) c.placeUpright(world, p.x + s.x, p.z + s.z, yaw + turn);
+    c.spawnPos = sp, c.spawnYaw = sy;
     accum = 0;
+    return start;
 }
 
 void Sim::teleportPlayer(double x, double z, double yaw) { teleportCar(player, x, z, yaw); }

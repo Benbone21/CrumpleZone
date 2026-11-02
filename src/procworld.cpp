@@ -4412,6 +4412,25 @@ void shiftSim(Sim& sim, const V3& d) {
     for (V3& p : sim.lodWatch) p += d;
 }
 
+bool groupFocus(const Sim& sim, bool remotesOnly, int prefer, V3& focus) {
+    V3 lo(1e18, 0, 1e18), hi(-1e18, 0, -1e18);
+    for (const Car& c : sim.cars)
+        if (!c.isProp() && (c.remote || !remotesOnly)) {
+            const V3 p = c.frame().com;
+            if (!std::isfinite(p.x) || !std::isfinite(p.z)) continue;  // (an exploded one: reset after the frame)
+            lo = V3(std::min(lo.x, p.x), 0, std::min(lo.z, p.z)), hi = V3(std::max(hi.x, p.x), 0, std::max(hi.z, p.z));
+        }
+    if (lo.x > 1e17) return false;
+    focus = (lo + hi) * 0.5;
+    // (Everyone within a window's reach of the middle, a margin in from its edge, or nobody gets land from it.)
+    const double reach = 2 * (kWindowHalf - 200);
+    if ((hi.x - lo.x > reach || hi.z - lo.z > reach) && prefer >= 0 && prefer < (int)sim.cars.size()) {
+        const V3 p = sim.cars[prefer].frame().com;
+        if (std::isfinite(p.x) && std::isfinite(p.z)) focus = V3(p.x, 0, p.z);
+    }
+    return true;
+}
+
 }  // namespace proc
 
 // ================================================================================================================================

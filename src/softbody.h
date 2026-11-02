@@ -923,7 +923,11 @@ public:
     void substep();
     void drive(bool up, bool down, bool left, bool right, bool handbrake, double dt);
     void pilotStep(int car, double dt);  // one frame of a car's autopilot
-    void respawnPlayer();
+    // Where a car goes back to "the start" (R twice, RESET, the tow home): its spawn spot; on the procedural world, once that's
+    // out of the window (km out: no land there), the nearest station in the window instead. True: the start itself.
+    static constexpr double kHomeMargin = 200;  // m: (procedural) the start counts as in the window this far inside its edge
+    bool homeSpot(int car, V3& p, double& yaw) const;
+    bool respawnPlayer();   // back to homeSpot, like new (true: at the start; false: the nearest station)
     void recoverPlayer();   // rebuilt like new where it stands (arcade)
     void rightPlayer();     // put back on its wheels where it is, damage and all
     // How far (level) the car, as it stands, must be moved to have no tree trunk or pole inside its
@@ -932,7 +936,7 @@ public:
     // be turned up to 30 degrees (left positive, the game's yaw) to get one. R and T set a car down
     // where it was, and after a hard hit on a tree that's around the trunk, maybe with another behind.
     V3 poleFreeShift(const Car& c, double* turn = nullptr) const;
-    void towPlayerHome();   // carried back to its spawn point, damage and all
+    bool towPlayerHome();   // carried back to homeSpot, damage and all (true: at the start)
     void teleportPlayer(double x, double z, double yaw);  // set down upright at x, z facing yaw (the dev menu), damage and all
     void teleportCar(int car, double x, double z, double yaw);  // ...any of my vehicles (the dev free cam sets carried ones down with it)
     // Replaces the player's car with another vehicle type, in place.

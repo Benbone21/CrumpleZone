@@ -265,6 +265,11 @@ std::vector<MapPlace> windowPlaces(const World& w);
 
 // Moves everything the sim holds by d (whole metres): vehicles, loose wheels, ropes, anchors, dropped parts, lines in hand.
 void shiftSim(Sim& sim, const V3& d);
+// Multiplayer: where the host (or the server) slides everyone's window to, local: the middle of the box round every vehicle
+// (remotesOnly: the players' only, the server's own parked ones left out). False: no vehicles. A box wider than a window holds
+// (players km apart) has no middle that gives anyone land: then the window follows `prefer` (the host's own vehicle; -1: the
+// middle anyway).
+bool groupFocus(const Sim& sim, bool remotesOnly, int prefer, V3& focus);
 
 }  // namespace proc
 
