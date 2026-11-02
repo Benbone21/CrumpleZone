@@ -65,4 +65,11 @@ constexpr double kWinchBreak = 90000;    // N: synthetic line, ~2x the winch
 constexpr double kStrapLen = 9.0;        // m: a 30 ft kinetic strap
 constexpr double kStrapBreak = 130000;   // N
 constexpr double kStrapReach = 9.0;      // m: how far apart two trucks can be to hook a strap
+
+// What the last Sim::winchTargets on this thread looked at (tests: that hooking up by hand stays cheap in a forest).
+struct WinchScan {
+    long poles = 0, rocks = 0;  // trees and posts, rocks, tested
+    long wraps = 0;             // boulders a sling was wrapped round (the costly part)
+};
+WinchScan& winchScanCounts();
 }  // namespace recovery

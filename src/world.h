@@ -430,6 +430,7 @@ public:
         void clear() { poles.clear(), boxes.clear(), rocks.clear(), logs.clear(); }
     };
     void solidsNear(double x0, double z0, double x1, double z1, NearbySolids& out) const;
+    bool hasGrid() const { return gridN > 0; }  // (buildGrid has run: solidsNear finds what's there)
 
     explicit World(int map = MAP_PROVING_GROUND);
     // Big scanned rocks placed while the world is being made get their pieces (Rock::parts) all together at the end of it.

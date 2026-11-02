@@ -839,7 +839,9 @@ public:
     // Everything within the winch line's reach, nearest first.
     // Every anchor the winch reaches. `look` (optional): where the driver is looking or
     // standing, offered as a ground anchor too (buried in loose ground, a bolt in rock).
-    std::vector<WinchTarget> winchTargets(int car, const V3* look = nullptr) const;
+    // `nearTo` (optional): only the anchors within nearR (m) of it, as hooking up by hand wants (much less work in a forest
+    // or a boulder field); the same ones, in the same order, as the whole list has within that distance.
+    std::vector<WinchTarget> winchTargets(int car, const V3* look = nullptr, const V3* nearTo = nullptr, double nearR = 0) const;
     // Programmatic hooking (tests, the autopilot, the --script screenshots): no one has to walk the line out. The player's way is
     // on foot (takeLine, then hookHandLine: interact.h); from the seat it is refused (seatHook).
     std::string hookWinchTo(int car, const RopeEnd& anchor, bool byHand = false);  // byHand: the line was walked out to it (no fairlead arc)

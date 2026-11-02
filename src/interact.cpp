@@ -515,7 +515,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                     break;
                 }
             }
-            ts = sim.winchTargets(hl.car, hasLook ? &lk : nullptr);
+            ts = sim.winchTargets(hl.car, hasLook ? &lk : nullptr, &chest, kLineReach);  // (only those in arm's reach are offered)
         } else ts = sim.strapTargets(hl.car, hl.hook);
         for (const WinchTarget& t : ts) {
             if (len(t.at - chest) > kLineReach) continue;

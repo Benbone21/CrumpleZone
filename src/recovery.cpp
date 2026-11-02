@@ -8,6 +8,7 @@
 #include "biome.h"
 #include "objshape.h"
 #include "softbody.h"
+#include "thread_cache.h"
 #include "tiretemp.h"
 
 // ---- Recovery points --------------------------------------------------------
@@ -432,7 +433,14 @@ void Sim::refillAnchors() {
     if (anchorStock.refills) anchorStock.fill(anchors::kSandboxStart);
 }
 
-std::vector<WinchTarget> Sim::winchTargets(int ci, const V3* look) const {
+namespace recovery {
+WinchScan& winchScanCounts() {
+    static thread_local WinchScan s;
+    return s;
+}
+}  // namespace recovery
+
+std::vector<WinchTarget> Sim::winchTargets(int ci, const V3* look, const V3* nearTo, double nearR) const {
     std::vector<WinchTarget> out;
     const Car& c = cars[ci];
     if (c.isProp() || !(c.spec->extras & EXTRA_WINCH)) return out;
@@ -457,10 +465,30 @@ std::vector<WinchTarget> Sim::winchTargets(int ci, const V3* look) const {
         t.gear = use.gear, t.usable = use.ok, t.why = use.why, t.set = use.reuse >= 0;
         out.push_back(t);
     };
-    for (const Pole& pl : world.poles) {
+    // The trees and boulders: only those the lookup grid has near enough, never a walk over the whole map's (a forest has
+    // 100,000s of trunks). With `nearTo` (the hands of whoever's carrying the line), only those within nearR of it: wrapping a
+    // boulder (its strap height: slices through its hull top to bottom) is the cost, and a hook-up by hand only wants the
+    // ones in arm's reach. In index order, as a walk over them all would find them.
+    recovery::WinchScan& scan = recovery::winchScanCounts();
+    scan = recovery::WinchScan();
+    CZ_THREAD_CACHE(World::NearbySolids, solids);
+    const bool useGrid = world.hasGrid();
+    if (useGrid) {
+        const V3 q = nearTo ? *nearTo : p;
+        const double r = (nearTo ? nearR : reach) + 1.0;
+        world.solidsNear(q.x - r, q.z - r, q.x + r, q.z + r, solids);
+        std::sort(solids.poles.begin(), solids.poles.end());
+        std::sort(solids.rocks.begin(), solids.rocks.end());
+    }
+    const int nPoles = useGrid ? (int)solids.poles.size() : (int)world.poles.size();
+    const int nRocks = useGrid ? (int)solids.rocks.size() : (int)world.rocks.size();
+    for (int i = 0; i < nPoles; i++) {
+        const Pole& pl = world.poles[useGrid ? solids.poles[i] : i];
+        scan.poles++;
         if (pl.r < anchors::kTreeMinR) continue;  // fence and sign posts would pull out
         const double dx = pl.x - p.x, dz = pl.z - p.z;
         if (dx * dx + dz * dz > reach * reach) continue;
+        if (nearTo && std::hypot(pl.x - nearTo->x, pl.z - nearTo->z) - pl.r > nearR) continue;  // (tied on at its bark)
         RopeEnd e;
         e.kind = ANCHOR_TREE;
         const double y = std::min(pl.y1 - 0.2, std::max(pl.y0 + 0.4, world.height(pl.x, pl.z) + 0.5));
@@ -468,13 +496,17 @@ std::vector<WinchTarget> Sim::winchTargets(int ci, const V3* look) const {
         e.p = V3(pl.x, y, pl.z) + toward * pl.r;
         consider(e, pl.r > 0.2 ? "TREE" : "STUMP");
     }
-    for (const Rock& rk : world.rocks) {
+    for (int i = 0; i < nRocks; i++) {
+        const Rock& rk = world.rocks[useGrid ? solids.rocks[i] : i];
+        scan.rocks++;
         if (rk.r < anchors::kBoulderMinR) continue;  // too small: it would just roll toward you
         if (len(rk.c - p) > reach + rk.r) continue;
+        if (nearTo && len(rk.c - *nearTo) > nearR + rk.r + 0.1) continue;  // (the strap is on the stone, inside its bounding sphere)
         RopeEnd e;
         e.kind = ANCHOR_ROCK;
         // The sling goes round the rock as it really is: its cross-section at a height that holds, tied on at the
         // point nearest the winch (on the strap, a hair off the stone), not somewhere inside its bounding sphere.
+        scan.wraps++;
         const objshape::Wrap wr = objshape::wrapRockForPull(world, rk, p);
         if (!wr.ok) continue;
         e.p = wr.attach;
