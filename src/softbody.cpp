@@ -717,7 +717,8 @@ constexpr double kStopK = 200000;        // N*m/rad (~3.5 kN*m a degree)
 constexpr double kStopC = 400;           // N*m*s/rad (about a third of critical on a 37 in wheel's knuckle)
 
 void Car::steeringStops(double h) {
-    if (chassis.nodes.empty() || restLocal.empty() || !spec || spec->frontSusp == SOLID_AXLE) return;
+    if (chassis.nodes.empty() || restLocal.empty() || !spec) return;
+    const bool live = spec->frontSusp == SOLID_AXLE;
     const V3 up = chassis.rot.rotate(V3(0, 1, 0));
     for (Wheel& wh : wheels) {
         if (!wh.front || wh.detached || wh.tieRod < 0 || wh.assembly.size() < 3) continue;
@@ -730,13 +731,24 @@ void Car::steeringStops(double h) {
         // The stop: the inside wheel's angle at the rack's full lock (Ackermann, as the rack sets it), plus a little.
         const double track = std::fabs(restLocal[wh.outer].z + restLocal[wh.inner].z);
         const double dt = wheelbase > 0.5 ? 0.5 * track / wheelbase * 0.7 : 0;
-        const double stop = std::atan(1.0 / (1.0 / std::tan(0.6) - dt)) + kStopMargin;
+        const double stop = std::atan(1.0 / (1.0 / std::tan(0.6) - dt)) + (live ? 0.02 : kStopMargin);  // (a live axle's linkage folds over ~44 degrees: its stop is right at full lock)
         const double over = std::fabs(d) - stop;
         if (over <= 0) continue;
         const double sgn = d > 0 ? 1.0 : -1.0;
         const double T = std::max(0.0, kStopK * over + kStopC * rate * sgn);
         const V3 tau = up * (-sgn * T);
         // Its reaction goes into the arms' pick-ups (the lower arm carries the stop's bolt).
+        // (A live axle's knuckle stops on its own housing: the hub and steering arm turn against the
+        // kingpins and the tie rod's fixed end. Without one a rock kicked a Blazer's wheel past lock,
+        // the linkage folded over and it stuck 78 degrees off, nothing bent.)
+        if (live) {
+            if (wh.lower < 0 || wh.top < 0 || wh.arm < 0 || beams[wh.tieRod].broken) continue;
+            const int rack = beams[wh.tieRod].a == wh.arm ? beams[wh.tieRod].b : beams[wh.tieRod].a;
+            const std::vector<int> knuckle = {wh.inner, wh.outer, wh.arm}, housing = {wh.lower, wh.top, rack};
+            applyTorque(knuckle, tau, true);
+            applyTorque(housing, -tau);
+            continue;
+        }
         if (wh.stopPickups.empty())
             for (int bi : wh.mounts) {
                 const Beam& b = beams[bi];

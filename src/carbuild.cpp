@@ -46,7 +46,7 @@ constexpr double kRailStiffness = 3.5;
 // Bronco's lower-arm bracket flowed 3.6 cm on a 30 cm rock at 50 km/h: toe 7 degrees out for
 // good, with nothing bent that a field repair could swap.) Its node is held as stiffly as
 // for 70 kN (more would ring at the 2 kHz step), and flows that much further before it sets.
-constexpr double kBracketYield = 160000, kBracketHeld = 70000;
+constexpr double kBracketYield = 160000, kBracketHeld = 70000;  // (an arm's or tie rod's bracket; towers and pads stay at kBracketHeld)
 // The doors and sills crushed across, and the tail lengthwise: their share of what the
 // lattice's members take before they set.
 constexpr double kSideGive = 0.35;
@@ -1426,7 +1426,13 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 Wheel& wh = wheels[axle.wheel[sIdx]];
                 wh.assembly = as.nodes;
                 if (steered) {
+                    // (A forged steering knuckle on a live axle: not held as one piece with its housing
+                    // (that pulled the rock buggy off line braking), so its own beams are made to hold
+                    // their shape: at the housing's strain a 30 cm rock at 50 km/h folded it 14 mm and
+                    // toed the wheel 5.6 degrees.)
+                    const size_t from = beams.size();
                     rigid(knuckle[sIdx], BEAM_KNUCKLE);
+                    for (size_t bi = from; bi < beams.size(); bi++) beams[bi].yieldStrain *= 3;
                     wh.assembly.insert(wh.assembly.end(), {wh.inner, wh.outer, steerNodes[sIdx][2]});
                     const int kpLow = steerNodes[sIdx][0], kpUp = steerNodes[sIdx][1], arm = steerNodes[sIdx][2], rack = steerNodes[sIdx][3];
                     wh.tieRod = link(&wh, arm, rack, BEAM_TIEROD, LINK_TIE_ROD, axle.wheel[sIdx]);
@@ -2331,6 +2337,11 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 // yield force.
                 rf.weight.assign(rf.nodes.size(), 1.0f);
                 rf.yieldScale.assign(rf.nodes.size(), 1.0f);
+                // (Only an arm's or a tie rod's bracket: a coil tower or bump stop pad takes a
+                // landing's slam, and a 5 m drop onto rock should still kink it.)
+                std::vector<char> linkEnd(nodes.size(), 0);
+                for (const Beam& b : beams)
+                    if (b.type == BEAM_ARM || b.type == BEAM_TIEROD) linkEnd[b.a] = linkEnd[b.b] = 1;
                 rf.section.assign(rf.nodes.size(), 0);
                 int nextSection = ladderStations;
                 for (size_t k = 0; k < rf.nodes.size(); k++) {
@@ -2343,7 +2354,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                         // holds it there is what makes the frame stiff in twist, so it's held
                         // like plain rail by each.)
                         rf.weight[k] = std::fabs(local[rf.nodes[k]].z) < 0.05 ? 1.0f : (float)clampd(hold, 1, 40);
-                        if (rf.weight[k] > 1) rf.yieldScale[k] = (float)(kBracketYield / kBracketHeld);
+                        if (rf.weight[k] > 1 && linkEnd[rf.nodes[k]]) rf.yieldScale[k] = (float)(kBracketYield / kBracketHeld);
                         rf.section[k] = nextSection++;  // (a bracket bends on its own)
                     }
                 }
@@ -2373,10 +2384,10 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         for (size_t wi = 0; wi < wheels.size(); wi++) {
             const Wheel& wh = wheels[wi];
             const bool live = (wh.front ? vs.frontSusp : vs.rearSusp) == SOLID_AXLE;
-            if (live || wh.assembly.size() < 3) continue;  // (a live axle's housing is braced in depth; its steered knuckles held as one with it read the kingpin pair twice and pulled the rock buggy off line under braking)
-            // (A steered live axle's knuckle is the hub and its kingpin pair and steering arm,
-            // which turn on the housing.)
-            const std::vector<int> pieceNodes = live ? std::vector<int>{wh.inner, wh.outer, wh.lower, wh.top, wh.arm} : wh.assembly;
+            if ((live && !wh.front) || wh.assembly.size() < 3) continue;
+            // (A steered live axle's knuckle is the hub and its steering arm, which turn on the
+            // housing's kingpins.)
+            const std::vector<int> pieceNodes = live ? std::vector<int>{wh.inner, wh.outer, wh.arm} : wh.assembly;  // (not the kingpin pair: those are the housing's too, and held by both they pulled the rock buggy off line braking)
             if (live && (wh.lower < 0 || wh.top < 0 || wh.arm < 0)) continue;
             Knuckle k;
             k.wheel = (int)wi;

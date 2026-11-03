@@ -189,6 +189,25 @@ Outcome runHit(const VehicleSpec& spec, HitKind kind, double v) {
             if (std::fabs(c.restLocal[c.railFrame[r].nodes[k]].x - c.restLocal[wh.inner].x) < 0.6)
                 o.railFlow = std::max(o.railFlow, len(c.railFrame[r].rest[k] - rail0[r][k]) * 100);
     o.damage = c.damage;
+    if (std::getenv("WD_GEO"))
+        for (int k = 0; k < 2; k++) {
+            const Wheel& w2 = c.wheels[fw[k]];
+            const V3 kax = norm(w2.kpUp - w2.kpLow);
+            double best = 0, bl = 0;
+            for (double t = -1.6; t <= 1.6; t += 0.01) {
+                const double l = len(w2.rackRest - (w2.kpLow + rotateAxis(w2.armRest - w2.kpLow, kax, t)));
+                std::printf("GEO %d %.2f %.4f\n", k, t, l);
+                if (l > bl) bl = l, best = t;
+            }
+            std::printf("GEO %d dead centre at %.2f rad, rest length %.4f\n", k, best, len(w2.rackRest - w2.armRest));
+        }
+    if (std::getenv("WD_DEBUG"))
+        for (int k = 0; k < 2; k++) {
+            const Wheel& w2 = c.wheels[fw[k]];
+            std::printf("  front %d knuckle shape %.1f mm, kp->arm rest %.3f now %.3f, hub->arm rest %.3f now %.3f\n", k, knuckleShape(c, w2), len(c.restLocal[w2.arm] - c.restLocal[w2.lower]), len(c.nodes[w2.arm].p - c.nodes[w2.lower].p), len(c.restLocal[w2.arm] - c.restLocal[w2.outer]), len(c.nodes[w2.arm].p - c.nodes[w2.outer].p));
+            std::printf("  front %d: tie rod %s L0 %.3f Lorig %.3f len %.3f tieOffset %.1f mm, rackSteer %.3f\n", k, c.beams[w2.tieRod].broken ? "BROKEN" : "ok", c.beams[w2.tieRod].L0, c.beams[w2.tieRod].Lorig,
+                        len(c.nodes[c.beams[w2.tieRod].a].p - c.nodes[c.beams[w2.tieRod].b].p), w2.tieOffset * 1000, c.rackSteer);
+        }
     o.sets = setsNear(c, wh, L0);
     o.otherSets = setsNear(c, c.wheels[fw[1 - L]], L0);
     // The trail repair, with all the parts it wants.

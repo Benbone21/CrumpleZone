@@ -143,14 +143,16 @@ SCENARIO(batteryCables, "battery/cables", "Jumper cables walked from a running v
     dead.occupied = true;
     ctx.runUntil(6, [&] { return !dead.engineOff; }, [&] {});
     ctx.check("...and it starts, even at a flat battery's start", !dead.engineOff);
-    // Off again.
+    // Off again. (At the clamp where it is now: started, in drive with nobody on the brake, the dead
+    // truck idles forward. With its front knuckles held as solid pieces, ~0.65 m, not 0.07.)
     dead.occupied = false;
-    standAt(ctx.sim.world, dead, wk, a, 1.2);
-    said = holdOn(ctx.sim, ia, wk, a, 6, frame);
+    const V3 a2 = battery::aim(dead);
+    standAt(ctx.sim.world, dead, wk, a2, 1.2);
+    said = holdOn(ctx.sim, ia, wk, a2, 6, frame);
     ctx.check("hold E at a clamp: the cables come off into your hands", said == "CABLES OFF" && ctx.sim.cables.empty() && wk.hand.id == TOOL_CABLES, said);
     // Driving off pulls them free.
-    standAt(ctx.sim.world, dead, wk, a, 1.2);
-    holdOn(ctx.sim, ia, wk, a, 6, frame);
+    standAt(ctx.sim.world, dead, wk, a2, 1.2);
+    holdOn(ctx.sim, ia, wk, a2, 6, frame);
     standAt(ctx.sim.world, live, wk, b, 1.2);
     holdOn(ctx.sim, ia, wk, b, 6, frame);
     ctx.check("cables on again", ctx.sim.cables.size() == 1);

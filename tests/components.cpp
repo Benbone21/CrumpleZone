@@ -446,7 +446,10 @@ VEHICLE_SCENARIO(tireIntoFender, "components/tire-into-fender", "Coil-over torn 
     const bool leafCorner = w.front ? spec.leafFront : spec.leafSprings;
     ctx.metric("peak push of the tire on the body", peak / 1000, "kN", leafCorner ? 0 : 1, 400);
     ctx.metric("deepest the body got into the tire (no clipping: under the sidewall)", deepest * 100, "cm", 0, 14);
-    ctx.metric("sheet metal and structure bent", dented, "beams", 1, 5000);
+    // (An open tube-frame UTV: its front knuckle is held as one solid piece, so the tire rises square
+    // under the cage's tubes, which take 27 kN without a set, where it used to lean out on a folding
+    // knuckle and dent the plastic fender. No dent is fine there; the tire still mustn't clip through.)
+    ctx.metric("sheet metal and structure bent", dented, "beams", spec.openFrame ? 0 : 1, 5000);
     ctx.check("stays upright", c.frame().up.y > 0.7);
 }
 

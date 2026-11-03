@@ -1,92 +1,95 @@
 # Front wheel damage: what bends, what a field repair fixes
 
-User report: front tires often ended up "super tweaked in an impossible way", and no repair
-fixed them. Lasting damage should only come from much bigger crashes.
+The report: front tires often ended up bent at angles no real part allows, and nothing could
+fix them. Lasting damage should only come from much bigger crashes.
 
-Survey: `./build/run_tests survey/front-wheel-damage -v` (tests/wheeldamage.cpp). It runs each
-hit on a fresh Blazer, Civic, Bronco and Jesko on flat ground. The hits are a square 15 cm curb
-and a 30 cm rock under one front wheel at 20, 35 and 50 km/h; a wall overlapping the nose by
-35 cm at 15, 30, 45 and 65 km/h; flat drops of 1, 2 and 3.5 m; and a 25 m rock field at 30 and
-45 km/h. Each run measures camber, toe (against the rear wheels' thrust line), how far the
-pick-ups moved, knuckle shape and rail flow. Then it runs `fieldRepair()` with a full kit and
-measures again. Set `WD_CAR` and `WD_HIT` to run a subset.
+The survey is `./build/run_tests survey/front-wheel-damage -v` (tests/wheeldamage.cpp). It
+puts a fresh Blazer, Civic, Bronco and Jesko on flat ground and hits each one in these ways:
 
-## Root causes (before -> after)
+- a square-edged 15 cm curb under one front wheel at 20, 35 and 50 km/h;
+- a 30 cm rock under one front wheel at the same speeds;
+- a wall that overlaps the nose by 35 cm, at 15, 30, 45 and 65 km/h;
+- flat drops from 1, 2 and 3.5 m;
+- a 25 m rock field at 30 and 45 km/h.
 
-1. **The front knuckles had no shape of their own.** Since the 3 Hz weave fix, a rear
-   (unsteered) knuckle has been held as one rigid piece (`Car::Knuckle`, `kKnuckleKappa`). A
-   steered knuckle was left out ("its toe is the rack's"), so it was only a light truss of
-   `BEAM_KNUCKLE` beams. Ordinary hits folded that truss, and nothing in the repair list
-   covered it:
+After each hit it measures camber, toe (against the rear wheels' line), how far the pick-ups
+moved, the knuckle's shape and how far the frame rails flowed. Then it runs `fieldRepair()`
+with a full kit and measures again. To run a subset, set `WD_CAR` and `WD_HIT`. The numbers
+below come from the final build: steered IFS knuckles held at 0.4x the rear kappa.
+
+## Root causes (before -> after the field repair)
+
+1. **The front knuckles had no shape of their own.** Steered knuckles were left out of the
+   rigid shape-hold that rear knuckles get. Their light truss of `BEAM_KNUCKLE` beams folded,
+   and no repair covered it. Before:
    - Blazer, 30 cm rock at 50 km/h: knuckle beams set 6.5 %, toe +5.7 deg.
    - Jesko, rock at 35 km/h: knuckle set 11.9 %, toe +5.5 deg.
-   - Bronco, rock field at 45 km/h: knuckle set 10 %, toe -4.0 deg.
-   - Blazer, rock field at 30 km/h: 17 % set on both sides, camber +0.8 deg.
+   - Bronco, rock field at 45 km/h: toe -4.0 deg.
 
-   Now steered knuckles get the same shape hold. Only the shape is held, with no toe spring,
-   so steering is unchanged. A steered live axle holds the hub, kingpin pair and steering arm.
-   All of the cases above now come out at 0.0-0.3 mm out of shape, with toe under 0.3 deg.
-2. **A bent knuckle could never be put right.** When a held shape is shoved more than 3 cm
-   out, it re-takes its rest shape from the bent nodes. Field repairs only reset arm and
-   tie rod `L0`, so they could not undo that.
+   Fixes:
+   - Steered IFS knuckles are now held in shape. Only the shape is held, with no toe spring.
+     They are held at 0.4x the rear kappa; at the full kappa the Bronco rang loose on its
+     light steering arm.
+   - A steered live axle's hub and steering arm are held too. The kingpin pair is left out,
+     because it also belongs to the housing: held by both, it pulled the rock buggy off line
+     under braking.
+   - A steered live axle's own knuckle beams take 3x the strain before they set.
 
-   Now `Car::knuckleBent` / `Car::newKnuckle` handle it. A bent knuckle is swapped together
-   with its lower arm: the "REPLACE THE BENT KNUCKLE AND ARM" job, which uses the CONTROL ARM
-   part. The swap restores the factory rest shape and the beams, and puts the nodes back in
-   that shape where the knuckle sat. Bronco, 45 km/h corner into the wall: the knuckle was
-   47 mm out of shape before the swap and 0.6 mm after.
-3. **The ladder frame brackets bent before the arms bolted to them.** `kBracketYield` was
-   70 kN, which is about what bends a control arm here (60-75 kN). Bronco, 30 cm rock at
-   50 km/h: the lower-arm bracket flowed 3.6 cm, the toe went -6.7 deg and the camber
-   +2.6 deg, and that is frame damage no field repair touches.
-
-   Now brackets yield at 160 kN, about 2.2 times the arm. That is how real brackets are
-   built: boxed and gusseted, so the arm or the tie rod is the part that gives. The node
-   stays held as stiffly as before, because more stiffness rang at the 2 kHz step (tried:
-   holding it 2.3 times stiffer blew the Bronco up on a 20 km/h curb). Instead it flows that
-   much further before it sets (`ChassisFrame::yieldScale`). Bronco, rock at 50 km/h: toe now
-   +0.1 deg and the pick-ups do not move.
-4. **A crumpled corner moved the rack end and nothing could re-set the toe.** Civic, 30 km/h
-   corner tap: toe -1.7 and -1.4 deg, with no part bent that a field repair could swap.
-
-   Now a front wheel's tie rod is set to whatever length points it straight again
-   (`Car::tieTarget`, an alignment against the thrust line). That happens when the TIE ROD
-   job swaps the rod, and in `fieldRepair()`. It works within a real adjusting sleeve's range,
-   +-25 mm (`Car::kTieAdjust`). Beyond that the corner is too far out, and it is a frame
-   shop's job. Results after the repair:
-
-   | Case | Toe before | Toe after |
-   |---|---|---|
-   | Civic, rock at 35 km/h | -1.76 | -0.05 |
-   | Civic, wall at 30 km/h | -1.71 / -1.42 | +0.06 / -0.15 |
-   | Jesko, rock at 50 km/h | -5.3 | -0.7 |
-5. **A live axle's tube braces set when it was dragged over rocks.** The braces are a tenth as
-   stiff as the housing but yielded at the same strain. Blazer, rock field at 30 km/h: 30 %
-   set and both wheels cambered 3 deg. Now they take four times the stretch, about 85 kN,
-   which is roughly what bends a 3 in tube.
+   Now:
+   - Blazer, rock at 50 km/h: 0.1 mm out of shape, toe 0.04 deg after the repair.
+   - Jesko, rock at 35 km/h: toe -0.03 deg.
+   - Bronco, rock field at 45 km/h: toe +0.23 deg, and no repair is needed.
+2. **A bent knuckle could never be put right.** Its held shape re-takes rest from the bent
+   pose, and a repair only reset the beams' rest lengths. There is now a "REPLACE THE BENT
+   KNUCKLE AND ARM" job (`Car::newKnuckle`; it uses the CONTROL ARM part). It restores the
+   factory shape and puts the nodes back. Bronco, wall at 45 km/h: the knuckle goes from
+   47.6 mm out of shape to 0.9 mm.
+3. **The ladder-frame brackets bent before the arms did.** They yielded at 70 kN, about what
+   an arm takes. Bronco, rock at 50 km/h: the bracket flowed 3.6 cm, toe -6.7 deg,
+   unrepairable. An arm's or tie rod's bracket now yields at 160 kN, about 2.2x an arm. Its
+   stiffness is unchanged: held stiffer, it rang at the 2 kHz step. Instead it flows further
+   before it sets (`ChassisFrame::yieldScale`). Coil towers and pads stay at 70 kN, so a 5 m
+   drop onto rock still kinks the frame. Bronco, rock at 50 km/h now: toe +0.76 deg, and the
+   pick-ups move 0.1 cm.
+4. **A crumpled corner shoved the rack end, and nothing re-set the toe.** The tie rod job and
+   `fieldRepair` now set the toe against the thrust line (`Car::tieTarget`), within a ±25 mm
+   adjusting sleeve. Within 2 mm of straight it is left at straight. The toe is not read while
+   the car is jacked up or the wheel is off.
+   - Civic, rock at 35 km/h: toe -1.84 -> -0.05 deg.
+   - Civic, wall at 30 km/h: toe -1.73 / -1.43 -> +0.07 / -0.15 deg.
+5. **The live-axle tube braces yielded too early.** They took 4x less stretch than their
+   strength called for. They now take 4x the stretch, about 85 kN.
+6. **A live axle had no steering stop.** A rock kicked a Blazer's wheel past full lock and
+   the linkage folded over, leaving it 78 deg off with nothing bent. Steered live axles now
+   stop on their housing just past full lock.
 
 ## Thresholds
 
-- **Field-repairable** (tie rod, control arm with knuckle, alignment): a 30 cm rock at up to
-  about 50 km/h, a 15 cm curb at 50, flat drops to 3.5 m, and a corner into a wall at up to
-  30 km/h (45 for the Jesko). The regression tests are `damage/front-wheel-mild/<vehicle>`.
-- **Unrepairable** (frame or body at the pick-ups, rack shoved past the sleeve): about
-  60-70 km/h into something solid. Bronco at 65 km/h: the pick-ups moved 3 cm and the toe is
-  still 43 deg off after a field repair. Civic at 65 km/h: 18 cm and 32 deg. The regression
-  test is `damage/front-wheel-severe`. A real 64 km/h offset test (IIHS, 40 % overlap) leaves
-  the front structure and suspension mounts of most vehicles bent.
-- **Grey zone (40-60 km/h):** results depend on the vehicle. A wheel that strikes the wall
-  head-on can bend its knuckle (now swappable), and a big hit can move the rack past what the
-  sleeve can adjust.
+- **Field-repairable** (tie rod, arm with knuckle, toe set):
+  - a 30 cm rock at up to about 50 km/h;
+  - a 15 cm curb at 50 km/h;
+  - flat drops up to 3.5 m;
+  - a rock field;
+  - a corner into a wall at up to 30 km/h (45 for the Jesko).
 
-## Not fixed here
+  Tests: `damage/front-wheel-mild/<vehicle>`.
+- **Unrepairable** (frame or body at the pick-ups, or the rack shoved past the sleeve): about
+  60-70 km/h into something solid.
+  - Bronco at 65 km/h: pick-ups moved 4.1 cm, toe +37 deg after a field repair.
+  - Civic at 65 km/h: pick-ups moved 18 cm, toe -29 deg.
 
-- Live front axles (Blazer, rock buggy) do not get the knuckle shape hold: held as one with the housing it pulled the rock buggy off line under braking. Steered IFS knuckles are held at 0.4x the rear kappa (at the full kappa the Bronco rang loose on its light steering arm).
-- **Blazer, 30-45 km/h corner into a wall:** the front fenders and wheel wells crush down onto
-  both front tires (the tires press on the body with 2-9 kN). The truck then rides on them,
-  leaning about 7 deg against its axle, with nothing in the suspension bent. This is body
-  damage, a station job. To keep a 30 km/h tap off the tires, the Blazer's nose needs to crush
-  less into the wheel wells, or the wheel-well rub needs to push the sheet metal out of the
-  way.
-- **Bronco, 45 km/h with the wheel itself striking the wall:** after the knuckle swap there
-  is still about 7.7 deg of toe, because the alignment would need more than the 25 mm sleeve.
+  This is comparable to a real 64 km/h 40 % offset crash test. Test:
+  `damage/front-wheel-severe`.
+- **Grey zone (40-60 km/h):** the result depends on the vehicle.
+
+## Known left
+
+- **Blazer, 30-45 km/h corner into a wall:** the fenders crush down onto both front tires
+  (2-9 kN of push), and the truck leans about 7 deg on them with nothing in the suspension
+  bent. That is body damage, a station job. At 45 km/h the struck wheel also ends up on its
+  steering stop: toe +41 deg, still +22 deg after the repair.
+- **Bronco, 45 km/h with the wheel itself striking the wall:** 7.9 deg of toe is left after
+  the knuckle swap. Setting it would need more than the 25 mm sleeve.
+- **Jesko, 30 cm rock at 50 km/h:** the toe is set before the newly swapped knuckle has
+  settled, so it ends at +4.0 deg instead of -1.9. The fix is to set the toe a moment after
+  the knuckle swap.
