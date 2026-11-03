@@ -29,6 +29,7 @@ enum RepairPart {
     PART_CONTROL_ARM,  // a suspension link (or a sway bar link)
     PART_SPARK_PLUGS,  // a set, for a flooded engine
     PART_ENGINE_OIL,   // a jug of oil, to refill the sump after the water is drained
+    PART_SPRING,       // a coilover or a leaf spring pack, for a broken one
     PART_COUNT
 };
 
@@ -54,7 +55,7 @@ struct Kit {
 
 // A repair a car needs, and what it takes.
 struct Fix {
-    enum Kind { CV_AXLE, DRIVE_SHAFT, TIE_ROD, CONTROL_ARM, SWAY_BAR, NEW_TIRE, SPARK_PLUGS } kind;
+    enum Kind { CV_AXLE, DRIVE_SHAFT, TIE_ROD, CONTROL_ARM, SWAY_BAR, NEW_TIRE, SPARK_PLUGS, SPRING } kind;  // (new kinds go last: saves and the network send the number)
     int wheel = -1;    // the corner (-1: none: the engine, a prop shaft)
     int beam = -1;     // the broken or bent beam it replaces (-1: none)
     int axle = -1;     // (sway bars, prop shafts)

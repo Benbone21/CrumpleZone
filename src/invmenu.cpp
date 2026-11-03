@@ -64,6 +64,7 @@ std::string InvMenu::describe(TrunkRef r) {
                 case PART_CONTROL_ARM: return "CONTROL ARM: REPLACES A BENT SUSPENSION ARM OR SWAY BAR LINK";
                 case PART_SPARK_PLUGS: return "SPARK PLUGS: A DRY SET FOR AN ENGINE THAT FLOODED";
                 case PART_ENGINE_OIL: return "ENGINE OIL: REFILLS THE SUMP AFTER THE WATER IS DRAINED FROM A FLOODED ENGINE";
+                case PART_SPRING: return "SPRING: A NEW COILOVER OR LEAF SPRING FOR A BROKEN ONE";
                 default: break;
             }
             break;

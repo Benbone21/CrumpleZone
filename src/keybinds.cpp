@@ -67,8 +67,8 @@ const Info kInfo[KA_COUNT] = {
     {SC_U, true, "AUTOPILOT: WHERE TO", "key_autopilotpick", KG_RECOVERY, ANY, false, false, VW(PI_DDOWN)},
     {SC_J, true, "JOBS", "key_jobs", KG_RECOVERY, ANY, false, false, VW(PI_Y)},
     // ON FOOT
-    {SC_J, false, "GET OUT / IN", "key_getinout", KG_FOOT, ANY, false, false, LB(PI_Y)},
-    {SC_E, false, "INTERACT (HOLD)", "key_interact", KG_FOOT, F, true, false, PI_X},
+    {SC_J, false, "GET OUT", "key_getinout", KG_FOOT, ANY, false, false, LB(PI_Y)},
+    {SC_E, false, "INTERACT (HOLD) / GET IN", "key_interact", KG_FOOT, F, true, false, PI_X},
     {SC_I, false, "TRUCK INVENTORY", "key_inventory", KG_FOOT, F, false, false, PI_Y},
     {SC_G, false, "PUT DOWN WHAT YOU CARRY", "key_putdown", KG_FOOT, F, false, false, PI_B},
     {SC_F, false, "FUEL CAN: POUR", "key_fuelcan", KG_FOOT, F, false, false, PI_DLEFT},

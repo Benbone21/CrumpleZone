@@ -13,7 +13,7 @@
 
 namespace prompts {
 
-enum Key { KEY_INTERACT, KEY_GET_IN };  // E (the pad's X), held or tapped; J (the pad's LB + Y)
+enum Key { KEY_INTERACT };  // E (the pad's X), held or tapped: every job on foot, getting in at a door handle too (J only gets out)
 
 struct KindInfo {
     const char* noun;   // "THE WHEEL": what a marker of this kind sits on (the hint: "LOOK AT THE WHEEL TO TAKE IT OFF")
@@ -25,8 +25,8 @@ struct KindInfo {
 const KindInfo& info(InteractKind k);
 
 constexpr double kReach = 3.0;                       // m from your chest that a job can be done
-constexpr double kCone = 40 * 3.14159265358979 / 180;  // off the line of sight to the edge of the target
-constexpr double kStickyBonus = 0.12;                // rad: what the target you have is ahead by
+constexpr double kCone = 25 * 3.14159265358979 / 180;  // off the line of sight to the edge of the target (or kAimTol round it)
+constexpr double kStickyBonus = 0.06;                // rad: what the target you have is ahead by (small: the markers are on their parts, close together)
 constexpr double kHoldBonus = 0.6;                   // ...while you're holding E on it
 constexpr double kMarkerRange = 5.0;                 // m from your chest that markers show
 
@@ -34,6 +34,17 @@ constexpr double kMarkerRange = 5.0;                 // m from your chest that m
 // cone (to its edge: a big target is easier to hit; the score itself is the angle to the middle, as ever). `bias` is added (the caller's
 // priorities, distance); `sticky`: the target you have already (it scores better and its cone is wider).
 bool aimScore(const V3& eye, const V3& dir, const V3& chest, const V3& at, double radius, double reach, double bias, bool sticky, double stickyBonus, double& score);
+
+// Each job's marker sits on its own part (the tie rod's outer end, the CV axle's boot, the valve stem, the lug nuts...), so
+// they are apart already. Only jobs that truly share one point (air up and air down at one valve) are moved: a small step
+// across the wheel (along the car's forward), kSpreadGap apart. Done in the pick (Interact::pick), so the aim, the markers and the prompt all agree.
+constexpr double kSpreadNear = 0.04;  // m: closer than this is one point
+constexpr double kSpreadGap = 0.08;   // m between the markers of a shared point
+// The aim: markers are small, so the pick takes the one nearest the line of sight (by angle) with at least this much slack
+// round each (a fixed angle: about a finger's width on the screen), so a small marker is still easy to hit.
+constexpr double kAimTol = 3.0 * 3.14159265358979 / 180;
+constexpr double kMarkerRadius = 0.05;  // m: a part's marker (the bracket round the aimed one is sized to it)
+void spread(const Sim& sim, std::vector<InteractOption*>& os);
 
 // The label and the reason from an option's prompt: "TAKE THE WHEEL OFF: NEEDS LUG WRENCH" (blocked) is two lines.
 void split(const InteractOption& o, std::string& label, std::string& reason);
@@ -47,6 +58,7 @@ struct Marker {
     bool blocked = false;  // can't be done yet: the reason says why
     bool far = false;      // beyond reach: get closer
     bool current = false;  // the target
+    bool door = false;     // a door handle (getting in): drawn as a circle
     int car = -1;
     std::string label, reason;
 };
@@ -66,7 +78,7 @@ public:
     Focus update(const Sim& sim, const Walker& wk, const Interact& ia, const std::vector<InteractOption>& nearby, const V3& eye, const V3& look);
 };
 
-// The driver's door of `c`: where you stand to get in, at hand height.
+// The driver's door handle of `c` (carentry::door).
 V3 doorAt(const Car& c);
 
 }  // namespace prompts

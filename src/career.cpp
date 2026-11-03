@@ -67,6 +67,7 @@ std::vector<std::string> cacheGear(int i) {
     if (parts[i % 6] == PART_SPARK_PLUGS || (i % 3 == 2 && parts[(i + 2) % 6] == PART_SPARK_PLUGS)) g.push_back(repairPartKey(PART_ENGINE_OIL));
     // And anchor gear: a stake in a third of them, the scarce kinds where the ground calls for them.
     if (i % 3 == 0) g.push_back(anchors::gearKey(GEAR_STAKE));
+    if (i == 1 || i == 5) g.push_back(repairPartKey(PART_SPRING));  // (a broken spring or leaf pack: two to find on each map)
     if (i == 4) g.push_back(toolKey(TOOL_JUMP_PACK));  // (one pack and one set of cables to find on each map)
     if (i == 7) g.push_back(toolKey(TOOL_CABLES));
     if (i == 2 || i == 6) g.push_back(anchors::gearKey(GEAR_ICE));
@@ -256,7 +257,7 @@ const std::vector<ShopItem>& stationRack() {
     static const std::vector<ShopItem> r = [] {
         std::vector<ShopItem> v;
         const int toolPrice[TOOL_COUNT] = {60, 140, 220, 45, 70, 55, 180, 150, 45};
-        const int partPrice[PART_COUNT] = {160, 240, 300, 90, 190, 40, 25};
+        const int partPrice[PART_COUNT] = {160, 240, 300, 90, 190, 40, 25, 210};
         for (int t = 0; t < TOOL_COUNT; t++) v.push_back({toolKey((Tool)t), toolPrice[t], toolModel((Tool)t)});
         for (int p = 0; p < PART_COUNT; p++) v.push_back({repairPartKey((RepairPart)p), partPrice[p], p == PART_TIRE ? "" : repairPartModel((RepairPart)p)});
         for (int g = 0; g < GEAR_COUNT; g++) v.push_back({anchors::gearKey((AnchorGear)g), anchors::kPrice[g], anchors::gearModel((AnchorGear)g)});
@@ -310,8 +311,10 @@ void Career::startFresh(Difficulty d) {
     fresh = true;
     cash = startCash(d);
     owned.clear(), opened.clear(), claimed.clear(), stock.clear(), vehicles.clear();
-    // You set out with what's in any truck: a lug wrench and a jack.
-    owned.insert(toolKey(TOOL_LUG_WRENCH)), owned.insert(toolKey(TOOL_JACK));
+    // You set out with a basic toolbox in the back (docs/repairs.md): enough to change a wheel and a tire and to swap most
+    // bolt-on parts, with one spare tire. The pry bar, the jump pack, the cables and the other spares are found or bought.
+    for (Tool t : kStarterTools) owned.insert(toolKey(t));
+    stock[repairPartKey(PART_TIRE)] = 1;
     AnchorStock a;
     a.fill(anchors::kCareerStart);
     setAnchorStock(a);

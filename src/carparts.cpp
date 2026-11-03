@@ -665,6 +665,7 @@ bool partMatchesFix(const PartTag& t, const Fix& f) {
     case Fix::CONTROL_ARM:
         return (t.kind == PK_LOWER_ARM || t.kind == PK_UPPER_ARM || t.kind == PK_TRAILING) && f.beam >= 0 && (t.beam == f.beam || t.beam2 == f.beam);
     case Fix::SPARK_PLUGS: return t.kind == PK_ENGINE;
+    case Fix::SPRING: return (t.kind == PK_COILOVER || t.kind == PK_LEAF) && f.beam >= 0 && (t.beam == f.beam || t.beam2 == f.beam);
     default: return false;
     }
 }
