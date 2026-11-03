@@ -24,6 +24,7 @@
 #include <set>
 #include <utility>
 
+#include "attachments.h"
 #include "softbody.h"
 
 namespace {
@@ -134,6 +135,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     frameBeams.clear();
     ladder.clear();
     ladderStations = 0;
+    bumperNodes.clear();
+    for (int& b : bumperHex) b = -1;
     bodyMountBeams.clear();
     crossStations.clear();
     skidNodes.clear();
@@ -599,6 +602,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             for (int n = 0; n < bodyNodes; n++)
                 if (onSkin[n]) nodes[n].m += vs.panelMass / skinCount;
         for (const MassItem& it : vs.items) {
+            if (vs.steelBumper && std::string(it.name) == "steel bumper and grille guard") continue;  // (on the bumper's own nodes: 3c)
             addMassAt(V3(it.x, it.y, it.z), it.kg);
             // The spare (tires.h): remember the nodes carrying it, so it can be drawn where it
             // sits and its weight taken off with it.
@@ -739,6 +743,81 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 }
         }
     }
+    // ---- 3c. Steel bumper (attachments.h) ------------------------------------------
+    // A row of nodes on the bumper's face, one ahead of each of the nose's bottom two rows of
+    // nodes, carrying the bumper's weight. Plate steel between them (along, up and across the
+    // face, and a bar over every two cells so the face can't fold between its mounts), braced back
+    // into the nose's first two columns, and onto a ladder frame's horns where it bolts on. The
+    // members are boxed steel: stiffer than the lattice's and far stronger, so a hit on the bumper
+    // is spread over the whole nose instead of folding its front cell. (Heavy nodes, ~5 kg each,
+    // so the stiff members still step stably: the bumper test checks the step's margin.)
+    if (!isProp && vs.steelBumper) {
+        const AttachFit af = attachFit(vs);
+        const int rows = std::min(2, NK);
+        std::vector<int> face(NJ * rows, -1);
+        int count = 0;
+        for (int k = 0; k < rows; k++)
+            for (int j = 0; j < NJ; j++) count += id(0, j, k) >= 0;
+        for (int k = 0; k < rows; k++)
+            for (int j = 0; j < NJ; j++) {
+                const int n0 = id(0, j, k);
+                if (n0 < 0 || count == 0) continue;
+                V3 p = local[n0];
+                p.x = af.faceX;
+                p.y = clampd(p.y, af.y0 + 0.03, af.y1 - 0.03);
+                if (std::fabs(p.z) > af.halfW - 0.03) p.z = (p.z > 0 ? 1 : -1) * (af.halfW - 0.03);
+                face[k * NJ + j] = addNode(p, kSteelBumperKg / count, true);
+                bumperNodes.push_back(face[k * NJ + j]);
+            }
+        auto steel = [&](int a, int b, double kScale, double yScale) {
+            const int bi = addBeam(a, b, BEAM_FRAME);
+            if (bi < 0) return;
+            beams[bi].k = kSpec[BEAM_FRAME].k * kScale;
+            beams[bi].c = kSpec[BEAM_FRAME].c * std::sqrt(kScale);
+            // (As strong as a full-length member however short: the same rule as the lattice's.)
+            const double f = std::max(1.0, 0.3 / std::max(beams[bi].Lorig, 0.01));
+            beams[bi].yieldStrain = kSpec[BEAM_FRAME].yield * yScale * f;
+            beams[bi].breakStrain = kSpec[BEAM_FRAME].brk * 1.5 * f;
+        };
+        auto F = [&](int j, int k) { return j < 0 || j >= NJ || k < 0 || k >= rows ? -1 : face[k * NJ + j]; };
+        for (int k = 0; k < rows; k++)
+            for (int j = 0; j < NJ; j++) {
+                const int n = F(j, k);
+                if (n < 0) continue;
+                // The face: along, up, its diagonals, and the bar across two cells.
+                steel(n, F(j + 1, k), 1.5, 3.0);
+                steel(n, F(j + 2, k), 1.5, 3.0);
+                steel(n, F(j, k + 1), 1.5, 3.0);
+                steel(n, F(j + 1, k + 1), 1.0, 3.0);
+                steel(n, F(j - 1, k + 1), 1.0, 3.0);
+                // The mounts: back to the nose node behind it and its neighbours, and on to the second column.
+                steel(n, id(0, j, k), 1.5, 2.5);
+                for (int dj : {-1, 1}) steel(n, j + dj >= 0 && j + dj < NJ ? id(0, j + dj, k) : -1, 1.0, 2.5);
+                steel(n, id(0, j, 1 - k), 1.0, 2.5);
+                steel(n, id(1, j, k), 1.0, 2.5);
+            }
+        if (ladderFrame && !ladder.empty()) {
+            // Bolted to the frame horns: the face nodes nearest each rail to the horn's end section.
+            for (int side = -1; side <= 1; side += 2) {
+                const double rz = side * vs.railSpacing / 2;
+                for (int k = 0; k < rows; k++) {
+                    int best = -1;
+                    for (int j = 0; j < NJ; j++)
+                        if (F(j, k) >= 0 && (best < 0 || std::fabs(local[F(j, k)].z - rz) < std::fabs(local[F(best, k)].z - rz))) best = j;
+                    if (best < 0) continue;
+                    for (int c = 0; c < 4; c++) steel(F(best, k), ladder[(side > 0 ? 4 : 0) + c], 1.0, 2.5);
+                }
+            }
+        }
+        // The hex the bumper's drawing rides on: nose (x bit 0) to face (1), bottom row to the next, left to right.
+        const int jr = NJ - 1;
+        if (rows == 2 && F(0, 0) >= 0 && F(jr, 0) >= 0 && F(0, 1) >= 0 && F(jr, 1) >= 0) {
+            const int hex[8] = {id(0, 0, 0), F(0, 0), id(0, 0, 1), F(0, 1), id(0, jr, 0), F(jr, 0), id(0, jr, 1), F(jr, 1)};
+            if (std::all_of(hex, hex + 8, [](int n) { return n >= 0; }))
+                for (int b = 0; b < 8; b++) bumperHex[b] = hex[b];
+        }
+    }
+
     [[maybe_unused]] auto nearestFrame = [&](const V3& p, int count) {
         std::vector<std::pair<double, int>> c;
         for (int n : ladder) c.push_back({len(local[n] - p), n});
@@ -1662,6 +1741,18 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         }
     }
 
+    // The steel bumper's mounts box in the bottom of the nose behind it (attachments.h): the first
+    // cell's lowest two rows of members take far more before they set.
+    if (!isProp && vs.steelBumper) {
+        const double xFront = xAt(1) - 1e-6, yTop = vs.layerY[std::min<size_t>(2, vs.layerY.size() - 1)] + 1e-6;
+        for (Beam& b : beams) {
+            if ((b.type != BEAM_BODY && b.type != BEAM_FRAME) || b.a >= bodyNodes || b.b >= bodyNodes) continue;
+            const V3 &pa = local[b.a], &pb = local[b.b];
+            if (pa.y > yTop || pb.y > yTop || pa.x < xFront || pb.x < xFront) continue;
+            b.yieldStrain *= 2.0;
+        }
+    }
+
     // Ladder frames, skid plates and rock sliders. All of it makes the truck tough where
     // the trail hits it (bending between the axles, rocks under the belly and sills),
     // but none of it reaches the frame horns and bumpers ahead of and behind the axles:
@@ -2397,6 +2488,15 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     hooks[e].push_back(i);
         }
         hookRest[e] = V3(ext + (e == 0 ? 0.06 : -0.06), vs.layerY[0] + 0.1, 0);
+    }
+    // The winch attachment's fairlead, or the steel bumper's face, is the front recovery point (attachments.h).
+    if (!isProp && (vs.winchKit || vs.steelBumper)) {
+        hookRest[0] = attachFit(vs).fairlead;
+        if (!bumperNodes.empty()) {
+            hooks[0].clear();
+            for (int n : bumperNodes)
+                if (std::fabs(local[n].z) < vs.width * 0.4) hooks[0].push_back(n);
+        }
     }
 
     for (int i = 0; i < bodyNodes; i++) {

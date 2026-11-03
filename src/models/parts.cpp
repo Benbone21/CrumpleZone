@@ -856,5 +856,53 @@ Reg supplyCrate({"supply_crate", "SUPPLY CRATE", "PARTS", "THE career supply cac
                       {choice("tarp", "TARP", 1, {"BLUE", "ORANGE", "OLIVE", "GREY"}), labelParam(), openParam()}, cratePallet},
                  }});
 
+// ---- steel bumper (the garage attachment: attachments.h) ------------------------------------------
+// Plate-steel front bumper with a tube grille guard, a winch cradle in the middle, red D-rings and two lights,
+// as the garage's STEEL BUMPER. Origin on the ground under its middle, +X forward.
+void steelBumper(B& b, const P& p) {
+    const double w = p("width") / 2, h = 0.32, d = 0.17, y0 = 0.05, guard = p("guard");
+    const V3 steel(0.075, 0.075, 0.08), tube(0.11, 0.11, 0.115), red(0.75, 0.08, 0.05);
+    b.style(steel, MATTE);
+    const double gap = 0.30, wing = w * 0.84;
+    b.both([&] { b.box(V3(0, y0 + h / 2, (gap + wing) / 2), V3(d, h, wing - gap), 0.01); });
+    b.box(V3(-d / 2 + 0.008, y0 + h / 2, 0), V3(0.016, h, 2 * gap));
+    b.box(V3(0, y0 + 0.012, 0), V3(d, 0.024, 2 * gap));
+    b.both([&] {
+        b.push();
+        b.move(-0.06, 0, wing + (w - wing) * 0.4);
+        b.yaw(30);
+        b.box(V3(0, y0 + h / 2, 0), V3(d * 0.9, h * 0.92, (w - wing) * 1.3), 0.01);
+        b.pop();
+    });
+    // D-rings on their tabs, and a light on each top corner.
+    b.both([&] {
+        b.style(red, PAINT);
+        b.torus(V3(d / 2 + 0.035, y0 + 0.07, gap + 0.09), 0.035, 0.011, 12, 6, 200);
+        b.style(V3(1.0, 0.98, 0.9), EMISSIVE);
+        b.box(V3(d / 2 - 0.004, y0 + h + 0.035, wing - 0.06), V3(0.004, 0.052, 0.08));
+        b.style(steel, MATTE);
+        b.box(V3(d / 2 - 0.04, y0 + h + 0.035, wing - 0.06), V3(0.07, 0.07, 0.1));
+    });
+    // The grille guard: uprights, the top bar, the hoops over the lamps and two bars across the grille.
+    b.style(tube, METAL);
+    const double yt = y0 + h + guard, xb = 0.0, xt = -0.06, zi = 0.27, zo = w * 0.78;
+    b.both([&] {
+        b.cyl(V3(xb, y0 + h, zi), V3(xt, yt, zi), 0.026, 10);
+        b.tube({V3(xb, y0 + h, zo), V3(xt + 0.01, yt - 0.09, zo), V3(xt, yt, zo - 0.10), V3(xt, yt, zi)}, 0.022, 10);
+    });
+    b.cyl(V3(xt, yt, -zi), V3(xt, yt, zi), 0.026, 10);
+    for (double t : {0.36, 0.68}) {
+        const double y = y0 + h + guard * t, x = xb + (xt - xb) * t;
+        b.cyl(V3(x, y, -zi), V3(x, y, zi), 0.016, 8);
+    }
+}
+
+Reg steelBumperModel({"steel_bumper", "STEEL BUMPER", "PARTS", "Career upgrade: plate-steel front bumper with a grille guard and a winch cradle (attachments.h)", 1.9,
+                      {
+                          {"GRILLE GUARD", "Plate-steel bumper, swept-back ends, tube grille guard over the lamps, D-rings, lights",
+                           {num("width", "WIDTH", 1.9, 1.3, 2.2, 0.01), num("guard", "GUARD HEIGHT", 0.45, 0.2, 0.6, 0.01)},
+                           steelBumper},
+                      }});
+
 //@@END
 }  // namespace

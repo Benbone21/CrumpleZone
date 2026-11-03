@@ -437,12 +437,18 @@ int vehicleOf(const std::string& text) {
     return v;
 }
 
+// A condition text's picks: one per slot, or the first five in one from before the attachments (the rest: the factory's).
+static bool modNums(const std::string& s, double* p) {
+    for (int k = 0; k < MOD_SLOTS; k++) p[k] = 0;
+    return nums(s, p, MOD_SLOTS) || nums(s, p, kModSlotsBeforeAttachments);
+}
+
 ModSet modsOf(const std::string& text) {
     ModSet m;
     std::map<std::string, std::string> kv;
     const int v = vehicleOf(text);
     double p[MOD_SLOTS];
-    if (v < 0 || !fields(text, kv) || !nums(kv["mods"], p, MOD_SLOTS)) return m;
+    if (v < 0 || !fields(text, kv) || !modNums(kv["mods"], p)) return m;
     const bool old = savedBeforeParts2(kv);
     for (int k = 0; k < MOD_SLOTS; k++)
         if (p[k] < 0 || p[k] >= (old ? 256.0 : (double)modOptions(v, k).size()) || p[k] != std::floor(p[k])) return ModSet();
@@ -491,7 +497,7 @@ bool restore(Sim& sim, Car& c, const std::string& text) {
     int vehicle = -1;
     ModSet mods;
     double pm[MOD_SLOTS];
-    if (!identify(c, vehicle, mods) || vehicleOf(text) != vehicle || !nums(kv["mods"], pm, MOD_SLOTS)) return false;
+    if (!identify(c, vehicle, mods) || vehicleOf(text) != vehicle || !modNums(kv["mods"], pm)) return false;
     if (savedBeforeParts2(kv)) {  // (its picks in the old lists: the car is built on today's nearest parts, modsOf)
         ModSet old;
         for (int k = 0; k < MOD_SLOTS; k++) {

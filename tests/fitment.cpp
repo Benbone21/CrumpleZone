@@ -439,7 +439,7 @@ void one(Ctx& ctx) {
 int registerAll() {
     scenarioRegistry().push_back({"fitment-one", "One garage build (CZ_FITMENT_ONE=\"id e s t w ti\")", one});
     const auto& cat = vehicleCatalog();
-    static const char* slotTag[MOD_SLOTS] = {"engine", "suspension", "transmission", "wheels", "tires"};
+    static const char* slotTag[MOD_SLOTS] = {"engine", "suspension", "transmission", "wheels", "tires", "winch", "bumper"};
     for (int v : listedVehicles()) {  // (the garage's: the Civic, UTV and buggy aren't offered, only their parts)
         const std::string who = lower(cat[v].id);
         for (int k = -1; k < MOD_SLOTS; k++) {

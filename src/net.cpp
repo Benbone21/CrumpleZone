@@ -145,7 +145,7 @@ std::vector<uint8_t> frame(MsgType t, const Writer& w) {
 // Which catalog vehicle (and mods) or prop a spec is, so another machine can build it.
 struct SpecId {
     uint8_t kind = 0;  // 0 vehicle, 1 crash box, 2 barrier, 255 unknown
-    uint8_t model = 0, mods[MOD_SLOTS] = {0, 0, 0, 0, 0};  // (every garage slot: engine .. tires)
+    uint8_t model = 0, mods[MOD_SLOTS] = {};  // (every garage slot: engine .. tires, the winch and the bumper)
 };
 SpecId specId(const VehicleSpec* s) {
     SpecId id;

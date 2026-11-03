@@ -1,5 +1,7 @@
 #include "mods.h"
 
+#include "attachments.h"
+
 #include "platform.h"
 
 #include <algorithm>
@@ -14,7 +16,7 @@
 #include <mutex>
 
 const char* modSlotName(int slot) {
-    static const char* names[MOD_SLOTS] = {"ENGINE", "SUSPENSION", "TRANSMISSION", "WHEELS", "TIRES"};
+    static const char* names[MOD_SLOTS] = {"ENGINE", "SUSPENSION", "TRANSMISSION", "WHEELS", "TIRES", "WINCH", "BUMPER"};
     return slot >= 0 && slot < MOD_SLOTS ? names[slot] : "";
 }
 
@@ -598,6 +600,8 @@ const Universal& universal() {
             for (int k = 0; k < MOD_SLOTS; k++) {
                 auto& list = U.opts[v][k];
                 if (k < (int)base[v].size()) list = base[v][k];
+                if (k == MOD_WINCH) list = winchOptions(cat[v]);
+                if (k == MOD_BUMPER) list = bumperOptions(cat[v]);
                 if (list.empty()) {
                     char b[96];
                     if (k == MOD_WHEELS) std::snprintf(b, sizeof b, "%.0f MM TIRES  %.0f IN RIMS", cat[v].wheelRadius * 2000, cat[v].rimRadius * 2 / 0.0254);
@@ -727,6 +731,7 @@ std::string modLegacyKey(int vehicle, int slot, int oldPick) {
     const auto& cat = vehicleCatalog();
     const int n = std::min((int)cat.size(), (int)(sizeof kOldOwn / sizeof kOldOwn[0]));  // (the vehicles there were then)
     if (vehicle < 0 || vehicle >= n || slot < 0 || slot >= MOD_SLOTS || oldPick < 0) return "";
+    if (modIsAttachment(slot)) return oldPick == 0 ? std::string(modSlotName(slot)) + ":" + cat[vehicle].id + ":0" : "";  // (they came later: the factory's)
     const std::string slotName = modSlotName(slot);
     auto key = [&](int w, int o) { return slotName + ":" + cat[w].id + ":" + std::to_string(o); };
     if (oldPick == 0) return key(vehicle, 0);
@@ -918,7 +923,7 @@ bool Garage::load(const std::string& path) {
     while (std::fgets(line, sizeof line, f)) {  // "id engine suspension transmission [wheels tires]"
         char id[64];
         if (std::sscanf(line, "parts %d", &parts) == 1) continue;
-        int p[MOD_SLOTS] = {0, 0, 0, 0, 0};
+        int p[MOD_SLOTS] = {};
         {  // "paint <id> <body hex|-> <accent hex|-> <finish>": a line older builds skip
             char pid[64], body[16], accent[16];
             int finish = 0;
@@ -929,7 +934,8 @@ bool Garage::load(const std::string& path) {
                 continue;
             }
         }
-        if (std::sscanf(line, "%63s %d %d %d %d %d", id, &p[0], &p[1], &p[2], &p[3], &p[4]) < 4) continue;
+        // (A file from before the attachments has five picks: the winch and bumper stay the factory's.)
+        if (std::sscanf(line, "%63s %d %d %d %d %d %d %d", id, &p[0], &p[1], &p[2], &p[3], &p[4], &p[5], &p[6]) < 4) continue;
         const auto& cat = vehicleCatalog();
         for (size_t v = 0; v < cat.size(); v++) {
             if (std::string(cat[v].id) != id) continue;
@@ -953,7 +959,8 @@ bool Garage::save(const std::string& path) const {
     const auto& cat = vehicleCatalog();
     std::fprintf(f, "parts %d\n", kPartsVersion);
     for (size_t v = 0; v < cat.size(); v++)
-        std::fprintf(f, "%s %d %d %d %d %d\n", cat[v].id, fitted[v].pick[0], fitted[v].pick[1], fitted[v].pick[2], fitted[v].pick[3], fitted[v].pick[4]);
+        std::fprintf(f, "%s %d %d %d %d %d %d %d\n", cat[v].id, fitted[v].pick[0], fitted[v].pick[1], fitted[v].pick[2], fitted[v].pick[3], fitted[v].pick[4],
+                     fitted[v].pick[5], fitted[v].pick[6]);  // (older builds read the first five)
     for (size_t v = 0; v < cat.size(); v++)
         if (!paint[v].factory()) std::fprintf(f, "paint %s %s\n", cat[v].id, paintToText(paint[v]).c_str());
     std::fclose(f);

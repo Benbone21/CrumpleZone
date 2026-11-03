@@ -47,7 +47,7 @@ SCENARIO(careerOwnership, "career/ownership", "Sandbox owns everything; a career
         for (int k = 0; k < MOD_SLOTS; k++)
             for (int o = 0; o < (int)modOptions(v, k).size(); o++) {
                 if (modIsFactory(v, k, o)) factory &= c.owns(v, k, o);
-                else nothingElse &= !c.owns(v, k, o);
+                else if (!modOptions(v, k)[o].removal) nothingElse &= !c.owns(v, k, o);  // (taking the factory winch off is free)
             }
     ctx.check("career: every vehicle's factory parts fit", factory);
     ctx.check("career: nothing else does, to begin with", nothingElse);
@@ -68,14 +68,15 @@ SCENARIO(careerOwnership, "career/ownership", "Sandbox owns everything; a career
                                                                  modPartTitle(huge) == "HUGE WHEELS", modPartTitle(huge));
 }
 
-SCENARIO(partsSimple, "career/parts-simple", "Every slot of every vehicle: the factory part and two or three more, each named plainly and differently, with no part numbers") {
+SCENARIO(partsSimple, "career/parts-simple", "Every slot of every vehicle: the factory part and two or three more (an attachment: on or off), each named plainly and differently, with no part numbers") {
     bool sizes = true, distinct = true, plain = true;
     std::string bad;
     for (int v = 0; v < (int)vehicleCatalog().size(); v++)
         for (int k = 0; k < MOD_SLOTS; k++) {
             const auto& o = modOptions(v, k);
             const std::string where = std::string(vehicleCatalog()[v].id) + " " + modSlotName(k);
-            if (o.size() < 3 || o.size() > 4) sizes = false, bad += where + " has " + std::to_string(o.size()) + "; ";
+            // (The attachments are on or off: two options, tests/attachments.cpp.)
+            if (modIsAttachment(k) ? o.size() != 2 : (o.size() < 3 || o.size() > 4)) sizes = false, bad += where + " has " + std::to_string(o.size()) + "; ";
             for (size_t i = 0; i < o.size(); i++) {
                 for (size_t j = 0; j < i; j++)
                     if (o[i].name == o[j].name) distinct = false, bad += where + " twice: " + o[i].name + "; ";
@@ -97,7 +98,7 @@ SCENARIO(partsSimple, "career/parts-simple", "Every slot of every vehicle: the f
                 if (coded) plain = false, bad += where + ": " + o[i].name + "; ";
             }
         }
-    ctx.check("3 or 4 options in every slot", sizes, bad);
+    ctx.check("3 or 4 options in every slot (2 for the winch and the bumper)", sizes, bad);
     ctx.check("each named differently", distinct, bad);
     ctx.check("plain names (no part numbers, 20 letters at most)", plain, bad);
 }

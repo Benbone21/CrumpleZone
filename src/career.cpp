@@ -163,6 +163,7 @@ bool Career::owns(int vehicle, int slot, int option) const {
     const std::string key = modPartKey(vehicle, slot, option);
     if (key.empty()) return false;
     if (!on || modIsFactory(vehicle, slot, option)) return true;
+    if (modOptions(vehicle, slot)[option].removal) return true;  // (taking a factory part off: nothing to buy)
     return owned.count(key) > 0;
 }
 
@@ -172,7 +173,7 @@ int Career::tier(int vehicle, int slot, int option) {
 }
 
 int Career::price(int vehicle, int slot, int option) {
-    static const int base[MOD_SLOTS] = {2500, 1500, 1200, 800, 500};
+    static const int base[MOD_SLOTS] = {2500, 1500, 1200, 800, 500, 1800, 1400};  // (..., the winch, the steel bumper)
     const int t = tier(vehicle, slot, option);
     return t == 1 ? base[slot] : t == 2 ? base[slot] * 5 / 2 : 0;
 }
@@ -355,17 +356,19 @@ bool parseCareer(std::istream& f, Career& c) {
         else if (k == "stock") {  // "stock N KEY"
             const size_t sp2 = v.find(' ');
             if (sp2 != std::string::npos) c.stock[v.substr(sp2 + 1)] = std::atoi(v.substr(0, sp2).c_str());
-        } else if (k == "veh") {  // "veh INDEX WORLD P0 P1 P2 P3 P4 [drove=SECONDS] [paint=BODY:ACCENT:FINISH]" (the picks as in garage.txt)
+        } else if (k == "veh") {  // "veh INDEX WORLD P0 P1 P2 P3 P4 [P5 P6] [drove=SECONDS] [paint=BODY:ACCENT:FINISH]" (the picks as in garage.txt)
             std::istringstream is(v);
             OwnedVehicle ov;
-            int p[MOD_SLOTS];
+            int p[MOD_SLOTS] = {};
             slotOf.push_back(-1);
             if (!(is >> ov.vehicle >> ov.world) || ov.vehicle < 0 || ov.vehicle >= (int)vehicleCatalog().size()) continue;
             bool ok = true;
-            for (int i = 0; i < MOD_SLOTS; i++) ok &= (bool)(is >> p[i]);
+            for (int i = 0; i < kModSlotsBeforeAttachments; i++) ok &= (bool)(is >> p[i]);
             if (!ok) continue;
+            int more = kModSlotsBeforeAttachments;  // (the attachments' picks follow; a profile from before them has none: the factory's)
             for (std::string extra; is >> extra;)  // (later keys after the picks: "drove=SECONDS")
-                if (extra.rfind("drove=", 0) == 0) ov.drove = std::atof(extra.c_str() + 6);
+                if (more < MOD_SLOTS && !extra.empty() && extra.find_first_not_of("0123456789") == std::string::npos) p[more++] = std::atoi(extra.c_str());
+                else if (extra.rfind("drove=", 0) == 0) ov.drove = std::atof(extra.c_str() + 6);
                 else if (extra.rfind("paint=", 0) == 0) {  // (junk: the factory's)
                     std::string p = extra.substr(6), b, a;
                     for (char& ch : p)
