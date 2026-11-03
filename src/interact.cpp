@@ -5,6 +5,8 @@
 #include "carentry.h"
 
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 #include "modelkit.h"
 #include "objshape.h"
@@ -37,6 +39,16 @@ bool hasLine(const Sim& sim, int ci, RopeKind kind) {
 std::string withSize(const char* what, const WheelItem& it) { return std::string(what) + " (" + it.sizeName() + ")"; }
 
 V3 hubOf(const Car& c, const Wheel& wh) { return (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5; }
+// The lug nuts: the hub's outer face, where the wrench goes.
+V3 lugsOf(const Car& c, const Wheel& wh) { return c.nodes[wh.outer].p; }
+// The valve stem: on the rim's outer face, out near its lip (drawn at the top: the wheel's turn isn't kept).
+V3 valveOf(const Car& c, const Wheel& wh) {
+    V3 out = c.nodes[wh.outer].p - c.nodes[wh.inner].p;
+    out = len(out) > 1e-6 ? norm(out) : c.frame().left;
+    V3 up = c.frame().up;
+    up = norm(up - out * dot(up, out));
+    return c.nodes[wh.outer].p + out * 0.01 + up * (wh.rimR * 0.82);
+}
 
 CornerNow cornerNow(const Sim& sim, const Car& c, int k) {
     CornerNow n;
@@ -377,7 +389,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                 if (wh.detached) continue;
                 InteractOption o;
                 o.car = ci, o.wheel = k;
-                o.at = hubOf(c, wh);
+                o.at = lugsOf(c, wh);
                 const bool lifted = cornerLifted(sim, c, k);
                 if (wh.mounted && !busy) {
                     o.kind = IA_REMOVE_WHEEL, o.hold = kRemoveWheel;
@@ -408,35 +420,32 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                 }
             }
         // Tire pressure: air up with the compressor (or shop air) and let air out at the valves,
-        // on foot or in the seat, stopped. Placed on the tire's sidewall (offset from the hub) so
-        // aiming at the hub still picks the wheel jobs; lower priority (bias) than wheel work.
+        // on foot or in the seat, stopped. At the valve stem on the rim (the lug nuts are the wheel
+        // jobs', a hand below it).
         {
             const double speed = len(c.frame().vel);
             if (speed < 0.5 && c.tirePsi < c.spec->tirePsi - 0.5)
                 for (int k = 0; k < (int)c.wheels.size(); k++) {
                     const Wheel& wh = c.wheels[k];
                     if (wh.detached) continue;
-                    // Sidewall position: offset from the hub along the wheel's out direction.
-                    V3 wheelOut = c.nodes[wh.outer].p - c.nodes[wh.inner].p;
-                    wheelOut = len(wheelOut) > 1e-6 ? norm(wheelOut) : c.frame().fwd;
-                    const V3 sidewall = hubOf(c, wh) + wheelOut * wh.R;
+                    const V3 sidewall = valveOf(c, wh);  // (air up and air down share it: prompts::spread sets them a step apart)
                     InteractOption o;
                     o.car = ci, o.wheel = k, o.kind = IA_AIR_UP_TIRE, o.continuous = true;
                     o.at = sidewall;
-                    o.radius = 0.5;
+                    o.radius = 0.06;
                     char buf[64];
                     std::snprintf(buf, sizeof buf, "AIR UP (%.0f PSI)", c.tirePsi);
                     o.prompt = buf;
-                    consider(o, kReach, 0.1);
+                    consider(o, kReach, 0.0);
                     if (c.tirePsi > 12.5) {
                         InteractOption o2;
                         o2.car = ci, o2.wheel = k, o2.kind = IA_AIR_DOWN_TIRE, o2.continuous = true;
                         o2.at = sidewall;
-                        o2.radius = 0.5;
+                        o2.radius = 0.06;
                         char buf2[64];
                         std::snprintf(buf2, sizeof buf2, "LET AIR OUT (%.0f PSI)", c.tirePsi);
                         o2.prompt = buf2;
-                        consider(o2, kReach, 0.1);
+                        consider(o2, kReach, 0.0);
                     }
                 }
         }
@@ -574,7 +583,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                 }
             }
         }
-    // Getting in at a door (carentry.h: yours, anyone's with nobody in it, a buddy's passenger door): J or E, a tap.
+    // Getting in at a door handle (carentry.h: yours, anyone's with nobody in it, a buddy's passenger door): aimed, E, a tap.
     for (int ci = 0; ci < (int)sim.cars.size(); ci++) {
         InteractOption o;
         if (!carentry::option(sim, ci, o)) continue;

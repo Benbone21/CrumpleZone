@@ -25,6 +25,13 @@ V3 turned(const V3& d, double deg) {
 
 V3 eyeOf(const Walker& wk) { return wk.p + V3(0, 1.62, 0); }
 
+// `from` turned `deg` toward `to` (in the plane of the two; past it if `deg` is more than the angle between them).
+V3 toward(const V3& from, const V3& to, double deg) {
+    const V3 ax = norm(cross(from, to));
+    const double a = deg * M_PI / 180;
+    return from * std::cos(a) + cross(ax, from) * std::sin(a);
+}
+
 void standAt(const World& w, Walker& wk, const V3& q) {
     wk.p = V3(q.x, w.height(q.x, q.z), q.z);
     wk.v = V3();
@@ -46,15 +53,17 @@ int cornerOf(const Car& c, bool front, bool left) {
 
 }  // namespace
 
-SCENARIO(promptsAim, "prompts/aim", "the aim counts the size of the target: a wheel is hit well off its middle, one 60 degrees off is not; out of reach is out; the target you have keeps its cone wider and wins a close call by the sticky bonus; every InteractKind has a row in the table") {
+SCENARIO(promptsAim, "prompts/aim", "the aim counts the size of the target: a wheel is hit well off its middle, one 45 degrees off is not; out of reach is out; the target you have keeps its cone wider and wins a close call by the sticky bonus; every InteractKind has a row in the table") {
     const V3 eye(0, 1.6, 0), chest(0, 1.0, 0), fwd(1, 0, 0);
     const V3 wheel(2.0, 1.0, 0);
     double sc = 0;
     ctx.check("dead on is in", prompts::aimScore(eye, fwd, chest, wheel, 0.45, 3, 0, false, 0.12, sc));
-    ctx.check("40 degrees off the middle of a wheel 2 m away is in (35 was the old cone to the middle)", prompts::aimScore(eye, turned(fwd, 40), chest, wheel, 0.45, 3, 0, false, 0.12, sc));
-    ctx.check("60 degrees off is out", !prompts::aimScore(eye, turned(fwd, 60), chest, wheel, 0.45, 3, 0, false, 0.12, sc));
-    ctx.check("...unless it is the one you have (the cone is wider)", prompts::aimScore(eye, turned(fwd, 55), chest, wheel, 0.45, 3, 0, true, 0.12, sc) &&
-                                                                           !prompts::aimScore(eye, turned(fwd, 55), chest, wheel, 0.45, 3, 0, false, 0.12, sc));
+    ctx.check("30 degrees off the middle of a wheel 2 m away is in (the cone is to its edge)", prompts::aimScore(eye, turned(fwd, 30), chest, wheel, 0.45, 3, 0, false, 0.12, sc));
+    ctx.check("45 degrees off is out", !prompts::aimScore(eye, turned(fwd, 45), chest, wheel, 0.45, 3, 0, false, 0.12, sc));
+    ctx.check("...unless it is the one you have (the cone is wider)", prompts::aimScore(eye, turned(fwd, 40), chest, wheel, 0.45, 3, 0, true, 0.12, sc) &&
+                                                                           !prompts::aimScore(eye, turned(fwd, 40), chest, wheel, 0.45, 3, 0, false, 0.12, sc));
+    const V3 nut(2.0, 1.6, 0);  // (a small marker: the fixed slack round it, not its size)
+    ctx.check("a small marker: a couple of degrees off it is still a hit", prompts::aimScore(eye, turned(fwd, 2), chest, nut, 0.02, 3, 0, false, 0.12, sc));
     ctx.check("beyond reach is out", !prompts::aimScore(eye, fwd, chest, V3(3.6, 1, 0), 0.45, 3, 0, false, 0.12, sc));
     double mid = 0, off = 0;
     prompts::aimScore(eye, fwd, chest, wheel, 0.45, 3, 0, false, 0.12, mid);
@@ -98,17 +107,16 @@ SCENARIO(promptsPick, "prompts/pick", "beside a Blazer: a wheel is picked lookin
     o = pickAt(norm(hubF + V3(0, 0.35, 0) - eye));
     ctx.check("...and at the top of the tire", o.kind == IA_REMOVE_WHEEL && o.wheel == fl);
     // Hysteresis: from where the front wheel and the driver's door are only some degrees apart, sweep from the wheel to the door.
-    standAt(ctx.sim.world, wk, f.com + fwd * 0.9 + left * 2.0);
+    standAt(ctx.sim.world, wk, (hubF + prompts::doorAt(c)) * 0.5 + left * 2.5);
     const V3 eyeS = eyeOf(wk);
     auto pickS = [&](const V3& dir, const PickOpts* p2 = nullptr) { return Interact::pick(ctx.sim, wk, eyeS, dir, nullptr, ia.kit, &ia.own, nullptr, p2); };
     auto isF = [&](const InteractOption& x) { return x.kind == IA_REMOVE_WHEEL && x.wheel == fl; };
     const V3 toFS = norm(hubF - eyeS), toDS = norm(prompts::doorAt(c) - eyeS);
     const double span = std::acos(clampd(dot(toFS, toDS), -1, 1)) * 180 / M_PI;
-    const double sign = dot(cross(toFS, toDS), V3(0, 1, 0)) > 0 ? 1 : -1;
-    ctx.check("the wheel and the door are some degrees apart", span > 8 && span < 60, std::to_string(span));
+    ctx.check("the wheel and the door are some degrees apart", span > 8 && span < 50, std::to_string(span));
     double flip = -1;
     for (double a = 0; a <= span + 10; a += 0.25)
-        if (pickS(turned(toFS, sign * a)).kind == IA_ENTER_CAR) {
+        if (pickS(toward(toFS, toDS, a)).kind == IA_ENTER_CAR) {
             flip = a;
             break;
         }
@@ -117,17 +125,17 @@ SCENARIO(promptsPick, "prompts/pick", "beside a Blazer: a wheel is picked lookin
     PickOpts po;
     po.sticky = &was;
     po.stickyBonus = prompts::kStickyBonus;
-    ctx.check("...but with the wheel as the target it keeps it a little past that (no flicker)", isF(pickS(turned(toFS, sign * (flip + 1.5)), &po)));
-    ctx.check("...and lets go once the aim is clearly on the door", pickS(turned(toFS, sign * (flip + 12)), &po).kind == IA_ENTER_CAR);
+    ctx.check("...but with the wheel as the target it keeps it a little past that (no flicker)", isF(pickS(toward(toFS, toDS, (flip + 1.0)), &po)));
+    ctx.check("...and lets go once the aim is clearly on the door", pickS(toward(toFS, toDS, (flip + 12)), &po).kind == IA_ENTER_CAR);
     po.stickyBonus = prompts::kHoldBonus;
-    ctx.check("holding E on it, it takes a clear change of aim to let go", isF(pickS(turned(toFS, sign * (flip + 12)), &po)));
+    ctx.check("holding E on it, it takes a clear change of aim to let go", isF(pickS(toward(toFS, toDS, (flip + 12)), &po)));
     {  // an aim shaking across the crossover
         InteractOption cur = was;
         int changes = 0;
         for (int i = 0; i < 40; i++) {
             PickOpts p2;
             p2.sticky = &cur;
-            const InteractOption n = pickS(turned(toFS, sign * (flip + ((i & 1) ? 1.2 : -1.2))), &p2);
+            const InteractOption n = pickS(toward(toFS, toDS, (flip + ((i & 1) ? 0.7 : -0.7))), &p2);
             if (!n.same(cur)) changes++;
             cur = n;
         }
@@ -135,7 +143,7 @@ SCENARIO(promptsPick, "prompts/pick", "beside a Blazer: a wheel is picked lookin
         cur = was;
         changes = 0;
         for (int i = 0; i < 40; i++) {
-            const InteractOption n = pickS(turned(toFS, sign * (flip + ((i & 1) ? 1.2 : -1.2))));
+            const InteractOption n = pickS(toward(toFS, toDS, (flip + ((i & 1) ? 0.7 : -0.7))));
             if (!n.same(cur)) changes++;
             cur = n;
         }
@@ -165,7 +173,7 @@ SCENARIO(promptsPick, "prompts/pick", "beside a Blazer: a wheel is picked lookin
     prompts::Focus fo = pr.update(ctx.sim, wk, ia, ia.nearby, eye, toF);
     int wheels = 0, doors = 0, backs = 0, currents = 0;
     for (const prompts::Marker& m : fo.markers) {
-        wheels += m.kind == IA_REMOVE_WHEEL, doors += m.key == prompts::KEY_GET_IN, backs += m.kind == IA_OPEN_INVENTORY, currents += m.current;
+        wheels += m.kind == IA_REMOVE_WHEEL, doors += m.door, backs += m.kind == IA_OPEN_INVENTORY, currents += m.current;
     }
     ctx.check("a marker on each wheel within a few metres, the driver's door; one target", wheels >= 2 && doors == 1 && currents == 1 && fo.target >= 0, std::to_string(wheels) + " wheels " + std::to_string(doors) + " door " + std::to_string(currents) + " current");
     ctx.check("the target is the front wheel, a hold job on E", fo.current() && fo.current()->kind == IA_REMOVE_WHEEL && fo.current()->hold && fo.current()->key == prompts::KEY_INTERACT && fo.hint.empty());
@@ -181,7 +189,7 @@ SCENARIO(promptsPick, "prompts/pick", "beside a Blazer: a wheel is picked lookin
     const V3 eye2 = eyeOf(wk), toD = norm(door - eye2);
     ia.update(ctx.sim, wk, eye2, toD, false, Ctx::kFrame);
     fo = pr.update(ctx.sim, wk, ia, ia.nearby, eye2, toD);
-    ctx.check("looking at the driver's door: the target is get in, on J", ia.current.kind == IA_ENTER_CAR && fo.current() && fo.current()->key == prompts::KEY_GET_IN && fo.current()->label.rfind("GET IN", 0) == 0, fo.current() ? fo.current()->label : "none");
+    ctx.check("looking at the driver's door: the target is get in, on E at the handle", ia.current.kind == IA_ENTER_CAR && fo.current() && fo.current()->door && fo.current()->label.rfind("GET IN", 0) == 0, fo.current() ? fo.current()->label : "none");
     // Nothing aimed at: what to look at.
     const V3 away = left;
     ia.update(ctx.sim, wk, eye2, away, false, Ctx::kFrame);
@@ -222,9 +230,18 @@ SCENARIO(promptsAir, "prompts/air", "on-foot tire airing: AIR UP and LET AIR OUT
     standAt(ctx.sim.world, wk, hubF + left * 2.0);
     const V3 eye = eyeOf(wk);
     auto pickAt = [&](const V3& dir) { return Interact::pick(ctx.sim, wk, eye, dir, nullptr, ia.kit, &ia.own, nullptr, nullptr); };
-    // Aim at the hub: should pick the wheel job, not airing.
-    InteractOption o = pickAt(norm(hubF - eye));
-    ctx.check("aiming at the hub: the target is the wheel job, not airing", o.kind == IA_REMOVE_WHEEL && o.wheel == fl, o.prompt);
+    // Aim at the lug nuts: should pick the wheel job, not airing.
+    V3 lugs = hubF;
+    {
+        std::vector<InteractOption> nb;
+        PickOpts p0;
+        p0.nearby = &nb;
+        Interact::pick(ctx.sim, wk, eye, norm(hubF - eye), nullptr, ia.kit, &ia.own, nullptr, &p0);
+        for (const InteractOption& opt : nb)
+            if (opt.kind == IA_REMOVE_WHEEL && opt.wheel == fl) lugs = opt.at;
+    }
+    InteractOption o = pickAt(norm(lugs - eye));
+    ctx.check("aiming at the lug nuts: the target is the wheel job, not airing", o.kind == IA_REMOVE_WHEEL && o.wheel == fl, o.prompt);
     // Aim at the sidewall (offset from the hub): should pick air up.
     V3 wheelOut = c.nodes[c.wheels[fl].outer].p - c.nodes[c.wheels[fl].inner].p;
     wheelOut = len(wheelOut) > 1e-6 ? norm(wheelOut) : f.fwd;
@@ -235,12 +252,14 @@ SCENARIO(promptsAir, "prompts/air", "on-foot tire airing: AIR UP and LET AIR OUT
     po.nearby = &nearby;
     Interact::pick(ctx.sim, wk, eye, norm(hubF - eye), nullptr, ia.kit, &ia.own, nullptr, &po);
     bool sawAirUp = false;
+    V3 valve = sidewall;
     for (const InteractOption& opt : nearby) {
-        if (opt.kind == IA_AIR_UP_TIRE) sawAirUp = true;
+        if (opt.kind == IA_AIR_UP_TIRE && opt.wheel == fl) sawAirUp = true, valve = opt.at;
     }
+    ctx.check("the valve is on the rim, inside the tire", len(valve - hubF) < c.wheels[fl].R && len(valve - hubF) > c.wheels[fl].rimR * 0.5, std::to_string(len(valve - hubF)));
     ctx.check("low pressure: AIR UP option is generated", sawAirUp);
-    o = pickAt(norm(sidewall - eye));
-    ctx.check("aiming at the sidewall: the target is air up", o.kind == IA_AIR_UP_TIRE && o.wheel == fl, o.prompt);
+    o = pickAt(norm(valve - eye));
+    ctx.check("aiming at the valve stem: the target is air up", o.kind == IA_AIR_UP_TIRE && o.wheel == fl, o.prompt);
 }
 
 SCENARIO(promptsRemoveFit, "prompts/remove-fit", "a field repair's prompts are short: REMOVE <part> then FIT <part>, no job-name prefix, the reason of a blocked one split off") {

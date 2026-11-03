@@ -1249,7 +1249,6 @@ float drawKeyLine(Renderer& r, float cx, float y, float s, const std::string& ke
 // The key (or the pad's button) the marker's job is done with.
 std::string promptKeyName(const prompts::Marker& m, bool padNow, const std::string& holdWord) {
     (void)padNow;  // (K names the pad's button when the pad was the last thing used)
-    if (m.key == prompts::KEY_GET_IN) return K(KA_GET_IN_OUT);
     return (m.hold ? holdWord : std::string()) + K(KA_INTERACT);
 }
 
@@ -1273,13 +1272,13 @@ void drawFocus(Renderer& r, const prompts::Focus& fo, const Interact& ia, const 
         const float prox = (float)clampd(1.0 - (dist - 2.0) / (prompts::kMarkerRange - 2.0), 0.12, 1.0);  // 1 within 2 m, fading out to the edge of marker range
         float cr = 1.0f, cg = 0.82f, cb = 0.35f;
         if (m.blocked) cr = 0.75f, cg = 0.6f, cb = 0.5f;
-        if (m.key == prompts::KEY_GET_IN) cr = 0.55f, cg = 0.85f, cb = 1.0f;
+        if (m.door) cr = 0.55f, cg = 0.85f, cb = 1.0f;
         const float a = m.current ? 1.0f : prox * (m.far ? 0.55f : 0.9f);
         // A small square for a job, a circle for getting in; the aimed one bigger and filled (the others are rings, so
         // close markers stay readable side by side).
-        const float rr = (m.current ? 7.0f : 4.5f) * u, th = std::max(1.5f, 1.6f * u);
-        if (m.key == prompts::KEY_GET_IN) {
-            const int n = 14;
+        const float rr = (m.current ? 3.5f : 2.0f) * u, th = std::max(1.0f, 1.1f * u);  // (small: each sits on its own part)
+        if (m.door) {
+            const int n = 12;
             for (int q = 0; q < n; q++) {
                 const float a0 = q * 6.2831853f / n, a1 = (q + 1) * 6.2831853f / n;
                 const float c0 = std::cos(a0), s0 = std::sin(a0), c1 = std::cos(a1), s1 = std::sin(a1);
@@ -1300,7 +1299,7 @@ void drawFocus(Renderer& r, const prompts::Focus& fo, const Interact& ia, const 
         }
         if (m.current) {  // brackets round the part
             const double z = std::max(0.5, dot(m.at - view.eye, norm(view.target - view.eye)));
-            const float hb = (float)clampd(m.radius / z * k * H / 2.0, 16 * u, 90 * u), bl = hb * 0.5f, th = std::max(2.0f, 2.0f * u);
+            const float hb = (float)clampd(std::min(m.radius, 0.12) / z * k * H / 2.0, 9 * u, 28 * u), bl = hb * 0.45f, th = std::max(1.5f, 1.5f * u);
             for (int sxn = -1; sxn <= 1; sxn += 2)
                 for (int syn = -1; syn <= 1; syn += 2) {
                     const float bx = sx + sxn * hb, by = sy + syn * hb;
@@ -1457,7 +1456,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph, bool career) {
         {K(KA_MAP), "MAP (WAYPOINTS, PINGS)"},                           {K(KA_CHAT), "CHAT"},
         {"MIDDLE CLICK", "PING: GO HERE (SHIFT: HELP)"},
         {K(KA_CROUCH), "ON FOOT: CROUCH (LOWER, SLOWER, LOOK UNDER THE TRUCK; REPAIRS STILL WORK)"},
-        {K(KA_GET_IN_OUT), "GET OUT / IN (ON FOOT: " + K(KA_INTERACT) + " WINCH LINE, " + K(KA_FUEL_CAN) + " FUEL CAN)"},
+        {K(KA_GET_IN_OUT), "GET OUT (ON FOOT: AIM AT A DOOR HANDLE, " + K(KA_INTERACT) + " GETS IN; " + K(KA_FUEL_CAN) + " FUEL CAN)"},
         {K(KA_TRANSFER), mph ? "4X4: 2H 4H 4L (LOW: BELOW 5 MPH)" : "4X4: 2H 4H 4L (LOW: BELOW 8 KM/H)"},
         {K(KA_LIGHTS), "LIGHTS: AUTO, LOW, HIGH, OFF"},
         {K(KA_LOCK_FRONT) + sp + K(KA_LOCK_REAR), "FRONT / REAR LOCKER"}, {K(KA_AUTOPILOT) + " / " + K(KA_AUTOPILOT_PICK), "AUTOPILOT: START / STOP, WHERE TO"}, {K(KA_JOBS), "JOBS ON OFFER HERE"},
@@ -3039,7 +3038,7 @@ int main(int argc, char** argv) {
         cam.initialized = false;
         footYaw = walker.yaw;  // looking the way you got out
         footPitch = -0.1;
-        hud.toast("ON FOOT: MOUSE LOOK, WASD WALK, SHIFT RUN, SPACE JUMP, HOLD E AT THE BUMPER TO GRAB THE WINCH LINE, J GET IN");
+        hud.toast("ON FOOT: MOUSE LOOK, WASD WALK, SHIFT RUN, SPACE JUMP, HOLD E AT THE BUMPER TO GRAB THE WINCH LINE, E AT THE DOOR HANDLE GETS IN");
     };
     // In: `target`, else the nearest (`any`: anyone's, the J key and E at a door; else only yours).
     auto getIn = [&](int target = -1, bool any = false) {
@@ -5016,9 +5015,8 @@ int main(int argc, char** argv) {
                             break;
                         case SC_J:
                             if (playback.active()) break;  // (a scenario: J is its checks list, a dev key)
-                            if (walker.active && walker.carrying) hud.toast("PUT THE WHEEL DOWN FIRST (" + K(KA_PUT_DOWN) + ")");
-                            else if (walker.active) getIn(interact.current.kind == IA_ENTER_CAR || interact.current.kind == IA_RIDE_ALONG ? interact.current.car : -1, true);  // (the door the prompt is on, else the nearest)
-                            else getOut();
+                            if (carentry::getInOutKeyActs(walker.active)) getOut();
+                            else hud.toast("TO GET IN: AIM AT THE DOOR HANDLE AND PRESS " + K(KA_INTERACT));  // (J only gets out)
                             break;
                         case SC_P: {
                             Car& c = sim.cars[sim.player];

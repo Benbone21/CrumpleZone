@@ -176,6 +176,62 @@ SCENARIO(enterAnyCar, "entercar/offline", "On foot, any vehicle with nobody in i
     ctx.check("a wreck: get in", carentry::verdict(ctx.sim, (int)ctx.sim.cars.size() - 1) == carentry::DRIVE);
 }
 
+SCENARIO(enterDoorHandle, "entercar/door-handle", "Getting in is aiming at the door handle (a small marker on the door's own handle, per vehicle and per side; a doorless buggy or UTV at the cage's side by the seat) and pressing E; J on foot doesn't get you in, it only gets you out") {
+    ctx.check("J on foot does nothing (no getting in)", !carentry::getInOutKeyActs(true));
+    ctx.check("J in the seat gets you out", carentry::getInOutKeyActs(false));
+    double x = -150;
+    for (const char* id : {"blazer", "civic", "tacoma", "buggy", "utv"}) {
+        const VehicleSpec* vs = nullptr;
+        for (const VehicleSpec& v : vehicleCatalog())
+            if (std::string(v.id) == id) vs = &v;
+        ctx.check(std::string(id) + " is in the catalog", vs != nullptr);
+        if (!vs) continue;
+        Car& c = ctx.add(*vs, x, -60, 0);
+        x += 12;
+        const int ci = (int)ctx.sim.cars.size() - 1;
+        c.handbrake = 1;
+        ctx.run(1.0);
+        for (int side = 0; side < 2; side++) {
+            const bool pass = side == 1;
+            const Frame f = c.frame();
+            const V3 h = carentry::door(c, pass);
+            const double lat = dot(h - f.com, f.left) * (pass ? -1 : 1), along = dot(h - f.com, f.fwd), up = dot(h - f.com, f.up);
+            const std::string tag = std::string(id) + (pass ? " passenger" : " driver");
+            ctx.check(tag + ": the handle is on the side's skin", lat > c.spec->width * 0.3 && lat < c.spec->width * 0.5 + 0.2, std::to_string(lat));
+            ctx.check(tag + ": at hand height, by the cab", up > -0.4 && up < 0.9 && std::fabs(along) < c.spec->length * 0.35, std::to_string(along) + " " + std::to_string(up));
+            bool doorPanel = false;
+            for (const Panel& p : c.panels) {
+                if (!p.name || std::string(p.name).find("DOOR") == std::string::npos || std::string(p.name).find("REAR") != std::string::npos) continue;
+                double lo = 1e9, hi = -1e9, l = 0;
+                for (int n : p.panelNodes) lo = std::min(lo, dot(c.nodes[n].p - f.com, f.fwd)), hi = std::max(hi, dot(c.nodes[n].p - f.com, f.fwd)), l += dot(c.nodes[n].p - f.com, f.left);
+                if ((l > 0) == !pass) doorPanel = true, ctx.check(tag + ": near the door's back edge", along >= lo - 1e-6 && along < lo + (hi - lo) * 0.35, std::to_string(along - lo) + " of " + std::to_string(hi - lo));
+            }
+            if (!vs->openFrame) ctx.check(tag + ": a door to have a handle on", doorPanel);
+            if (pass) continue;  // (the passenger's handle is riding along: net/ride-along)
+            Walker wk;
+            wk.exitCar(ctx.sim.world, c);
+            const V3 eye = wk.p + V3(0, 1.62, 0);
+            const InteractOption o = Interact::pick(ctx.sim, wk, eye, h - eye);
+            ctx.check(tag + ": aimed at the handle, E gets in", o.kind == IA_ENTER_CAR && o.car == ci && !o.blocked, o.prompt);
+            Interact ia;
+            ia.perform(ctx.sim, wk, o);
+            ctx.check(tag + ": E done, the game is told which", ia.enterCar == ci);
+            const V3 off = norm(h - eye) + f.up * 0.8 - f.fwd * 0.8;  // (well off the handle: up at the roof and back)
+            const InteractOption o2 = Interact::pick(ctx.sim, wk, eye, off);
+            ctx.check(tag + ": aimed well off the handle, not the door", !(o2.kind == IA_ENTER_CAR && o2.car == ci), o2.prompt);
+        }
+    }
+    // A buddy's they're driving (a guest's view): the passenger's handle, E, rides along.
+    Car& b = ctx.sim.cars[1];
+    b.remote = true, b.occupied = true;
+    Walker pw;
+    pw.exitCar(ctx.sim.world, b, true);
+    const V3 pe = pw.p + V3(0, 1.62, 0), ph = carentry::door(b, true);
+    const InteractOption r = Interact::pick(ctx.sim, pw, pe, ph - pe);
+    ctx.check("a buddy's: aimed at the passenger's handle, E rides along", r.kind == IA_RIDE_ALONG && r.car == 1, r.prompt);
+    b.remote = false, b.occupied = false;
+}
+
 SCENARIO(netTakeOver, "net/take-over", "A buddy's empty truck changes hands: asked for, handed over with its shape, driven and seen moving by the others, refused while someone's in it, and handed back") {
     Session s(ctx);
     const int port = testPort();

@@ -1,6 +1,7 @@
 // Repairs and the gear for them (docs/repairs.md): the aimable markers pick the job you aim at even when several sit on one
 // spot; every field repair the game offers can be done in a career with gear you can get (the starting toolbox, the station
 // rack); old career saves (without the newer parts) still load.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -75,6 +76,18 @@ SCENARIO(repairAimClose, "repair/aim-close", "a CV axle, a tie rod and air up/do
     bool cv = false, tie = false;
     for (const InteractOption& o : mine) cv |= o.kind == IA_FIX && o.fix.kind == Fix::CV_AXLE, tie |= o.kind == IA_FIX && o.fix.kind == Fix::TIE_ROD;
     ctx.check("the CV axle and the tie rod are both listed at the corner", cv && tie, std::to_string(mine.size()) + " jobs");
+    // Each on its own part: the tie rod at its outer end (the steering arm), the CV axle by its shaft's outer end, the lug nuts
+    // on the hub's face, the valve on the rim.
+    for (const InteractOption& o : mine) {
+        if (o.kind == IA_FIX && o.fix.kind == Fix::TIE_ROD && wh.arm >= 0) ctx.check("the tie rod's marker is on its end", len(o.at - c.nodes[wh.arm].p) < 0.05, std::to_string(len(o.at - c.nodes[wh.arm].p)));
+        if (o.kind == IA_FIX && o.fix.kind == Fix::CV_AXLE) {
+            double near = 1e9;
+            for (int bi : wh.shafts) near = std::min({near, len(o.at - c.nodes[c.beams[bi].a].p), len(o.at - c.nodes[c.beams[bi].b].p)});
+            ctx.check("the CV axle's marker is at its boot, by the shaft's end", near < 0.15, std::to_string(near));
+        }
+        if (o.kind == IA_REMOVE_WHEEL && o.step < 0) ctx.check("the wheel's marker is on its lug nuts", len(o.at - c.nodes[wh.outer].p) < 0.05);
+        if (o.kind == IA_AIR_UP_TIRE) ctx.check("the air's marker is at the valve, on the rim", len(o.at - hubAt(c, k)) < wh.R && len(o.at - hubAt(c, k)) > wh.rimR * 0.5);
+    }
     bool apart = true;
     for (size_t i = 0; i < mine.size(); i++)
         for (size_t j = i + 1; j < mine.size(); j++)

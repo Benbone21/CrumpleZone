@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "carentry.h"
 #include "walker.h"
 
 namespace prompts {
@@ -17,8 +18,8 @@ const KindInfo& info(InteractKind k) {
         kFix{"THE PART THAT NEEDS WORK", "FIX IT", 0.3, KEY_INTERACT}, kBack{"THE BACK", "OPEN TRUNK", 0.6, KEY_INTERACT},
         kItem{"THE BACK", "TAKE OR PUT BACK", 0.6, KEY_INTERACT}, kLine{"THE RECOVERY POINT", "GRAB LINE", 0.3, KEY_INTERACT},
         kHook{"AN ANCHOR", "HOOK LINE", 0.4, KEY_INTERACT}, kUnhook{"THE HOOKED LINE", "UNHOOK IT", 0.3, KEY_INTERACT},
-        kTire{"THE WHEEL ON THE GROUND", "MOUNT NEW TIRE", 0.4, KEY_INTERACT}, kDoor{"THE DRIVER DOOR", "GET IN", 0.55, KEY_GET_IN},
-        kRide{"THE PASSENGER DOOR", "RIDE ALONG", 0.55, KEY_GET_IN},
+        kTire{"THE WHEEL ON THE GROUND", "MOUNT NEW TIRE", 0.4, KEY_INTERACT}, kDoor{"THE DOOR HANDLE", "GET IN", 0.06, KEY_INTERACT},
+        kRide{"THE PASSENGER DOOR HANDLE", "RIDE ALONG", 0.06, KEY_INTERACT},
         kAirUp{"THE TIRE", "AIR UP", 0.4, KEY_INTERACT}, kAirDown{"THE TIRE", "LET AIR OUT", 0.4, KEY_INTERACT},
         kHoodUp{"THE HOOD", "OPEN IT", 0.5, KEY_INTERACT}, kHoodDown{"THE HOOD", "CLOSE IT", 0.5, KEY_INTERACT},
         kJump{"THE BATTERY", "JUMP START IT", 0.35, KEY_INTERACT}, kClamp{"THE BATTERY", "CLAMP THE CABLES ON", 0.35, KEY_INTERACT},
@@ -48,7 +49,7 @@ const KindInfo& info(InteractKind k) {
         case IA_JUMP_PACK: return kJump;
         case IA_CLAMP_CABLE: return kClamp;
         case IA_UNCLAMP_CABLE: return kUnclamp;
-        case IA_NONE: return kDoor;  // (the door is the one marker that is no InteractKind: J, not E)
+        case IA_NONE: return kDoor;
         default: return kOther;
     }
 }
@@ -58,7 +59,7 @@ bool aimScore(const V3& eye, const V3& dir, const V3& chest, const V3& at, doubl
     const V3 to = at - eye;
     const double d = len(to);
     double off = 0, edge = 1.5;
-    if (d > 1e-6) off = std::acos(clampd(dot(to / d, dir), -1, 1)), edge = std::atan2(radius, d);
+    if (d > 1e-6) off = std::acos(clampd(dot(to / d, dir), -1, 1)), edge = std::max(kAimTol, std::atan2(radius, d));
     if (off - edge > kCone * (sticky ? 1.35 : 1.0)) return false;
     score = off + bias - (sticky ? stickyBonus : 0.0);
     return true;
@@ -76,11 +77,11 @@ void spread(const Sim& sim, std::vector<InteractOption*>& os) {
         for (size_t g : group) mid = mid + os[g]->at;
         mid = mid * (1.0 / group.size());
         const int ci = os[i]->car;
-        const V3 up = ci >= 0 && ci < (int)sim.cars.size() ? sim.cars[ci].frame().up : V3(0, 1, 0);
+        const V3 fwd = ci >= 0 && ci < (int)sim.cars.size() ? sim.cars[ci].frame().fwd : V3(1, 0, 0);
         for (size_t k = 0; k < group.size(); k++) {
             InteractOption& o = *os[group[k]];
-            o.at = mid + up * ((k - (group.size() - 1) / 2.0) * -kSpreadGap);  // (the first listed on top)
-            o.radius = std::min(o.radius > 0 ? o.radius : info(o.kind).radius, kSpreadGap * 0.5);
+            o.at = mid + fwd * ((k - (group.size() - 1) / 2.0) * kSpreadGap);  // (side by side, the first listed to the back)
+            o.radius = std::min(o.radius > 0 ? o.radius : info(o.kind).radius, kSpreadGap * 0.5);  // (the aim's kAimTol still keeps it easy to hit)
         }
     }
 }
@@ -94,11 +95,7 @@ void split(const InteractOption& o, std::string& label, std::string& reason) {
     label = o.prompt.substr(0, c), reason = o.prompt.substr(c + 2);
 }
 
-V3 doorAt(const Car& c) {
-    const Frame f = c.frame();
-    const V3 fwd = norm(V3(f.fwd.x, 0, f.fwd.z)), left(fwd.z, 0, -fwd.x);
-    return f.com + left * (c.spec->width / 2) + fwd * 0.3 + V3(0, 0.2, 0);
-}
+V3 doorAt(const Car& c) { return carentry::door(c, false); }
 
 Focus Prompter::update(const Sim& sim, const Walker& wk, const Interact& ia, const std::vector<InteractOption>& nearby, const V3& eye, const V3& look) {
     (void)sim;
@@ -112,6 +109,7 @@ Focus Prompter::update(const Sim& sim, const Walker& wk, const Interact& ia, con
         m.hold = o.hold > 0 || o.continuous, m.blocked = o.blocked, m.car = o.car;
         m.current = haveCurrent && o.same(ia.current);
         const bool door = o.passive || o.kind == IA_ENTER_CAR || o.kind == IA_RIDE_ALONG;
+        m.door = door;
         m.far = len(o.at - chest) > (door ? kReach + 1.0 : o.kind == IA_OPEN_INVENTORY ? 3.2 : kReach);
         split(o, m.label, m.reason);
         // One marker to a job (the pick has spread the ones that shared a spot: spread), so only the very same job is merged.
@@ -138,7 +136,7 @@ Focus Prompter::update(const Sim& sim, const Walker& wk, const Interact& ia, con
         const Marker* b = nullptr;
         for (const Marker& m : fo.markers) {
             const V3 to = m.at - eye;
-            const double d = std::max(1e-6, len(to)), off = std::acos(clampd(dot(to / d, dir), -1, 1)) + (m.blocked ? 0.15 : 0) + (m.kind == IA_NONE || m.kind == IA_ENTER_CAR || m.kind == IA_RIDE_ALONG ? 0.1 : 0) + (m.far ? 0.5 : 0);
+            const double d = std::max(1e-6, len(to)), off = std::acos(clampd(dot(to / d, dir), -1, 1)) + (m.blocked ? 0.15 : 0) + (m.door ? 0.1 : 0) + (m.far ? 0.5 : 0);
             if (off < bestOff) bestOff = off, b = &m;
         }
         if (b) {

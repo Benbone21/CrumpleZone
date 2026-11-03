@@ -27,6 +27,16 @@ int cornerOf(const Car& c, const Beam& b) {
     return best;
 }
 
+// A tie rod beam's outer end (the one at its corner's knuckle), a little in along the rod: where its end is undone.
+V3 tieRodEnd(const Car& c, const Beam& b, int k) {
+    const V3 pa = c.nodes[b.a].p, pb = c.nodes[b.b].p;
+    if (k < 0) return (pa + pb) * 0.5;
+    const V3 hub = hubOf(c, c.wheels[k]);
+    const bool aOut = len(pa - hub) < len(pb - hub);
+    const V3 e = aOut ? pa : pb, o = aOut ? pb : pa;
+    return e + (o - e) * 0.12;
+}
+
 }  // namespace
 
 bool beamBent(const Beam& b) { return !b.broken && std::fabs(b.L0 - b.Lorig) > 0.005 * b.Lorig; }
@@ -50,17 +60,36 @@ std::vector<Fix> fixesFor(const Car& c) {
         const Wheel& wh = c.wheels[k];
         if (wh.detached) continue;
         const V3 hub = hubOf(c, wh);
-        const V3 inboard = hub + (fr.com - hub) * 0.25;  // (behind the wheel, at the knuckle)
+        const V3 inboard = hub + (fr.com - hub) * 0.25;  // (behind the wheel, at the knuckle: only if there's no part to go by)
         bool cv = wh.shaftBroken;
         int cvBeam = -1;
+        V3 boot = inboard;  // the CV axle's outer boot: a hand in from where its shaft meets the hub
+        {
+            double bd = 1e9;
+            for (int bi : wh.shafts) {
+                if (bi < 0 || bi >= (int)c.beams.size()) continue;
+                const Beam& b = c.beams[bi];
+                for (int e = 0; e < 2; e++) {
+                    const V3 pe = c.nodes[e ? b.b : b.a].p, po = c.nodes[e ? b.a : b.b].p;
+                    const double d = len(pe - hub);
+                    if (d < bd && len(po - pe) > 1e-6) bd = d, boot = pe + norm(po - pe) * std::min(0.1, len(po - pe) * 0.3);
+                }
+            }
+        }
+        V3 tieEnd = inboard;  // the tie rod's outer end, at the steering arm
+        if (wh.arm >= 0 && wh.arm < (int)c.nodes.size()) tieEnd = c.nodes[wh.arm].p;
+        else if (wh.tieRod >= 0 && wh.tieRod < (int)c.beams.size()) {
+            const Beam& b = c.beams[wh.tieRod];
+            tieEnd = len(c.nodes[b.a].p - hub) < len(c.nodes[b.b].p - hub) ? c.nodes[b.a].p : c.nodes[b.b].p;
+        }
         for (int bi : wh.shafts)
             if (bi >= 0 && c.beams[bi].broken) {
                 const Beam& b = c.beams[bi];
                 const double L = len(c.nodes[b.b].p - c.nodes[b.a].p);
                 if (L < b.Lorig * 1.2 && L > b.Lorig * 0.6) cv = true, cvBeam = bi;  // (the ends still where they go)
             }
-        if (cv) add(Fix::CV_AXLE, k, cvBeam, PART_CV_AXLE, {TOOL_RATCHET, TOOL_HAMMER}, true, 5, inboard, "REPLACE THE CV AXLE");
-        if (std::fabs(wh.tieOffset) > 0.002) add(Fix::TIE_ROD, k, -1, PART_TIE_ROD, {TOOL_WRENCH, TOOL_HAMMER}, false, 4, inboard, "REPLACE THE TIE ROD");
+        if (cv) add(Fix::CV_AXLE, k, cvBeam, PART_CV_AXLE, {TOOL_RATCHET, TOOL_HAMMER}, true, 5, boot, "REPLACE THE CV AXLE");
+        if (std::fabs(wh.tieOffset) > 0.002) add(Fix::TIE_ROD, k, -1, PART_TIE_ROD, {TOOL_WRENCH, TOOL_HAMMER}, false, 4, tieEnd, "REPLACE THE TIE ROD");
         if (wh.popped && wh.mounted && !wh.debeaded)  // (at the top of the tread: the hub's for the wheel itself)
             add(Fix::NEW_TIRE, k, -1, PART_TIRE, {TOOL_TIRE_IRONS, TOOL_LUG_WRENCH}, true, 5, hub + fr.up * (wh.R * 0.85), "PUT A NEW TIRE ON");
     }
@@ -68,7 +97,7 @@ std::vector<Fix> fixesFor(const Car& c) {
         const Beam& b = c.beams[bi];
         if (!bent(b) || (b.type != BEAM_ARM && b.type != BEAM_TIEROD)) continue;
         const int k = cornerOf(c, b);
-        const V3 at = (c.nodes[b.a].p + c.nodes[b.b].p) * 0.5;
+        const V3 at = b.type == BEAM_TIEROD ? tieRodEnd(c, b, k) : (c.nodes[b.a].p + c.nodes[b.b].p) * 0.5;
         if (b.type == BEAM_ARM) add(Fix::CONTROL_ARM, k, bi, PART_CONTROL_ARM, {TOOL_RATCHET, TOOL_PRY_BAR}, true, 5, at, "REPLACE THE BENT CONTROL ARM");
         else add(Fix::TIE_ROD, k, bi, PART_TIE_ROD, {TOOL_WRENCH, TOOL_HAMMER}, false, 4, at, "REPLACE THE BENT TIE ROD");
     }
@@ -81,7 +110,7 @@ std::vector<Fix> fixesFor(const Car& c) {
             if (l.beam == bi) link = true, leaf |= l.kind == LINK_LEAF;
         if (!link) continue;  // (only the running gear's: a CV or drive shaft is a shaft beam, a body beam isn't a repair)
         const int k = cornerOf(c, b);
-        const V3 at = (c.nodes[b.a].p + c.nodes[b.b].p) * 0.5;
+        const V3 at = b.type == BEAM_TIEROD && !leaf ? tieRodEnd(c, b, k) : (c.nodes[b.a].p + c.nodes[b.b].p) * 0.5;
         if (b.type == BEAM_SPRING || leaf) add(Fix::SPRING, k, bi, PART_SPRING, {TOOL_RATCHET, TOOL_WRENCH}, true, 5, at, leaf ? "REPLACE THE BROKEN LEAF SPRING" : "REPLACE THE BROKEN SPRING");
         else if (b.type == BEAM_ARM) add(Fix::CONTROL_ARM, k, bi, PART_CONTROL_ARM, {TOOL_RATCHET, TOOL_PRY_BAR}, true, 5, at, "REPLACE THE BROKEN CONTROL ARM");
         else add(Fix::TIE_ROD, k, bi, PART_TIE_ROD, {TOOL_WRENCH, TOOL_HAMMER}, false, 4, at, "REPLACE THE BROKEN TIE ROD");
@@ -90,6 +119,11 @@ std::vector<Fix> fixesFor(const Car& c) {
         const Axle& ax = c.axles[a];
         if (std::fabs(ax.arbBend) > 0.005) {
             V3 at = fr.com + fr.fwd * (ax.front ? c.spec->wheelbase * 0.5 : -c.spec->wheelbase * 0.5) - fr.up * 0.3;
+            const int wl = ax.wheel[0];  // the link: from the bar's end down to the lower arm, just in from the left wheel's lower joint
+            if (wl >= 0 && wl < (int)c.wheels.size() && c.wheels[wl].lower >= 0) {
+                const V3 lj = c.nodes[c.wheels[wl].lower].p;
+                at = lj + norm(V3(fr.com.x - lj.x, 0, fr.com.z - lj.z)) * 0.18 + fr.up * 0.08;
+            }
             Fix f{Fix::SWAY_BAR};
             f.axle = a, f.part = PART_CONTROL_ARM, f.tools = {TOOL_WRENCH, TOOL_PRY_BAR}, f.hold = 4, f.at = at, f.what = "REPLACE THE BENT SWAY BAR LINK";
             out.push_back(f);
