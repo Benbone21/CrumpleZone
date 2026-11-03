@@ -717,7 +717,8 @@ constexpr double kStopK = 200000;        // N*m/rad (~3.5 kN*m a degree)
 constexpr double kStopC = 400;           // N*m*s/rad (about a third of critical on a 37 in wheel's knuckle)
 
 void Car::steeringStops(double h) {
-    if (chassis.nodes.empty() || restLocal.empty() || !spec || spec->frontSusp == SOLID_AXLE) return;
+    if (chassis.nodes.empty() || restLocal.empty() || !spec) return;
+    const bool live = spec->frontSusp == SOLID_AXLE;
     const V3 up = chassis.rot.rotate(V3(0, 1, 0));
     for (Wheel& wh : wheels) {
         if (!wh.front || wh.detached || wh.tieRod < 0 || wh.assembly.size() < 3) continue;
@@ -730,13 +731,24 @@ void Car::steeringStops(double h) {
         // The stop: the inside wheel's angle at the rack's full lock (Ackermann, as the rack sets it), plus a little.
         const double track = std::fabs(restLocal[wh.outer].z + restLocal[wh.inner].z);
         const double dt = wheelbase > 0.5 ? 0.5 * track / wheelbase * 0.7 : 0;
-        const double stop = std::atan(1.0 / (1.0 / std::tan(0.6) - dt)) + kStopMargin;
+        const double stop = std::atan(1.0 / (1.0 / std::tan(0.6) - dt)) + (live ? 0.02 : kStopMargin);  // (a live axle's linkage folds over ~44 degrees: its stop is right at full lock)
         const double over = std::fabs(d) - stop;
         if (over <= 0) continue;
         const double sgn = d > 0 ? 1.0 : -1.0;
         const double T = std::max(0.0, kStopK * over + kStopC * rate * sgn);
         const V3 tau = up * (-sgn * T);
         // Its reaction goes into the arms' pick-ups (the lower arm carries the stop's bolt).
+        // (A live axle's knuckle stops on its own housing: the hub and steering arm turn against the
+        // kingpins and the tie rod's fixed end. Without one a rock kicked a Blazer's wheel past lock,
+        // the linkage folded over and it stuck 78 degrees off, nothing bent.)
+        if (live) {
+            if (wh.lower < 0 || wh.top < 0 || wh.arm < 0 || beams[wh.tieRod].broken) continue;
+            const int rack = beams[wh.tieRod].a == wh.arm ? beams[wh.tieRod].b : beams[wh.tieRod].a;
+            const std::vector<int> knuckle = {wh.inner, wh.outer, wh.arm}, housing = {wh.lower, wh.top, rack};
+            applyTorque(knuckle, tau, true);
+            applyTorque(housing, -tau);
+            continue;
+        }
         if (wh.stopPickups.empty())
             for (int bi : wh.mounts) {
                 const Beam& b = beams[bi];
@@ -834,18 +846,25 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
             D[k] = c + cf.rot.rotate(cf.rest[k] - rc) - nodes[cf.nodes[k]].p;
             if (sections) secD[cf.section[k]] += D[k] * nodes[cf.nodes[k]].m, secW[cf.section[k]] += nodes[cf.nodes[k]].m;
         }
+        const bool scaled = !cf.yieldScale.empty();
+        CZ_THREAD_CACHE(std::vector<double>, secS);
+        if (scaled) {
+            secS.assign(nsec, 1.0);
+            if (sections)
+                for (int k = 0; k < n; k++) secS[cf.section[k]] = std::max(secS[cf.section[k]], (double)cf.yieldScale[k]);
+        }
         for (int sct = 0; sct < nsec; sct++) {
             if (secW[sct] <= 0) continue;
             const V3 dm = secD[sct] / secW[sct];
-            const double dl = len(dm);
-            secD[sct] = dl > cf.yieldDist ? dm * (1 - cf.yieldDist / dl) : V3();
+            const double dl = len(dm), yd = cf.yieldDist * (scaled ? secS[sct] : 1.0);
+            secD[sct] = dl > yd ? dm * (1 - yd / dl) : V3();
         }
-        const double crush = sections ? 3 * cf.yieldDist : cf.yieldDist;
+        const double crush0 = sections ? 3 * cf.yieldDist : cf.yieldDist;
         for (int k = 0; k < n; k++) {
             if (!active(k)) continue;
             V3 back = sections ? secD[cf.section[k]] : V3();
             const V3 rem = D[k] - back;
-            const double rl = len(rem);
+            const double rl = len(rem), crush = crush0 * (scaled ? cf.yieldScale[k] : 1.0f);
             if (rl > crush) back += rem * (1 - crush / rl);
             if (dot(back, back) <= 0) continue;
             cf.rest[k] += cf.rot.unrotate(-back);
@@ -872,7 +891,7 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
         double nodeCap = cap;
         if (cf.yieldDist > 0) {
             // (Flowed above; the pull stays at about the yield force however fast it's bent.)
-            nodeCap = cf.kappa * wk * nd.m * cf.yieldDist * (cf.section.empty() ? 1.25 : 3.0);
+            nodeCap = cf.kappa * wk * nd.m * cf.yieldDist * (cf.section.empty() ? 1.25 : 3.0) * (cf.yieldScale.empty() ? 1.0f : cf.yieldScale[k]);
         } else if (dot(d, d) > cf.releaseDist * cf.releaseDist) {  // shoved far out of shape: a dent in progress
             cf.release[k] = 0.15f;
             continue;

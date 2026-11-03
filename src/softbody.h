@@ -300,6 +300,9 @@ struct ChassisFrame {
     double yieldDist = 0;
     std::vector<float> weight;  // per member: how hard it's held (x its mass), e.g. a welded-on bracket
                                 // is stouter than the bare rail; empty = all 1
+    std::vector<float> yieldScale;  // per member: how much further than yieldDist it's pushed before it
+                                    // flows (a bracket stronger than the stiffness its node can carry at
+                                    // the 2 kHz step); empty = all 1
     std::vector<int> section;   // per member: which cross-section it's part of (a rail station's corners
                                 // bend together: the section itself only crushes under a far bigger
                                 // local shove); empty = each on its own
@@ -393,6 +396,8 @@ public:
         std::vector<int> pickups;  // the body ends of its links, which take its toe's reaction
         ChassisFrame frame;
         double toe = 0;            // last toe against the body (rad), for its rate
+        bool steered = false;      // a front knuckle: held in shape only (its toe is the rack's)
+        std::vector<V3> rest0;     // its factory shape (frame.rest as built): a new knuckle's
     };
     std::vector<Knuckle> knuckles;
     int bodyNodes = 0;
@@ -714,6 +719,29 @@ public:
     // steering and suspension links, a flooded engine. Bodywork, glass, lost wheels and a
     // wrecked engine need a station.
     bool needsFieldRepair() const;
+    // A corner's knuckle (index into knuckles, -1 none) and whether it's bent out of its shape;
+    // straightening it is fitting a new one: its beams and its held shape back as built.
+    // A front wheel's tie rod length offset that points it straight again where its rack end and
+    // kingpin now sit (a crumpled corner can shove them): what a new or adjusted tie rod is set
+    // to, within a tie rod's adjusting sleeve (kTieAdjust); past that it's a frame shop's job.
+    static constexpr double kTieAdjust = 0.025;
+    double tieTarget(int wheel) const;
+    // (Within 2 mm of straight it's left at straight. Read only with the wheel on and on the ground:
+    // jacked up or off, its toe is wherever it hangs.)
+    double tieSet(int wheel) const {
+        const Wheel& w = wheels[wheel];
+        if (w.detached || !w.mounted || (jackPlaced && jackHeight > 0.005)) return 0.0;
+        const double t = tieTarget(wheel);
+        return std::fabs(t) <= 0.002 ? 0.0 : t;
+    }
+    bool tieOut(int wheel) const {
+        const Wheel& w = wheels[wheel];
+        if (w.detached || !w.mounted || (jackPlaced && jackHeight > 0.005)) return std::fabs(w.tieOffset) > 0.002;  // (a bent rod still shows)
+        return std::fabs(w.tieOffset - tieSet(wheel)) > 0.002;
+    }
+    int knuckleOf(int wheel) const;
+    bool knuckleBent(int wheel) const;
+    void newKnuckle(int wheel);
     double fieldRepairSeconds() const;
     // A hands-on repair under way (fixes.h): which one (Fix::Kind and what it's on) and how many of its work
     // steps are done. Kept while you walk off and come back; dropped once it's finished (or fixed some other way).

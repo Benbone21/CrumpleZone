@@ -89,7 +89,29 @@ std::vector<Fix> fixesFor(const Car& c) {
                 if (L < b.Lorig * 1.2 && L > b.Lorig * 0.6) cv = true, cvBeam = bi;  // (the ends still where they go)
             }
         if (cv) add(Fix::CV_AXLE, k, cvBeam, PART_CV_AXLE, {TOOL_RATCHET, TOOL_HAMMER}, true, 5, boot, "REPLACE THE CV AXLE");
-        if (std::fabs(wh.tieOffset) > 0.002) add(Fix::TIE_ROD, k, -1, PART_TIE_ROD, {TOOL_WRENCH, TOOL_HAMMER}, false, 4, tieEnd, "REPLACE THE TIE ROD");
+        if (c.tieOut(k)) add(Fix::TIE_ROD, k, -1, PART_TIE_ROD, {TOOL_WRENCH, TOOL_HAMMER}, false, 4, tieEnd, "REPLACE THE TIE ROD AND SET THE TOE");
+        // A bent knuckle: swapped with the lower arm it hangs on (the arm's part covers both).
+        // Its marker sits on the knuckle itself: the middle of its own beams' ends.
+        if (c.knuckleBent(k)) {
+            int arm = -1;
+            for (int bi : wh.mounts)
+                if (bi >= 0 && c.beams[bi].type == BEAM_ARM && !c.beams[bi].broken) {
+                    arm = bi;
+                    break;
+                }
+            if (arm >= 0) {
+                V3 at = inboard;
+                const int kn = c.knuckleOf(k);
+                if (kn >= 0 && kn < (int)c.knuckles.size()) {
+                    V3 sum(0, 0, 0);
+                    int n = 0;
+                    for (int bi : c.knuckles[kn].beams)
+                        if (bi >= 0 && bi < (int)c.beams.size()) sum = sum + c.nodes[c.beams[bi].a].p + c.nodes[c.beams[bi].b].p, n += 2;
+                    if (n) at = sum * (1.0 / n);
+                }
+                add(Fix::CONTROL_ARM, k, arm, PART_CONTROL_ARM, {TOOL_RATCHET, TOOL_PRY_BAR}, true, 6, at, "REPLACE THE BENT KNUCKLE AND ARM");
+            }
+        }
         if (wh.popped && wh.mounted && !wh.debeaded)  // (at the top of the tread: the hub's for the wheel itself)
             add(Fix::NEW_TIRE, k, -1, PART_TIRE, {TOOL_TIRE_IRONS, TOOL_LUG_WRENCH}, true, 5, hub + fr.up * (wh.R * 0.85), "PUT A NEW TIRE ON");
     }
@@ -98,6 +120,11 @@ std::vector<Fix> fixesFor(const Car& c) {
         if (!bent(b) || (b.type != BEAM_ARM && b.type != BEAM_TIEROD)) continue;
         const int k = cornerOf(c, b);
         const V3 at = b.type == BEAM_TIEROD ? tieRodEnd(c, b, k) : (c.nodes[b.a].p + c.nodes[b.b].p) * 0.5;
+        if (b.type == BEAM_ARM && k >= 0 && c.knuckleBent(k)) {
+            bool same = false;  // (that corner's knuckle job above swaps this arm too)
+            for (const Fix& o : out) same |= o.kind == Fix::CONTROL_ARM && o.wheel == k && o.beam == bi;
+            if (same) continue;
+        }
         if (b.type == BEAM_ARM) add(Fix::CONTROL_ARM, k, bi, PART_CONTROL_ARM, {TOOL_RATCHET, TOOL_PRY_BAR}, true, 5, at, "REPLACE THE BENT CONTROL ARM");
         else add(Fix::TIE_ROD, k, bi, PART_TIE_ROD, {TOOL_WRENCH, TOOL_HAMMER}, false, 4, at, "REPLACE THE BENT TIE ROD");
     }
@@ -178,11 +205,12 @@ bool applyFix(Car& c, const Fix& f) {
         break;
     case Fix::TIE_ROD:
         if (f.beam >= 0) c.beams[f.beam].L0 = c.beams[f.beam].Lorig, c.beams[f.beam].broken = false;
-        if (f.wheel >= 0 && f.wheel < (int)c.wheels.size()) c.wheels[f.wheel].tieOffset = 0;
+        if (f.wheel >= 0 && f.wheel < (int)c.wheels.size()) c.wheels[f.wheel].tieOffset = c.tieSet(f.wheel);
         break;
     case Fix::CONTROL_ARM:
         if (f.beam < 0) return false;
         c.beams[f.beam].L0 = c.beams[f.beam].Lorig, c.beams[f.beam].broken = false;
+        if (f.wheel >= 0 && f.wheel < (int)c.wheels.size() && c.knuckleBent(f.wheel)) c.newKnuckle(f.wheel);
         break;
     case Fix::SPRING:
         if (f.beam < 0 || f.beam >= (int)c.beams.size() || !c.beams[f.beam].broken) return false;

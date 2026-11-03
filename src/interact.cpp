@@ -344,7 +344,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
             if ((c.spec->extras & EXTRA_WINCH) && !hasLine(sim, ci, ROPE_WINCH)) {
                 InteractOption o;
                 o.kind = IA_GRAB_LINE, o.car = ci, o.hook = 0, o.lineKind = ROPE_WINCH, o.hold = kGrabLine;
-                o.at = c.hookPoint(0) + V3(0, 0.15, 0);
+                o.at = c.hookPoint(0);  // (on the fairlead, where its hook rests: the winch kit's too, hookRest[0] = attachFit().fairlead)
                 o.prompt = "GRAB WINCH LINE";
                 consider(o);
             }

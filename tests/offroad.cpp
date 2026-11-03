@@ -465,8 +465,9 @@ SCENARIO(rampTravel, "offroad/rti", "Ramp travel index on a 20 degree ramp: real
     const double bg = rti(ctx, buggy(), -62, false), ut = rti(ctx, utv(), -90, false);
     ctx.metric("Bronco RTI (real 4-door: ~450-550)", b, "", 380, 650);
     // (Unhooking the bar of an independent front frees some travel, not a lot: the arms'
-    // own droop limits it. At least a little more, then.)
-    ctx.metric("Bronco RTI, sway bar disconnected", bd, "", b + 10, 800);
+    // own droop limits it. At least a little more, then. Since the front knuckles are held as solid
+    // pieces, the hanging wheel no longer gains droop by stretching its knuckle: +7, from +31.)
+    ctx.metric("Bronco RTI, sway bar disconnected", bd, "", b + 5, 800);
     // (A 3rd-gen 4Runner's independent front with its bar hooked up: the low front tire sheds
     // its load through the spring and the bar before either front wheel reaches its travel.
     // Today's long-travel Toyota IFS trucks score ~520-530; this older, shorter one less.)

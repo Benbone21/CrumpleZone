@@ -41,8 +41,13 @@ constexpr double kLadderTubStiffness = 0.6;
 // carry the truck's bending; the twist is in the crossmembers).
 constexpr double kRailStiffness = 3.5;
 // What's welded to them (suspension brackets, coil towers, the engine's pads) is built for
-// the suspension's hits, whatever the rails: about this much force before it bends (N).
-constexpr double kBracketYield = 70000;
+// the suspension's hits, whatever the rails: about this much force before it bends (N). A
+// boxed, gusseted bracket outlasts the links bolted to it: a control arm (~60-75 kN to bend
+// here) or a tie rod is the part that gives, and gets swapped on the trail. (At 70 kN the
+// Bronco's lower-arm bracket flowed 3.6 cm on a 30 cm rock at 50 km/h: toe 7 degrees out for
+// good, with nothing bent that a field repair could swap.) Its node is held as stiffly as
+// for 70 kN (more would ring at the 2 kHz step), and flows that much further before it sets.
+constexpr double kBracketYield = 160000, kBracketHeld = 70000;  // (an arm's or tie rod's bracket; towers and pads stay at kBracketHeld)
 // The doors and sills crushed across, and the tail lengthwise: their share of what the
 // lattice's members take before they set.
 constexpr double kSideGive = 0.35;
@@ -1471,7 +1476,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 auto brace = [&](int n, std::initializer_list<int> to) {
                     for (int o : to) {
                         const int bi = addBeam(n, o, BEAM_KNUCKLE);
-                        if (bi >= 0) beams[bi].k *= 0.1, beams[bi].c *= 0.3;
+                        if (bi >= 0) beams[bi].k *= 0.1, beams[bi].c *= 0.3, beams[bi].yieldStrain *= 4;  // (a tenth as stiff, so the tube's ~85 kN takes four times the stretch: dragged over a rock field at 30 km/h, its braces had set 30 % and cambered both wheels 3 degrees)
                     }
                 };
                 // (The tube ends: the hubs on a rigid axle; the lower kingpins on a steered one,
@@ -1500,7 +1505,13 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 Wheel& wh = wheels[axle.wheel[sIdx]];
                 wh.assembly = as.nodes;
                 if (steered) {
+                    // (A forged steering knuckle on a live axle: not held as one piece with its housing
+                    // (that pulled the rock buggy off line braking), so its own beams are made to hold
+                    // their shape: at the housing's strain a 30 cm rock at 50 km/h folded it 14 mm and
+                    // toed the wheel 5.6 degrees.)
+                    const size_t from = beams.size();
                     rigid(knuckle[sIdx], BEAM_KNUCKLE);
+                    for (size_t bi = from; bi < beams.size(); bi++) beams[bi].yieldStrain *= 3;
                     wh.assembly.insert(wh.assembly.end(), {wh.inner, wh.outer, steerNodes[sIdx][2]});
                     const int kpLow = steerNodes[sIdx][0], kpUp = steerNodes[sIdx][1], arm = steerNodes[sIdx][2], rack = steerNodes[sIdx][3];
                     wh.tieRod = link(&wh, arm, rack, BEAM_TIEROD, LINK_TIE_ROD, axle.wheel[sIdx]);
@@ -2416,6 +2427,12 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 // coil-over tower is built for the bump stop's hit): held harder, to their own
                 // yield force.
                 rf.weight.assign(rf.nodes.size(), 1.0f);
+                rf.yieldScale.assign(rf.nodes.size(), 1.0f);
+                // (Only an arm's or a tie rod's bracket: a coil tower or bump stop pad takes a
+                // landing's slam, and a 5 m drop onto rock should still kink it.)
+                std::vector<char> linkEnd(nodes.size(), 0);
+                for (const Beam& b : beams)
+                    if (b.type == BEAM_ARM || b.type == BEAM_TIEROD) linkEnd[b.a] = linkEnd[b.b] = 1;
                 rf.section.assign(rf.nodes.size(), 0);
                 int nextSection = ladderStations;
                 for (size_t k = 0; k < rf.nodes.size(); k++) {
@@ -2423,11 +2440,12 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     if (it != ladder.end() && *it == rf.nodes[k]) {
                         rf.section[k] = (int)(it - ladder.begin()) / 8;  // its station
                     } else {
-                        const double hold = kBracketYield / (rf.kappa * nodes[rf.nodes[k]].m * rf.yieldDist);
+                        const double hold = kBracketHeld / (rf.kappa * nodes[rf.nodes[k]].m * rf.yieldDist);
                         // (One on the centreline sits on a crossmember between the rails: what
                         // holds it there is what makes the frame stiff in twist, so it's held
                         // like plain rail by each.)
                         rf.weight[k] = std::fabs(local[rf.nodes[k]].z) < 0.05 ? 1.0f : (float)clampd(hold, 1, 40);
+                        if (rf.weight[k] > 1 && linkEnd[rf.nodes[k]]) rf.yieldScale[k] = (float)(kBracketYield / kBracketHeld);
                         rf.section[k] = nextSection++;  // (a bracket bends on its own)
                     }
                 }
@@ -2448,26 +2466,35 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         } else {
             setUp(chassis, range(0, frameNodes), 300000 * vs.frameStiffness);
         }
-        // Each unsteered independent corner's knuckle, held in its shape as one rigid piece (a
-        // live axle's housing is braced in depth already; a steered one's toe is the rack's). A
-        // forged upright doesn't flex; bent in a crash (shoved 3 cm out of shape) it lets go, and
-        // holds the new bend.
+        // Each independent corner's knuckle, and a steered live axle's, held in its shape as one
+        // rigid piece (an unsteered live axle's housing is braced in depth already). A forged
+        // upright doesn't flex; bent in a crash (shoved 3 cm out of shape) it lets go, and holds
+        // the new bend. (A steered one's toe is the rack's: only its shape is held. Left to its
+        // beams alone, a 30 cm rock at 35-50 km/h folded a front knuckle's truss 6-17 % out of
+        // shape: the wheel toed 5 degrees for good with nothing a field repair could swap.)
         for (size_t wi = 0; wi < wheels.size(); wi++) {
             const Wheel& wh = wheels[wi];
-            if (wh.front || vs.rearSusp == SOLID_AXLE || wh.assembly.size() < 3) continue;
+            const bool live = (wh.front ? vs.frontSusp : vs.rearSusp) == SOLID_AXLE;
+            if ((live && !wh.front) || wh.assembly.size() < 3) continue;
+            // (A steered live axle's knuckle is the hub and its steering arm, which turn on the
+            // housing's kingpins.)
+            const std::vector<int> pieceNodes = live ? std::vector<int>{wh.inner, wh.outer, wh.arm} : wh.assembly;  // (not the kingpin pair: those are the housing's too, and held by both they pulled the rock buggy off line braking)
+            if (live && (wh.lower < 0 || wh.top < 0 || wh.arm < 0)) continue;
             Knuckle k;
             k.wheel = (int)wi;
-            setUp(k.frame, wh.assembly, kKnuckleKappa);
+            k.steered = wh.front;
+            setUp(k.frame, pieceNodes, wh.front ? kKnuckleKappa * 0.4 : kKnuckleKappa);  // (a steered one's light steering arm also hangs on its stiff tie rod: held as hard, the Bronco's rang loose)
             k.frame.maxPull = 1e9;
             k.frame.releaseDist = 0.03;
-            const auto in = [&](int n) { return std::find(wh.assembly.begin(), wh.assembly.end(), n) != wh.assembly.end(); };
+            const auto in = [&](int n) { return std::find(pieceNodes.begin(), pieceNodes.end(), n) != pieceNodes.end(); };
             for (size_t bi = 0; bi < beams.size(); bi++)
                 if (beams[bi].type == BEAM_KNUCKLE && in(beams[bi].a) && in(beams[bi].b)) k.beams.push_back((int)bi);
-            if (wh.tieRod >= 0)
+            if (wh.tieRod >= 0 && !k.steered)
                 for (int bi : wh.mounts) {
                     const int far = in(beams[bi].a) ? beams[bi].b : beams[bi].a;
                     if (std::find(k.pickups.begin(), k.pickups.end(), far) == k.pickups.end()) k.pickups.push_back(far);
                 }
+            k.rest0 = k.frame.rest;
             knuckles.push_back(std::move(k));
         }
     }

@@ -148,7 +148,7 @@ SCENARIO(repairCareerGear, "repair/career-gear", "every field repair (docs/repai
         const VehicleSpec* spec = specById(id);
         if (!spec) continue;
         // Each kind of damage on its own, on a fresh truck.
-        const char* damages[] = {"cv", "tie", "tiebreak", "spring", "leaf", "armbend", "armbreak", "sway", "shaft", "tire", "flood"};
+        const char* damages[] = {"cv", "tie", "tiebreak", "spring", "leaf", "armbend", "armbreak", "knuckle", "sway", "shaft", "tire", "flood"};
         for (const char* dmg : damages) {
             ctx.sim.cars.clear();
             Car& c = ctx.add(*spec, -140, -50, 0);
@@ -178,6 +178,12 @@ SCENARIO(repairCareerGear, "repair/career-gear", "every field repair (docs/repai
                 if (ab < 0) continue;
                 if (d == "armbend") c.beams[ab].L0 = c.beams[ab].Lorig * 1.05;
                 else c.beams[ab].broken = true;
+            } else if (d == "knuckle") {
+                // A bent front knuckle: its own beams pushed out of shape (the swap uses the control-arm part).
+                const int ki = c.knuckleOf(k);
+                if (ki < 0 || c.knuckles[ki].beams.empty()) continue;
+                for (int bi : c.knuckles[ki].beams) c.beams[bi].L0 = c.beams[bi].Lorig * 1.03;
+                if (!c.knuckleBent(k)) continue;
             } else if (d == "sway") {
                 if (c.axles.empty()) continue;
                 c.axles[0].arbBend = 0.05;
@@ -190,6 +196,18 @@ SCENARIO(repairCareerGear, "repair/career-gear", "every field repair (docs/repai
             else if (d == "flood") c.hydrolocked = true, c.engineDead = true;
             const std::vector<Fix> fx = fixesFor(c);
             ctx.check(std::string(id) + " " + d + ": the damage is a field repair", !fx.empty());
+            if (d == "knuckle") {
+                bool job = false;
+                for (const Fix& f : fx)
+                    if (f.kind == Fix::CONTROL_ARM && f.wheel == k && f.what == std::string("REPLACE THE BENT KNUCKLE AND ARM")) {
+                        job = true;
+                        const int ki = c.knuckleOf(k);
+                        double near = 1e9;  // (its marker on the knuckle: by one of its own beams' ends)
+                        for (int bi : c.knuckles[ki].beams) near = std::min({near, len(f.at - c.nodes[c.beams[bi].a].p), len(f.at - c.nodes[c.beams[bi].b].p)});
+                        ctx.check(std::string(id) + " knuckle: its marker is on the knuckle", near < 0.25, std::to_string(near));
+                    }
+                ctx.check(std::string(id) + " knuckle: offered as REPLACE THE BENT KNUCKLE AND ARM", job);
+            }
             for (const Fix& f : fx) {
                 Career car;
                 car.on = true;

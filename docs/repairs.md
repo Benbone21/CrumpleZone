@@ -22,6 +22,7 @@ The field repairs are in `src/fixes.cpp` (`fixesFor`, `repairSteps`). The tools 
 | TIE ROD (broken) | a snapped tie rod | WRENCHES, HAMMER | TIE ROD | no | **not offered**: no field repair | offered, same steps as a bent one |
 | CONTROL ARM | a bent control arm or trailing arm | SOCKET SET, PRY BAR, LUG WRENCH | CONTROL ARM | yes, wheel off | as now | pry bar from cache or rack |
 | CONTROL ARM (broken) | a snapped control arm, trailing arm or track bar | SOCKET SET, PRY BAR, LUG WRENCH | CONTROL ARM | yes, wheel off | **not offered** | offered |
+| KNUCKLE AND ARM | a bent front knuckle (hub carrier) knocked out of shape; shown as REPLACE THE BENT KNUCKLE AND ARM, its marker on the knuckle | SOCKET SET, PRY BAR, LUG WRENCH | CONTROL ARM (covers the knuckle) | yes, wheel off | **not offered**: a knuckle couldn't bend | offered: a new knuckle and the lower arm it hangs on |
 | SWAY BAR LINK | a bent sway bar | WRENCHES, PRY BAR | CONTROL ARM | no | as now | pry bar from cache or rack |
 | SPRING | a broken coilover, or a broken leaf spring pack | SOCKET SET, WRENCHES | SPRING (new) | yes | **not offered**: no part or repair existed | new SPRING part on the rack and in two caches |
 | NEW TIRE | a flat or shredded tire | TIRE IRONS, LUG WRENCH | TIRE | yes, wheel off (on trucks that lose wheels) | tire irons from cache or rack only; no spare tire part | toolbox has tire irons and one TIRE |
