@@ -172,7 +172,7 @@ SCENARIO(promptsPick, "prompts/pick", "beside a Blazer: a wheel is picked lookin
     ctx.check("no two markers on one spot", [&] {
         for (size_t i = 0; i < fo.markers.size(); i++)
             for (size_t j = i + 1; j < fo.markers.size(); j++)
-                if (fo.markers[i].car == fo.markers[j].car && len(fo.markers[i].at - fo.markers[j].at) < 0.4) return false;
+                if (fo.markers[i].car == fo.markers[j].car && len(fo.markers[i].at - fo.markers[j].at) < prompts::kSpreadNear) return false;
         return true;
     }());
     // The door: J, not E, when nothing else is aimed at.

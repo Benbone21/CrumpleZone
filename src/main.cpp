@@ -1253,7 +1253,7 @@ std::string promptKeyName(const prompts::Marker& m, bool padNow, const std::stri
     return (m.hold ? holdWord : std::string()) + K(KA_INTERACT);
 }
 
-// The markers (a small diamond at each spot there is something to do; the target's brighter, with corner brackets round
+// The markers (a small square at each job, a circle at a door; the target's brighter, with corner brackets round
 // the part) and the prompt near the crosshair: the key, what it does, and why not if it can't be done. Only on foot.
 void drawFocus(Renderer& r, const prompts::Focus& fo, const Interact& ia, const Sim& sim, const View& view, const Walker& wk, int W, int H, bool padNow) {
     const float u = std::max(0.75f, H / 720.0f);
@@ -1270,16 +1270,34 @@ void drawFocus(Renderer& r, const prompts::Focus& fo, const Interact& ia, const 
             if (len(a) > 0.3 && len(b) > c.spec->width * 0.6 && dot(norm(a), norm(b)) < -0.3 && !m.current) continue;
         }
         const double dist = len(m.at - chest);
-        const float prox = (float)clampd(1.25 - dist / 4.0, 0.3, 1.0);  // 1 up close, dim by 5 m
+        const float prox = (float)clampd(1.0 - (dist - 2.0) / (prompts::kMarkerRange - 2.0), 0.12, 1.0);  // 1 within 2 m, fading out to the edge of marker range
         float cr = 1.0f, cg = 0.82f, cb = 0.35f;
         if (m.blocked) cr = 0.75f, cg = 0.6f, cb = 0.5f;
         if (m.key == prompts::KEY_GET_IN) cr = 0.55f, cg = 0.85f, cb = 1.0f;
         const float a = m.current ? 1.0f : prox * (m.far ? 0.55f : 0.9f);
-        const float rr = (m.current ? 8.0f : 5.5f) * u;
-        r.tri(sx, sy - rr * 1.35f, sx + rr * 1.35f, sy, sx, sy + rr * 1.35f, 0, 0, 0, 0.5f * a);
-        r.tri(sx, sy - rr * 1.35f, sx - rr * 1.35f, sy, sx, sy + rr * 1.35f, 0, 0, 0, 0.5f * a);
-        r.tri(sx, sy - rr, sx + rr, sy, sx, sy + rr, cr, cg, cb, a);
-        r.tri(sx, sy - rr, sx - rr, sy, sx, sy + rr, cr, cg, cb, a);
+        // A small square for a job, a circle for getting in; the aimed one bigger and filled (the others are rings, so
+        // close markers stay readable side by side).
+        const float rr = (m.current ? 7.0f : 4.5f) * u, th = std::max(1.5f, 1.6f * u);
+        if (m.key == prompts::KEY_GET_IN) {
+            const int n = 14;
+            for (int q = 0; q < n; q++) {
+                const float a0 = q * 6.2831853f / n, a1 = (q + 1) * 6.2831853f / n;
+                const float c0 = std::cos(a0), s0 = std::sin(a0), c1 = std::cos(a1), s1 = std::sin(a1);
+                const float ro = rr + th, ri = m.current ? 0.0f : rr - th;
+                r.tri(sx + c0 * (ro + 1), sy + s0 * (ro + 1), sx + c1 * (ro + 1), sy + s1 * (ro + 1), sx, sy, 0, 0, 0, 0.35f * a);
+                r.tri(sx + c0 * ro, sy + s0 * ro, sx + c1 * ro, sy + s1 * ro, sx + c0 * ri, sy + s0 * ri, cr, cg, cb, a);
+                r.tri(sx + c1 * ro, sy + s1 * ro, sx + c1 * ri, sy + s1 * ri, sx + c0 * ri, sy + s0 * ri, cr, cg, cb, a);
+            }
+        } else {
+            r.rect(sx - rr - th - 1, sy - rr - th - 1, 2 * (rr + th + 1), 2 * (rr + th + 1), 0, 0, 0, 0.45f * a);
+            if (m.current) r.rect(sx - rr - th, sy - rr - th, 2 * (rr + th), 2 * (rr + th), cr, cg, cb, a);
+            else {
+                r.rect(sx - rr - th, sy - rr - th, 2 * (rr + th), th, cr, cg, cb, a);
+                r.rect(sx - rr - th, sy + rr, 2 * (rr + th), th, cr, cg, cb, a);
+                r.rect(sx - rr - th, sy - rr, th, 2 * rr, cr, cg, cb, a);
+                r.rect(sx + rr, sy - rr, th, 2 * rr, cr, cg, cb, a);
+            }
+        }
         if (m.current) {  // brackets round the part
             const double z = std::max(0.5, dot(m.at - view.eye, norm(view.target - view.eye)));
             const float hb = (float)clampd(m.radius / z * k * H / 2.0, 16 * u, 90 * u), bl = hb * 0.5f, th = std::max(2.0f, 2.0f * u);

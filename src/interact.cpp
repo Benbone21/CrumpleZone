@@ -200,15 +200,31 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
     const V3 dir = norm(look);
     // A candidate at `at`: scored on how far off your aim it is (to the edge of it: a wheel is a big target), then how far
     // away (a job you can't do yet loses to one you can, close by). The one you have already keeps it a while.
+    // Every job is listed first, then the ones sharing a spot are spread apart (prompts::spread: each gets its own marker to
+    // aim at), then each is scored.
+    struct Cand {
+        InteractOption o;
+        double reach, bias, distW;
+    };
+    std::vector<Cand> cands;
     auto consider = [&](InteractOption o, double reach = kReach, double bias = 0, double distW = 0.15) {
         if (o.radius <= 0) o.radius = prompts::info(o.kind).radius;
-        if (opts && opts->nearby && len(o.at - chest) <= std::max(reach, prompts::kMarkerRange)) opts->nearby->push_back(o);
-        const double d = len(o.at - eye);
-        if (d < 1e-6) return;
-        const bool st = opts && opts->sticky && (opts->sticky->kind != IA_NONE || opts->sticky->passive) && o.same(*opts->sticky);
-        double score;
-        if (!prompts::aimScore(eye, dir, chest, o.at, o.radius, reach, distW * d + (o.blocked ? 0.04 : 0) + bias, st, opts ? opts->stickyBonus : prompts::kStickyBonus, score)) return;
-        if (score < bestScore) bestScore = score, best = o;
+        cands.push_back({std::move(o), reach, bias, distW});
+    };
+    auto score = [&]() {
+        std::vector<InteractOption*> os;
+        for (Cand& c : cands) os.push_back(&c.o);
+        prompts::spread(sim, os);
+        for (const Cand& c : cands) {
+            const InteractOption& o = c.o;
+            if (opts && opts->nearby && len(o.at - chest) <= std::max(c.reach, prompts::kMarkerRange)) opts->nearby->push_back(o);
+            const double d = len(o.at - eye);
+            if (d < 1e-6) continue;
+            const bool st = opts && opts->sticky && (opts->sticky->kind != IA_NONE || opts->sticky->passive) && o.same(*opts->sticky);
+            double sc;
+            if (!prompts::aimScore(eye, dir, chest, o.at, o.radius, c.reach, c.distW * d + (o.blocked ? 0.04 : 0) + c.bias, st, opts ? opts->stickyBonus : prompts::kStickyBonus, sc)) continue;
+            if (sc < bestScore) bestScore = sc, best = o;
+        }
     };
     // A job that needs tools you may not have, or a corner up off the ground.
     auto needs = [&](InteractOption& o, std::initializer_list<Tool> tools, bool lift, bool lifted) {
@@ -565,6 +581,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
         if (wk.carrying && !o.blocked) o.blocked = true, o.prompt += ": PUT WHEEL DOWN FIRST";
         consider(o, kReach + 1.0, 0.03);
     }
+    score();
     return best;
 }
 

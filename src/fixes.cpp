@@ -7,8 +7,8 @@ namespace {
 const char* const kToolNames[TOOL_COUNT] = {"LUG WRENCH", "WRENCHES", "SOCKET SET", "HAMMER", "PRY BAR", "TIRE IRONS", "JACK", "JUMP PACK", "JUMPER CABLES"};
 const char* const kToolModels[TOOL_COUNT] = {"lug_wrench", "wrench", "ratchet", "hammer", "pry_bar", "tire_iron", "jack", "jump_pack", "jumper_cables"};
 const char* const kToolA[TOOL_COUNT] = {"A LUG WRENCH", "WRENCHES", "A SOCKET SET", "A HAMMER", "A PRY BAR", "TIRE IRONS", "A JACK", "A JUMP PACK", "JUMPER CABLES"};
-const char* const kPartNames[PART_COUNT] = {"TIRE", "CV AXLE", "DRIVE SHAFT", "TIE ROD", "CONTROL ARM", "SPARK PLUGS", "ENGINE OIL"};
-const char* const kPartModels[PART_COUNT] = {"tire_part", "cv_axle", "drive_shaft", "tie_rod", "control_arm", "spark_plug", "oil_jug"};
+const char* const kPartNames[PART_COUNT] = {"TIRE", "CV AXLE", "DRIVE SHAFT", "TIE ROD", "CONTROL ARM", "SPARK PLUGS", "ENGINE OIL", "SPRING"};
+const char* const kPartModels[PART_COUNT] = {"tire_part", "cv_axle", "drive_shaft", "tie_rod", "control_arm", "spark_plug", "oil_jug", "coilover"};
 
 V3 hubOf(const Car& c, const Wheel& wh) { return (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5; }
 
@@ -72,6 +72,20 @@ std::vector<Fix> fixesFor(const Car& c) {
         if (b.type == BEAM_ARM) add(Fix::CONTROL_ARM, k, bi, PART_CONTROL_ARM, {TOOL_RATCHET, TOOL_PRY_BAR}, true, 5, at, "REPLACE THE BENT CONTROL ARM");
         else add(Fix::TIE_ROD, k, bi, PART_TIE_ROD, {TOOL_WRENCH, TOOL_HAMMER}, false, 4, at, "REPLACE THE BENT TIE ROD");
     }
+    // Snapped links and springs: the same swap as a bent one (a leaf pack and a coilover are the spring's).
+    for (int bi = 0; bi < (int)c.beams.size(); bi++) {
+        const Beam& b = c.beams[bi];
+        if (!b.broken || (b.type != BEAM_ARM && b.type != BEAM_TIEROD && b.type != BEAM_SPRING)) continue;
+        bool leaf = false, link = b.type == BEAM_SPRING;
+        for (const SuspLink& l : c.links)
+            if (l.beam == bi) link = true, leaf |= l.kind == LINK_LEAF;
+        if (!link) continue;  // (only the running gear's: a CV or drive shaft is a shaft beam, a body beam isn't a repair)
+        const int k = cornerOf(c, b);
+        const V3 at = (c.nodes[b.a].p + c.nodes[b.b].p) * 0.5;
+        if (b.type == BEAM_SPRING || leaf) add(Fix::SPRING, k, bi, PART_SPRING, {TOOL_RATCHET, TOOL_WRENCH}, true, 5, at, leaf ? "REPLACE THE BROKEN LEAF SPRING" : "REPLACE THE BROKEN SPRING");
+        else if (b.type == BEAM_ARM) add(Fix::CONTROL_ARM, k, bi, PART_CONTROL_ARM, {TOOL_RATCHET, TOOL_PRY_BAR}, true, 5, at, "REPLACE THE BROKEN CONTROL ARM");
+        else add(Fix::TIE_ROD, k, bi, PART_TIE_ROD, {TOOL_WRENCH, TOOL_HAMMER}, false, 4, at, "REPLACE THE BROKEN TIE ROD");
+    }
     for (int a = 0; a < (int)c.axles.size(); a++) {
         const Axle& ax = c.axles[a];
         if (std::fabs(ax.arbBend) > 0.005) {
@@ -129,12 +143,16 @@ bool applyFix(Car& c, const Fix& f) {
         c.beams[f.beam].broken = false;
         break;
     case Fix::TIE_ROD:
-        if (f.beam >= 0) c.beams[f.beam].L0 = c.beams[f.beam].Lorig;
+        if (f.beam >= 0) c.beams[f.beam].L0 = c.beams[f.beam].Lorig, c.beams[f.beam].broken = false;
         if (f.wheel >= 0 && f.wheel < (int)c.wheels.size()) c.wheels[f.wheel].tieOffset = 0;
         break;
     case Fix::CONTROL_ARM:
         if (f.beam < 0) return false;
-        c.beams[f.beam].L0 = c.beams[f.beam].Lorig;
+        c.beams[f.beam].L0 = c.beams[f.beam].Lorig, c.beams[f.beam].broken = false;
+        break;
+    case Fix::SPRING:
+        if (f.beam < 0 || f.beam >= (int)c.beams.size() || !c.beams[f.beam].broken) return false;
+        c.beams[f.beam].broken = false, c.beams[f.beam].L0 = c.beams[f.beam].Lorig;
         break;
     case Fix::SWAY_BAR:
         if (f.axle < 0) return false;
@@ -158,8 +176,8 @@ bool applyFix(Car& c, const Fix& f) {
 }
 
 const char* jobName(int kind) {
-    static const char* const n[] = {"CV AXLE", "DRIVE SHAFT", "TIE ROD", "CONTROL ARM", "SWAY BAR LINK", "NEW TIRE", "FLOODED ENGINE"};
-    return kind >= 0 && kind <= Fix::SPARK_PLUGS ? n[kind] : "REPAIR";
+    static const char* const n[] = {"CV AXLE", "DRIVE SHAFT", "TIE ROD", "CONTROL ARM", "SWAY BAR LINK", "NEW TIRE", "FLOODED ENGINE", "SPRING"};
+    return kind >= 0 && kind <= Fix::SPRING ? n[kind] : "REPAIR";
 }
 
 V3 enginePlugAt(const Car& c) {
@@ -173,8 +191,8 @@ RepairStep::Act engineStepAct(int fixKind, int step) {
     return step >= 0 && step < (int)st.size() ? st[step].act : RepairStep::ACT_NONE;
 }
 
-bool jobJacks(int kind, int wheel) { return wheel >= 0 && (kind == Fix::CV_AXLE || kind == Fix::CONTROL_ARM || kind == Fix::NEW_TIRE); }
-bool jobWheelOff(const Car& c, int kind, int wheel) { return jobJacks(kind, wheel) && c.spec->wheelLoss; }
+bool jobJacks(int kind, int wheel) { return wheel >= 0 && (kind == Fix::CV_AXLE || kind == Fix::CONTROL_ARM || kind == Fix::NEW_TIRE || kind == Fix::SPRING); }
+bool jobWheelOff(const Car& c, int kind, int wheel) { return jobJacks(kind, wheel) && kind != Fix::SPRING && c.spec->wheelLoss; }
 
 std::vector<RepairStep> tireSteps() {
     std::vector<RepairStep> s(3);
@@ -205,6 +223,7 @@ std::vector<RepairStep> repairSteps(int kind, bool jack, bool wheelOff) {
     case Fix::CONTROL_ARM: swap("REMOVE CONTROL ARM", "FIT CONTROL ARM", TOOL_RATCHET, PART_CONTROL_ARM, 6, 4); break;
     case Fix::TIE_ROD: swap("REMOVE TIE ROD", "FIT TIE ROD", TOOL_WRENCH, PART_TIE_ROD, 5, 3.5); break;
     case Fix::SWAY_BAR: swap("REMOVE SWAY BAR LINK", "FIT SWAY BAR LINK", TOOL_WRENCH, PART_CONTROL_ARM, 4, 3.5); break;
+    case Fix::SPRING: swap("REMOVE BROKEN SPRING", "FIT SPRING", TOOL_RATCHET, PART_SPRING, 6, 5); break;
     case Fix::DRIVE_SHAFT: swap("REMOVE DRIVE SHAFT", "FIT DRIVE SHAFT", TOOL_RATCHET, PART_DRIVE_SHAFT, 6, 5); break;
     case Fix::SPARK_PLUGS: {
         // A flooded engine (rivers.cpp): the hood up, the plugs out, the water cranked out of the cylinders through the plug

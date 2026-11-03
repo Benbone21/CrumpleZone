@@ -60,6 +60,9 @@ struct OwnedVehicle {
     double drove = -1;       // its world's playedSeconds when you were last in it (-1: never): you get back into the latest
 };
 
+// The toolbox a new career starts with (Career::startFresh), and its one spare tire.
+inline constexpr Tool kStarterTools[] = {TOOL_LUG_WRENCH, TOOL_JACK, TOOL_WRENCH, TOOL_RATCHET, TOOL_HAMMER, TOOL_TIRE_IRONS};
+
 struct Career {
     bool on = false;  // career mode (else sandbox: everything owned)
     int cash = 0;

@@ -127,7 +127,7 @@ bool decode(const std::string& text, Work& out) {
         } else if (key == "do" && v.size() >= 16) {
             const bool ok = whole(v[0], IA_NONE + 1, IA_UNCLAMP_CABLE) && whole(v[1], 0, 4294967295.0) && whole(v[2], -1, 31) && whole(v[3], -1, 31) && whole(v[4], -1, TOOL_COUNT - 1) &&
 
-                            whole(v[5], -1, PART_COUNT - 1) && whole(v[6], Fix::CV_AXLE, Fix::SPARK_PLUGS) && whole(v[7], -1, 31) && whole(v[8], 0, PART_COUNT - 1) &&
+                            whole(v[5], -1, PART_COUNT - 1) && whole(v[6], Fix::CV_AXLE, Fix::SPRING) && whole(v[7], -1, 31) && whole(v[8], 0, PART_COUNT - 1) &&
                             inRange(v[11], 0, 60) && inRange(v[12], 0, 600) && okPos(V3(v[13], v[14], v[15]));
             if (!ok) continue;
             InteractOption& o = out.job;
@@ -317,13 +317,13 @@ bool Remote::onMessage(Sim& sim, int player, const std::string& who, const std::
     }
     if (tag == "fixed") {
         double id = 0, kind = 0, wheel = 0, beam = 0, axle = 0;
-        if (!(in >> id >> kind >> wheel >> beam >> axle) || !whole(id, 1, 4294967295.0) || !whole(kind, Fix::CV_AXLE, Fix::SPARK_PLUGS)) return true;
+        if (!(in >> id >> kind >> wheel >> beam >> axle) || !whole(id, 1, 4294967295.0) || !whole(kind, Fix::CV_AXLE, Fix::SPRING)) return true;
         Car* c = theirs((uint32_t)id);
         if (!c || !whole(wheel, -1, (int)c->wheels.size() - 1) || !whole(beam, -1, (int)c->beams.size() - 1) || !whole(axle, -1, (int)c->axles.size() - 1)) return true;
         Fix f = InteractOption().fix;
         f.kind = (Fix::Kind)(int)kind;
         f.wheel = (int)wheel, f.beam = (int)beam, f.axle = (int)axle;
-        if (f.kind == Fix::DRIVE_SHAFT && f.beam < 0) return true;  // (applyFix reads it)
+        if ((f.kind == Fix::DRIVE_SHAFT || f.kind == Fix::SPRING) && f.beam < 0) return true;  // (applyFix reads it)
         applyFix(*c, f);
         return true;
     }

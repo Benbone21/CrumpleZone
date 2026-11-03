@@ -402,7 +402,7 @@ SCENARIO(careerStartCash, "career/start-cash", "A new profile starts with the di
     c.startFresh(DIFF_MEDIUM);
     ctx.check("medium", c.cash == 1000);
     c.startFresh(DIFF_HARDCORE);
-    ctx.check("hardcore", c.cash == 500 && c.owned.size() == 2 && c.vehicles.empty());
+    ctx.check("hardcore", c.cash == 500 && c.owned.size() == std::size(kStarterTools) && c.vehicles.empty());
     c.startFresh();
     ctx.check("default is medium", c.cash == 1000);
 }

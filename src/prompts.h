@@ -35,6 +35,13 @@ constexpr double kMarkerRange = 5.0;                 // m from your chest that m
 // priorities, distance); `sticky`: the target you have already (it scores better and its cone is wider).
 bool aimScore(const V3& eye, const V3& dir, const V3& chest, const V3& at, double radius, double reach, double bias, bool sticky, double stickyBonus, double& score);
 
+// Jobs that would sit on one spot (a CV axle and a tie rod both at the knuckle, air up and air down at one valve, a wheel's
+// jobs at its hub) are moved apart so each has its own marker to aim at: stacked along the car's up, kSpreadGap apart,
+// about where they were. Done in the pick (Interact::pick), so the aim, the markers and the prompt all use the moved spot.
+constexpr double kSpreadNear = 0.25;  // m: closer than this is one spot
+constexpr double kSpreadGap = 0.28;   // m between the markers of a spread spot
+void spread(const Sim& sim, std::vector<InteractOption*>& os);
+
 // The label and the reason from an option's prompt: "TAKE THE WHEEL OFF: NEEDS LUG WRENCH" (blocked) is two lines.
 void split(const InteractOption& o, std::string& label, std::string& reason);
 

@@ -64,6 +64,27 @@ bool aimScore(const V3& eye, const V3& dir, const V3& chest, const V3& at, doubl
     return true;
 }
 
+void spread(const Sim& sim, std::vector<InteractOption*>& os) {
+    std::vector<char> done(os.size(), 0);
+    for (size_t i = 0; i < os.size(); i++) {
+        if (done[i]) continue;
+        std::vector<size_t> group = {i};
+        for (size_t j = i + 1; j < os.size(); j++)
+            if (!done[j] && os[j]->car == os[i]->car && len(os[j]->at - os[i]->at) < kSpreadNear && !os[j]->same(*os[i])) group.push_back(j), done[j] = 1;
+        if (group.size() < 2) continue;
+        V3 mid;
+        for (size_t g : group) mid = mid + os[g]->at;
+        mid = mid * (1.0 / group.size());
+        const int ci = os[i]->car;
+        const V3 up = ci >= 0 && ci < (int)sim.cars.size() ? sim.cars[ci].frame().up : V3(0, 1, 0);
+        for (size_t k = 0; k < group.size(); k++) {
+            InteractOption& o = *os[group[k]];
+            o.at = mid + up * ((k - (group.size() - 1) / 2.0) * -kSpreadGap);  // (the first listed on top)
+            o.radius = std::min(o.radius > 0 ? o.radius : info(o.kind).radius, kSpreadGap * 0.5);
+        }
+    }
+}
+
 void split(const InteractOption& o, std::string& label, std::string& reason) {
     label = o.prompt, reason.clear();
     if (o.kind == IA_OPEN_INVENTORY && o.prompt == "INVENTORY") label = "OPEN TRUNK";
@@ -93,10 +114,10 @@ Focus Prompter::update(const Sim& sim, const Walker& wk, const Interact& ia, con
         const bool door = o.passive || o.kind == IA_ENTER_CAR || o.kind == IA_RIDE_ALONG;
         m.far = len(o.at - chest) > (door ? kReach + 1.0 : o.kind == IA_OPEN_INVENTORY ? 3.2 : kReach);
         split(o, m.label, m.reason);
-        // One marker to a spot: the target, then the one that can be done, then the first.
+        // One marker to a job (the pick has spread the ones that shared a spot: spread), so only the very same job is merged.
         bool merged = false;
         for (Marker& e : fo.markers) {
-            if (e.car != m.car || len(e.at - m.at) > 0.4) continue;
+            if (e.car != m.car || len(e.at - m.at) > 0.05 || e.kind != m.kind) continue;
             merged = true;
             if (!e.current && (m.current || (e.blocked && !m.blocked))) e = m;
             break;
