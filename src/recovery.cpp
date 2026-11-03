@@ -192,15 +192,94 @@ double Car::repairSeconds() const {
     return t;
 }
 
+double Car::tieTarget(int wheel) const {
+    const Wheel& wh = wheels[wheel];
+    if (!wh.front || wh.tieRod < 0 || beams[wh.tieRod].broken || wh.lower < 0 || wh.top < 0 || wh.arm < 0) return wh.tieOffset;
+    // An alignment: the wheel's toe read against the rear wheels' line (the thrust line), less
+    // what the rack is steering it, and the tie rod lengthened or shortened by what turns it back.
+    auto yawOf = [&](const Wheel& w) {
+        const V3 a = chassis.rot.unrotate(nodes[w.outer].p - nodes[w.inner].p), a0 = restLocal[w.outer] - restLocal[w.inner];
+        return std::remainder(std::atan2(a.x, a.z) - std::atan2(a0.x, a0.z), 2 * M_PI);
+    };
+    double rear = 0;
+    int nr = 0;
+    for (const Wheel& o : wheels)
+        if (!o.front && !o.detached) rear += yawOf(o), nr++;
+    if (nr) rear /= nr;
+    double steer = rackSteer;
+    if (std::fabs(steer) > 1e-4 && wheelbase > 0.5) {  // (the rack's Ackermann, as it sets the rods)
+        const double track = std::fabs(restLocal[wh.outer].z + restLocal[wh.inner].z);
+        const bool inner = (steer > 0) == wh.left;
+        const double cotC = 1.0 / std::tan(std::fabs(steer)), dt = 0.5 * track / wheelbase * 0.7;
+        steer = (steer > 0 ? 1 : -1) * std::atan(1.0 / (cotC + (inner ? -dt : dt)));
+    }
+    const double err = std::remainder(yawOf(wh) - rear - steer, 2 * M_PI);  // (+: toed left)
+    // How the rod's length turns the knuckle about its kingpin: dL/dtheta.
+    const Beam& tr = beams[wh.tieRod];
+    const int rack = tr.a == wh.arm ? tr.b : tr.a;
+    const V3 kp = nodes[wh.lower].p, k = norm(nodes[wh.top].p - nodes[wh.lower].p), arm = nodes[wh.arm].p;
+    const double dLdT = dot(norm(arm - nodes[rack].p), cross(k * (dot(chassis.rot.rotate(V3(0, 1, 0)), k) < 0 ? -1.0 : 1.0), arm - kp));
+    if (!std::isfinite(err) || !std::isfinite(dLdT) || std::fabs(dLdT) < 0.02) return wh.tieOffset;
+    return clampd(wh.tieOffset - err * dLdT, -kTieAdjust, kTieAdjust);
+}
+
+int Car::knuckleOf(int wheel) const {
+    for (size_t k = 0; k < knuckles.size(); k++)
+        if (knuckles[k].wheel == wheel) return (int)k;
+    return -1;
+}
+
+bool Car::knuckleBent(int wheel) const {
+    const int ki = knuckleOf(wheel);
+    if (ki < 0) return false;
+    const Knuckle& k = knuckles[ki];
+    for (int bi : k.beams)
+        if (!beams[bi].broken && std::fabs(beams[bi].L0 - beams[bi].Lorig) > 0.005 * beams[bi].Lorig) return true;
+    for (size_t i = 0; i < k.rest0.size() && i < k.frame.rest.size(); i++)
+        if (len(k.frame.rest[i] - k.rest0[i]) > 0.005) return true;
+    return false;
+}
+
+void Car::newKnuckle(int wheel) {
+    const int ki = knuckleOf(wheel);
+    if (ki < 0) return;
+    Knuckle& k = knuckles[ki];
+    for (int bi : k.beams) beams[bi].L0 = beams[bi].Lorig, beams[bi].broken = false, beams[bi].relaxTime = 0;
+    if (k.rest0.size() == k.frame.rest.size()) {
+        // The new one bolts on where the old one hung: its nodes set out in its factory shape at
+        // the old one's place and turn (or the held shape, shoved that far out, lets go again).
+        ChassisFrame& cf = k.frame;
+        cf.rest = k.rest0;
+        V3 c, v, rc;
+        double M = 0;
+        for (size_t i = 0; i < cf.nodes.size(); i++) {
+            const Node& n = nodes[cf.nodes[i]];
+            c += n.p * n.m, v += n.v * n.m, rc += cf.rest[i] * n.m, M += n.m;
+        }
+        if (M > 0) {
+            c = c / M, v = v / M, rc = rc / M;
+            for (size_t i = 0; i < cf.nodes.size(); i++) {
+                Node& n = nodes[cf.nodes[i]];
+                n.p = c + cf.rot.rotate(cf.rest[i] - rc);
+                n.v = v;
+            }
+        }
+    }
+    std::fill(k.frame.release.begin(), k.frame.release.end(), 0.0f);
+    wake();
+}
+
 bool Car::needsFieldRepair() const {
     if (isProp()) return false;
     if (hydrolocked) return true;
     for (const Wheel& wh : wheels) {
         if (wh.detached) continue;
-        if (wh.popped || wh.shaftBroken || std::fabs(wh.tieOffset) > 0.002) return true;
+        if (wh.popped || wh.shaftBroken || tieOut((int)(&wh - wheels.data()))) return true;
         for (int bi : wh.shafts)
             if (bi >= 0 && beams[bi].broken) return true;
     }
+    for (const Knuckle& k : knuckles)
+        if (!wheels[k.wheel].detached && knuckleBent(k.wheel)) return true;
     for (const Beam& b : beams)
         if (!b.broken && (b.type == BEAM_ARM || b.type == BEAM_TIEROD) && std::fabs(b.L0 - b.Lorig) > 0.005 * b.Lorig) return true;
     for (const Axle& ax : axles)
@@ -212,9 +291,10 @@ double Car::fieldRepairSeconds() const {
     double t = 6;
     for (const Wheel& wh : wheels) {
         if (wh.detached) continue;
-        t += 12 * wh.popped + 20 * wh.shaftBroken + 8 * (std::fabs(wh.tieOffset) > 0.002);
+        t += 12 * wh.popped + 20 * wh.shaftBroken + 8 * (tieOut((int)(&wh - wheels.data())));
         for (int bi : wh.shafts) t += bi >= 0 && beams[bi].broken ? 25 : 0;
     }
+    for (const Knuckle& k : knuckles) t += !wheels[k.wheel].detached && knuckleBent(k.wheel) ? 15 : 0;
     for (const Beam& b : beams)
         if (!b.broken && (b.type == BEAM_ARM || b.type == BEAM_TIEROD) && std::fabs(b.L0 - b.Lorig) > 0.005 * b.Lorig) t += 3;
     if (hydrolocked) t += 30;  // pull the plugs, crank the water out
@@ -235,12 +315,6 @@ void Car::fieldRepair() {
             if (repairKit.cvJoints > 0) {
                 wh.shaftBroken = false;
                 repairKit.cvJoints--;
-            }
-        }
-        if (std::fabs(wh.tieOffset) > 0.002) {
-            if (repairKit.tieRods > 0) {
-                wh.tieOffset = 0;
-                repairKit.tieRods--;
             }
         }
         wh.shaftLoad = 0;
@@ -271,6 +345,13 @@ void Car::fieldRepair() {
             }
         }
     }
+    // A bent knuckle: a new one bolted in (it comes with the arm kit).
+    for (size_t k = 0; k < knuckles.size(); k++) {
+        const int w = knuckles[k].wheel;
+        if (wheels[w].detached || !knuckleBent(w) || repairKit.suspensionLinks <= 0) continue;
+        newKnuckle(w);
+        repairKit.suspensionLinks--;
+    }
     for (Axle& ax : axles) {
         if (std::fabs(ax.arbBend) > 0.005) {
             if (repairKit.suspensionLinks > 0) {
@@ -278,6 +359,12 @@ void Car::fieldRepair() {
                 repairKit.suspensionLinks--;
             }
         }
+    }
+    // Last, the toe set (or a bent rod swapped and set) with everything else straight.
+    for (size_t w = 0; w < wheels.size(); w++) {
+        if (wheels[w].detached || !tieOut((int)w) || repairKit.tieRods <= 0) continue;
+        wheels[w].tieOffset = tieSet((int)w);
+        repairKit.tieRods--;
     }
     if (hydrolocked) clearHydrolock();
     tirePsi = std::max(tirePsi, spec->tirePsi * 0.8);

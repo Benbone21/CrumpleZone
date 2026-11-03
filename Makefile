@@ -31,6 +31,7 @@ SCEN     += tests/garageshop.cpp src/garageshop.cpp
 SCEN     += tests/controls.cpp
 PHYS     += src/careerworld.cpp
 SCEN     += tests/careerworld.cpp
+SCEN     += tests/wheeldamage.cpp
 PHYS     += src/carsave.cpp src/careersession.cpp
 SCEN     += tests/carsave.cpp
 SCEN     += tests/drivetrainmodels.cpp

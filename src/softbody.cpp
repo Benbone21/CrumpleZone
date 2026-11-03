@@ -834,18 +834,25 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
             D[k] = c + cf.rot.rotate(cf.rest[k] - rc) - nodes[cf.nodes[k]].p;
             if (sections) secD[cf.section[k]] += D[k] * nodes[cf.nodes[k]].m, secW[cf.section[k]] += nodes[cf.nodes[k]].m;
         }
+        const bool scaled = !cf.yieldScale.empty();
+        CZ_THREAD_CACHE(std::vector<double>, secS);
+        if (scaled) {
+            secS.assign(nsec, 1.0);
+            if (sections)
+                for (int k = 0; k < n; k++) secS[cf.section[k]] = std::max(secS[cf.section[k]], (double)cf.yieldScale[k]);
+        }
         for (int sct = 0; sct < nsec; sct++) {
             if (secW[sct] <= 0) continue;
             const V3 dm = secD[sct] / secW[sct];
-            const double dl = len(dm);
-            secD[sct] = dl > cf.yieldDist ? dm * (1 - cf.yieldDist / dl) : V3();
+            const double dl = len(dm), yd = cf.yieldDist * (scaled ? secS[sct] : 1.0);
+            secD[sct] = dl > yd ? dm * (1 - yd / dl) : V3();
         }
-        const double crush = sections ? 3 * cf.yieldDist : cf.yieldDist;
+        const double crush0 = sections ? 3 * cf.yieldDist : cf.yieldDist;
         for (int k = 0; k < n; k++) {
             if (!active(k)) continue;
             V3 back = sections ? secD[cf.section[k]] : V3();
             const V3 rem = D[k] - back;
-            const double rl = len(rem);
+            const double rl = len(rem), crush = crush0 * (scaled ? cf.yieldScale[k] : 1.0f);
             if (rl > crush) back += rem * (1 - crush / rl);
             if (dot(back, back) <= 0) continue;
             cf.rest[k] += cf.rot.unrotate(-back);
@@ -872,7 +879,7 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
         double nodeCap = cap;
         if (cf.yieldDist > 0) {
             // (Flowed above; the pull stays at about the yield force however fast it's bent.)
-            nodeCap = cf.kappa * wk * nd.m * cf.yieldDist * (cf.section.empty() ? 1.25 : 3.0);
+            nodeCap = cf.kappa * wk * nd.m * cf.yieldDist * (cf.section.empty() ? 1.25 : 3.0) * (cf.yieldScale.empty() ? 1.0f : cf.yieldScale[k]);
         } else if (dot(d, d) > cf.releaseDist * cf.releaseDist) {  // shoved far out of shape: a dent in progress
             cf.release[k] = 0.15f;
             continue;
