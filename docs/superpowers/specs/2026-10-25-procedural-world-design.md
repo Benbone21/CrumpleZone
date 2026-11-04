@@ -42,7 +42,7 @@ mode. It'll just have a fresh brand new map that's different every time and infi
 - `docs/terrain-generator-handoff.md` / `src/sections.*`: obstacle-section generators for levels. They are not
   used yet. Section 10 has the hook for stamping them along trails later.
 - No other procedural-world branch or sibling checkout exists (I searched `git log --all`, the branches and
-  `~/Documents/GitHub/MemeNG-*`).
+  `~/Documents/GitHub/CrumpleZone/worktrees/MemeNG-*`).
 
 ## 2. Biomes and how they blend
 

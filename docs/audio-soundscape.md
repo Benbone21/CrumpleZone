@@ -1,6 +1,6 @@
 # Audio, music and outdoor ambience
 
-This audio pass is isolated in `wip/audio-soundscape`, in `/home/bread/Documents/GitHub/CrumpleZone-audio`, based on field-repair commit `6ed8b86`. The optimization agent's checkout and work remain in `/home/bread/Documents/GitHub/MemeNG`. Merge this branch after that agent saves its work; the small audio hooks in `main.cpp`, settings rows and Makefile entries may need combining with its edits.
+This audio pass is isolated in `wip/audio-soundscape`, in `/home/bread/Documents/GitHub/CrumpleZone/worktrees/CrumpleZone-audio`, based on field-repair commit `6ed8b86`. The optimization agent's checkout and work remain in `/home/bread/Documents/GitHub/CrumpleZone`. Merge this branch after that agent saves its work; the small audio hooks in `main.cpp`, settings rows and Makefile entries may need combining with its edits.
 
 ## Audible changes
 

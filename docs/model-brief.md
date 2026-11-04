@@ -68,7 +68,7 @@ Crumple Zone draws everything from code: no model files.
 Build a contact-sheet tool for just your file. It is fast, and it doesn't touch the shared build:
 
 ```
-cd /home/bread/Documents/GitHub/MemeNG-blazer
+cd /home/bread/Documents/GitHub/CrumpleZone/worktrees/MemeNG-blazer
 nice -n 19 g++ -O1 -std=c++17 -Wall -Wextra -o build/sheet_NAME tools/modelsheet.cpp src/modelkit.cpp src/platform.cpp src/models/YOURFILE.cpp -lm
 nice -n 19 ./build/sheet_NAME --out build/review/models          # every model in your file
 nice -n 19 ./build/sheet_NAME --out build/review/models trail_sign  # just one (substring)

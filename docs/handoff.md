@@ -75,7 +75,7 @@ neither roadmap nor real Mac/NVIDIA GPU FPS gains should be described as complet
   no-visible-window rule for that final launch only. Launch attempted: default PulseAudio initialization hung with `pa_write EPERM` and was
   interrupted. Explicit X11 and Wayland launches both failed (`SDL_Init: not available`);
   GTK also could not open the display. No test/game window was left running. To launch
-  from a normal desktop terminal: `cd /home/bread/Documents/GitHub/MemeNG && ./crumplezone --map 0 --resume-model 2`.
+  from a normal desktop terminal: `cd /home/bread/Documents/GitHub/CrumpleZone && ./crumplezone --map 0 --resume-model 2`.
 
 See `docs/recovery-audio.md` for controls and validation details.
 
