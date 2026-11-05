@@ -49,6 +49,8 @@ struct Player {
         int car = -1;
         moved += guest.apply(sim, net, car);
         guest.tick(Ctx::kFrame);
+        for (Car& c : sim.cars)
+            if (!c.remote) c.handbrake = 1, c.brake = 1;  // (parked, as put() says: all four wheels, on these slopes)
         sim.advance(Ctx::kFrame, 1000);
         net.send(sim, t);
     }
@@ -237,6 +239,8 @@ SCENARIO(netMpDistanceLimit, "net/mp-distance-limit", "A host and a guest on the
         referee.update(ctx.sim, host, ctx.t, &hostAt);
         for (const std::string& e : referee.events) said.push_back(e);
         referee.events.clear();
+        for (Car& c : ctx.sim.cars)
+            if (!c.remote) c.handbrake = 1, c.brake = 1;  // (left to roll, a truck on these hillsides ends up tumbling down a mountainside: nothing here is about that)
         me.frame(ctx.t);
         usleep(300);
     };
@@ -284,7 +288,7 @@ SCENARIO(netMpDistanceLimit, "net/mp-distance-limit", "A host and a guest on the
     me.sim.cars[0].damage = 0.25;
     me.put(hostX + kLimit + 80, 0);
     const int stuck = (int)ctx.sim.cars.size();
-    ctx.add(p4Runner(), hostX + kLimit + 80 + 9, me.at().z, 0);
+    ctx.add(p4Runner(), hostX + kLimit + 80 + 6.5, me.at().z, 0);  // (on the level patch put() found for the guest: it checks 6 m round it, and 9 m out could be a cliff edge)
     ctx.run(1.0, frameBoth);
     int guestOnHost = -1;
     for (int i = 0; i < (int)ctx.sim.cars.size(); i++)
