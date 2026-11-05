@@ -12,6 +12,7 @@
 
 #include "../src/procworld.h"
 #include "../src/procrules.h"
+#include "../src/mpdistance.h"
 #include "../src/net.h"
 #include "../src/props.h"
 #include "harness.h"
@@ -1701,6 +1702,7 @@ SCENARIO(netMpFarRespawn, "net/mp-far-respawn", "Multiplayer on the procedural w
             if (c.remote) return &c;
         return nullptr;
     };
+    mpdist::Referee referee;
     for (int who = 0; who < 2; who++) {  // 0: the guest respawns; 1: the host
         const std::string tag = who == 0 ? "guest respawns: " : "host respawns: ";
         Sim& mine = who == 0 ? sim2 : ctx.sim;
@@ -1719,12 +1721,14 @@ SCENARIO(netMpFarRespawn, "net/mp-far-respawn", "Multiplayer on the procedural w
             const V3 a = ProcWorld::toGlobal(theirs.world, shown->frame().com), b = ProcWorld::toGlobal(mine.world, p);
             ctx.metric(tag + "where the other player shows it vs where it is", len(V3(a.x - b.x, 0, a.z - b.z)), "m", 0, 1.5);
         }
-        // The host's next slide (main.cpp: proc::groupFocus over every vehicle it has, its own and the guest's): both players are
-        // on land in the window it goes to.
+        // The host's next slide (main.cpp: the middle of the players, mpdist::Referee): both players are on land in the window it goes to.
+        const V3 hostAt = ctx.sim.cars[ctx.sim.player].frame().com;
+        referee.update(ctx.sim, host, ctx.t, &hostAt);
         V3 f;
-        const bool any = groupFocus(ctx.sim, false, ctx.sim.player, f);
+        bool edge = false;
+        const bool any = referee.focus(f, edge);
         int64_t ox = ctx.sim.world.proc.ox, oz = ctx.sim.world.proc.oz;
-        if (any && std::max(std::fabs(f.x), std::fabs(f.z)) >= kSlide) ProcWorld::snapOrigin((double)ctx.sim.world.proc.ox + f.x, (double)ctx.sim.world.proc.oz + f.z, ox, oz);
+        if (any && (edge || std::max(std::fabs(f.x), std::fabs(f.z)) >= kSlide)) ProcWorld::snapOrigin((double)ctx.sim.world.proc.ox + f.x, (double)ctx.sim.world.proc.oz + f.z, ox, oz);
         double worst = 0;
         for (const Car& c : ctx.sim.cars) {
             const V3 g = ProcWorld::toGlobal(ctx.sim.world, c.frame().com);
@@ -1733,17 +1737,6 @@ SCENARIO(netMpFarRespawn, "net/mp-far-respawn", "Multiplayer on the procedural w
         ctx.metric(tag + "the farthest player from the middle of the host's next window (its half: 1536)", worst, "m", 0, kWindowHalf - 100);
         mine.teleportCar(mine.player, who == 0 ? -20 : 20, who == 0 ? 12 : 0, 0);
         ctx.run(1.0, frameBoth);
-    }
-    // Players further apart than a window holds (driven apart): the host's window stays with the host, not a middle off everyone's land.
-    {
-        Sim s;
-        s.setupEmpty();
-        s.addCar(p4Runner(), V3(0, 1, 0), 0, V3(0.5, 0.5, 0.5));
-        s.addCar(p4Runner(), V3(3500, 1, 200), 0, V3(0.5, 0.5, 0.5));
-        s.cars[1].remote = true;
-        V3 f;
-        ctx.check("3.5 km apart: the host's window follows the host", groupFocus(s, false, 0, f) && std::fabs(f.x) < 5 && std::fabs(f.z) < 5);
-        ctx.check("1 km apart: the middle of the two, as before", (s.cars[1].translate(V3(-2500, 0, 0)), groupFocus(s, false, 0, f)) && std::fabs(f.x - 500) < 5);
     }
     client.close();
     host.close();

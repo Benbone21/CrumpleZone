@@ -282,6 +282,9 @@ public:
     // every vehicle there but sim.cars[skip] (its own): the spawn pad's places first (from its own round), else rings round the
     // spawn, on open ground (not in water, not on a rock or a prop). False: nowhere clear was found (p is beside the spawn).
     static bool spawnSpot(const Sim& sim, int self, int skip, V3& p, double& yaw);
+    // A spot of its own on rings 8 m apart round `centre` (firstRing..lastRing, from `self`'s place on each), clear of every vehicle but
+    // sim.cars[skip], on open ground `margin` in from the map's edge, facing `facing`. False: none.
+    static bool ringSpot(const Sim& sim, int self, int skip, const V3& centre, double facing, double margin, int firstRing, int lastRing, V3& p, double& yaw);
     // Every frame before the physics: reads the network and applies other players'
     // vehicles, lines and states.
     void receive(Sim& sim, double now);
@@ -324,6 +327,7 @@ public:
     double punchSecs = 2.5;
 
     std::string ownerName(uint32_t netId) const;
+    uint32_t ridingIn(int peer) const { return peer >= 0 && peer < net::kMaxPeers ? ridingOf[peer] : 0; }  // host: the vehicle they ride along in (0: none)
     static int ownerOf(uint32_t netId) { return (int)(netId >> 16); }
 
     // Getting into someone else's vehicle with nobody in it (a buddy's truck while they're on

@@ -130,7 +130,7 @@ bool okPos(const V3& p) { return okNum(p.x, kPosLimit) && okNum(p.y, kPosLimit) 
 
 
 // Race chatter only the host may say: a guest sending these is lying about who's in charge.
-bool hostOnlyChatter(const std::string& t) { return t.rfind("job", 0) == 0 || t.rfind("restart", 0) == 0 || t.rfind("procshift", 0) == 0; }
+bool hostOnlyChatter(const std::string& t) { return t.rfind("job", 0) == 0 || t.rfind("restart", 0) == 0 || t.rfind("procshift", 0) == 0 || t.rfind("mpdist", 0) == 0; }
 
 std::vector<uint8_t> frame(MsgType t, const Writer& w) {
     std::vector<uint8_t> m;
@@ -1774,23 +1774,25 @@ void NetSession::adopt(Sim& sim) {
     }
 }
 
-bool NetSession::spawnSpot(const Sim& sim, int self, int skip, V3& p, double& yaw) {
+// (Nobody's vehicle but sim.cars[skip] within reach of one of radius myR at q.)
+static bool clearOfCars(const Sim& sim, int skip, const V3& q, double myR) {
+    for (int i = 0; i < (int)sim.cars.size(); i++) {
+        if (i == skip) continue;
+        const Car& o = sim.cars[i];
+        const V3 d = o.frame().com - q;
+        const double r = std::max(o.spec->length, o.spec->width) / 2 + myR + 1.0;
+        if (d.x * d.x + d.z * d.z < r * r) return false;
+    }
+    return true;
+}
+
+bool NetSession::ringSpot(const Sim& sim, int self, int skip, const V3& centre, double facing, double margin, int firstRing, int lastRing, V3& p, double& yaw) {
     const World& w = sim.world;
     const int me = std::max(0, self);
     const double myR = skip >= 0 && skip < (int)sim.cars.size() ? std::max(sim.cars[skip].spec->length, sim.cars[skip].spec->width) / 2 : 2.5;
-    auto clearOfCars = [&](const V3& q) {
-        for (int i = 0; i < (int)sim.cars.size(); i++) {
-            if (i == skip) continue;
-            const Car& o = sim.cars[i];
-            const V3 d = o.frame().com - q;
-            const double r = std::max(o.spec->length, o.spec->width) / 2 + myR + 1.0;
-            if (d.x * d.x + d.z * d.z < r * r) return false;
-        }
-        return true;
-    };
     // (A spot off the pad: on the map, out of the water, and not on a rock, a prop or a trunk: the ground itself is the top there.)
     auto clearGround = [&](const V3& q) {
-        const double lim = w.halfSize() - 30;
+        const double lim = w.halfSize() - margin;
         if (std::fabs(q.x) > lim || std::fabs(q.z) > lim) return false;
         const double g = w.height(q.x, q.z);
         if (w.waterLevel(q.x, q.z) > g + 0.2) return false;
@@ -1801,31 +1803,39 @@ bool NetSession::spawnSpot(const Sim& sim, int self, int skip, V3& p, double& ya
         }
         return true;
     };
+    for (int ring = firstRing; ring <= lastRing; ring++) {
+        const int n = 6 * ring;
+        const double R = 8.0 * ring;
+        for (int j = 0; j < n; j++) {
+            const int idx = (j + me * n / net::kMaxPeers) % n;
+            const double a = facing + 6.283185307179586 * idx / n;
+            const V3 q = centre + V3(std::sin(a), 0, std::cos(a)) * R;
+            if (clearOfCars(sim, skip, q, myR) && clearGround(q)) {
+                p = q, yaw = facing;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool NetSession::spawnSpot(const Sim& sim, int self, int skip, V3& p, double& yaw) {
+    const World& w = sim.world;
+    const int me = std::max(0, self);
+    const double myR = skip >= 0 && skip < (int)sim.cars.size() ? std::max(sim.cars[skip].spec->length, sim.cars[skip].spec->width) / 2 : 2.5;
     // The places on the spawn pad first, from mine round.
     for (int k = 0; k < net::kMaxPeers; k++) {
         V3 q;
         double qyaw = w.spawnYaw;
         if (!w.spawnSlot((me + k) % net::kMaxPeers, q, qyaw)) continue;
-        if (clearOfCars(q)) {
+        if (clearOfCars(sim, skip, q, myR)) {
             p = q, yaw = qyaw;
             return true;
         }
     }
     // Then rings round the spawn, 8 m apart, everyone starting at their own place on each (two guests never pick one spot),
     // facing the way the spawn does.
-    for (int ring = 1; ring <= 6; ring++) {
-        const int n = 6 * ring;
-        const double R = 8.0 * ring;
-        for (int j = 0; j < n; j++) {
-            const int idx = (j + me * n / net::kMaxPeers) % n;
-            const double a = w.spawnYaw + 6.283185307179586 * idx / n;
-            const V3 q = w.spawn + V3(std::sin(a), 0, std::cos(a)) * R;
-            if (clearOfCars(q) && clearGround(q)) {
-                p = q, yaw = w.spawnYaw;
-                return true;
-            }
-        }
-    }
+    if (ringSpot(sim, self, skip, w.spawn, w.spawnYaw, 30, 1, 6, p, yaw)) return true;
     // (Nowhere clear near: at least not on anyone, if that can be had.)
     const V3 side = V3(std::sin(w.spawnYaw), 0, std::cos(w.spawnYaw));
     p = w.spawn + side * (6.5 * me), yaw = w.spawnYaw;
