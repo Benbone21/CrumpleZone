@@ -349,6 +349,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             }
             if (netHost && sessionPort > 0) info("OVER THE INTERNET, FORWARD PORT " + std::to_string(sessionPort) + " (TCP AND UDP)");
             button(MEET_ROW, "MEET UP", "YOUR TRUCK TO A BUDDY'S (AGAIN: THE NEXT ONE)");
+            if (netHost && !title) button(LEVELS_ROW, "LEVELS", "START A RACE, CLIMB OR WORLD FOR EVERYONE IN THE GAME");  // (the host picks; guests get it)
             button(LEAVE_ROW, netHost ? "STOP HOSTING" : "LEAVE THE GAME", netHost ? "EVERYONE ELSE IS DROPPED" : "");
             inCol(1, c1);
             button(BACK_ROW, "BACK");
@@ -561,6 +562,7 @@ std::vector<PauseMenu::Row> PauseMenu::rowsFor(int tabIndex, const Settings& s) 
     }
     char speed[32]; std::snprintf(speed, sizeof speed, "%.2gX", s.winchSpeed);
     choice(WINCHSPEED, "WINCH SPEED", speed, 11, "1X: RATED SPEED. 4X: DEFAULT. UP TO 20X. " + s.keys.name(KA_WINCH_SLOWER) + " AND " + s.keys.name(KA_WINCH_FASTER) + " CHANGE IT WHILE DRIVING.");
+    if (!title) button(PILOTPAGE_ROW, "AUTOPILOT", "WHERE TO, HOW FAST, WHICH ROUTE (" + s.keys.name(KA_AUTOPILOT_PICK) + " OPENS IT TOO)");
     header("HUD AND CAMERA");
     choice(FULLHUD, "SHOW FULL HUD", s.fullHud ? "ALWAYS" : "CONTEXTUAL", 2, "CONTEXTUAL: FUEL, TERRAIN, DAMAGE AND 4X4 SHOW WHEN THEY MATTER. HOLD THE FULL HUD KEY (CONTROLS) TO SEE ALL.");
     slider(FOV, "FIELD OF VIEW", std::to_string((int)std::lround(s.fovDeg)) + " DEG", (s.fovDeg - 50) / 50, 26);
@@ -645,6 +647,7 @@ void PauseMenu::show(int currentVehicle, int currentMap) {
     keyNote.clear();
     portEdited = portFresh = false;
     standalone = settingsFromPause = devInGroup = false;
+    returnPage = 0;
     tab = T_GRAPHICS;
     scroll = 0;
     sel = 0;
@@ -694,6 +697,7 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
     const Row& it = r[row];
     auto goPage = [&](int p, int id) {
         page = p;
+        returnPage = 0;
         portEdited = portFresh = false;
         hits.clear();
         dragSlider = -1;
@@ -708,7 +712,17 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case VEHICLE_ROW:
         case MAP_ROW: return change(row, 1, s);  // (the old title page's pickers)
         case FREEDRIVE_ROW: return {FREE_DRIVE, vehicle};
-        case LEVELS_ROW: goPage(4, LEVEL_PICK); return {};
+        case LEVELS_ROW: {
+            const int from = page == 2 && !title ? 2 : 0;
+            goPage(4, LEVEL_PICK);
+            returnPage = from;
+            return {};
+        }
+        case PILOTPAGE_ROW: {
+            goPage(3, DEST_ROW);
+            returnPage = 1;
+            return {};
+        }
         case JOB_PICK:
         case JOB_GO: return netClient ? Result{} : Result{JOB_START, jobPick};
         case JOB_STOP_ROW: return {JOB_STOP};
@@ -723,7 +737,6 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case LQUIT_ROW: return {LEVEL_QUIT};
         case MAINMENU_ROW: return {MAIN_MENU};
         case EDITBACK_ROW: return {EDITOR_BACK};
-        case GARAGE_ROW: return {GARAGE};
         case SETTINGS_ROW:
             page = 1, tab = -1, settingsFromPause = !title;
             hits.clear();
@@ -733,13 +746,13 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case PGO_ROW:
         case DEST_ROW: return {PILOT_GO};
         case PSTOP_ROW: return {PILOT_STOP};
+        case GARAGE_ROW: return {GARAGE};
         case CONTROLS_ROW: return {CONTROLS};
         case DEVHOT_ROW: return change(row, 1, s);
         case DEVSEC_ROW: return {DEV_RUN, devmenu::TELEPORT_SECTION, std::min(std::max(devSection, 0), std::max(0, it.count - 1))};
         case DEVPLACE_ROW: return {DEV_RUN, devmenu::TELEPORT_PLACE, std::min(std::max(devPlace, 0), std::max(0, it.count - 1))};
         case DETECT_ROW: return {DETECT_GFX};
         case KEYS_RESET: s.keys.resetDefaults(); listening = -1, keyNote.clear(); return {CHANGED};
-        case RESET_ROW: return {RESET};
         case QUIT_ROW: return {QUIT};
         case BACK_ROW:
             if (page == 1 && tab == T_DEV && devInGroup) {  // (one group's rows: back to the groups)
@@ -757,6 +770,20 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
                 return {};
             }
             if (standalone && !title) return {RESUME};  // (opened by its key: back out to the game)
+            if (returnPage == 2) {  // (LEVELS from the multiplayer page)
+                goPage(2, LEVELS_ROW);
+                return {};
+            }
+            if (returnPage == 1) {  // (AUTOPILOT from the GENERAL tab)
+                const bool fromPause = settingsFromPause;
+                returnPage = 0, hits.clear();
+                page = 1, tab = -1, settingsFromPause = fromPause;
+                setTab(T_GENERAL);
+                const std::vector<Row> nr = rows(s);
+                for (int k = 0; k < (int)nr.size(); k++)
+                    if (nr[k].id == PILOTPAGE_ROW) sel = k;
+                return {};
+            }
             goPage(0, page == 2 ? MULTI_ROW : page == 4 ? LEVELS_ROW : SETTINGS_ROW);
             return {};
         case HOST_ROW:

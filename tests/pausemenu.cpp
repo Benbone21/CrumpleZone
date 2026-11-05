@@ -217,3 +217,48 @@ SCENARIO(mainMenuRoutes, "pausemenu/main-menu-routes", "Every route to MAIN MENU
     PauseMenu closed;
     ctx.check("a closed menu is no main menu", !closed.newMainMenu(false));
 }
+
+SCENARIO(levelsWhileHosting, "pausemenu/host-levels", "A host in a game gets a LEVELS row on the multiplayer page; guests and the offline pause menu don't; BACK returns to multiplayer") {
+    Settings s;
+    PauseMenu m;
+    m.show(0, 0);
+    m.netActive = true, m.netHost = true, m.netClient = false;
+    m.levels.push_back({});
+    m.levels.back().name = "TEST";
+    m.showMultiplayer(0, 0);
+    ctx.check("host: LEVELS is on the multiplayer page", has(m.labels(s), "LEVELS"));
+    ctx.check("the pause menu itself is still five rows", [&] { PauseMenu p; p.show(0, 0); return p.labels(s).size() == 5; }());
+    m.select(s, "LEVELS");
+    ctx.check("ENTER opens the levels page", m.key(SC_RETURN, s).action == PauseMenu::NONE && m.pageNow() == 4);
+    ctx.check("PLAY starts the level for the session", (m.select(s, "PLAY"), m.key(SC_RETURN, s).action == PauseMenu::PLAY_LEVEL));
+    m.select(s, "BACK");
+    m.key(SC_RETURN, s);
+    ctx.check("BACK is the multiplayer page again", m.pageNow() == 2);
+    PauseMenu g;
+    g.show(0, 0);
+    g.netActive = true, g.netHost = false, g.netClient = true;
+    g.showMultiplayer(0, 0);
+    ctx.check("guest: no LEVELS row", !has(g.labels(s), "LEVELS"));
+    PauseMenu o;
+    o.showMultiplayer(0, 0);
+    ctx.check("not in a session: no LEVELS row", !has(o.labels(s), "LEVELS"));
+}
+
+SCENARIO(autopilotRow, "pausemenu/autopilot-row", "SETTINGS > GENERAL has an AUTOPILOT row in a world (not on the main menu) that opens page 3; BACK returns to GENERAL") {
+    Settings s;
+    PauseMenu m;
+    m.showSettings(PauseMenu::T_GENERAL, 0, 0, true);
+    ctx.check("in a world: AUTOPILOT row on GENERAL", has(m.labels(s), "AUTOPILOT"));
+    ctx.check("not on the other tabs", (m.setTab(PauseMenu::T_AUDIO), !has(m.labels(s), "AUTOPILOT")));
+    m.setTab(PauseMenu::T_GENERAL);
+    m.select(s, "AUTOPILOT");
+    ctx.check("ENTER opens the autopilot page", m.key(SC_RETURN, s).action == PauseMenu::NONE && m.pageNow() == 3 && has(m.labels(s), "DRIVE TO"));
+    m.select(s, "BACK");
+    m.key(SC_RETURN, s);
+    ctx.check("BACK is Settings > GENERAL, on the AUTOPILOT row", m.pageNow() == 1 && m.tabNow() == PauseMenu::T_GENERAL && m.selectedLabel(s) == "AUTOPILOT");
+    PauseMenu t;
+    t.showTitle(0, 0);
+    t.showSettings(PauseMenu::T_GENERAL, 0, 0, false);
+    t.title = true;
+    ctx.check("title: no AUTOPILOT row", !has(t.labels(s), "AUTOPILOT"));
+}
