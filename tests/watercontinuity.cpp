@@ -1,7 +1,9 @@
 // Water that runs like water (docs/plans/notes-backlog.md "Water"): a channel from its source to its outlet in one piece, no strips.
 #include <algorithm>
 #include <cstdio>
+#include <cmath>
 #include <cstdlib>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -22,10 +24,44 @@ struct WaterPiece {
     bool clipped(int n) const { return i0 <= 1 || j0 <= 1 || i1 >= n - 2 || j1 >= n - 2; }  // (runs off the grid's edge: its length isn't known)
 };
 
-std::vector<WaterPiece> waterPieces(const World& w) {
+std::vector<char> wetCells(const World& w) {
     const int n = w.gridSize();
     std::vector<char> wet((size_t)n * n, 0);
     for (int id = 0; id < n * n; id++) wet[id] = w.waterY[id] > -1e8f && w.waterY[id] > w.cellCenter(id).y;
+    return wet;
+}
+
+// The ways water is meant to go on without showing on the grid, as water: down a falls (its model is the water) and past a tread it runs
+// under or that climbs out of a ford: a channel broken only by these is one channel.
+std::vector<char> withCrossings(const World& w, std::vector<char> wet) {
+    const int n = w.gridSize();
+    const double half = w.halfSize();
+    for (const Falls& f : w.falls) {
+        const V3 a = f.lip, b = f.base();
+        const double run = std::hypot(b.x - a.x, b.z - a.z) + 30, ux = std::cos(f.yaw), uz = -std::sin(f.yaw), wide = f.width / 2 + 8;
+        for (double t = -15; t <= run; t += 1)
+            for (double l = -wide; l <= wide; l += 1) {
+                const int id = w.cellIndex(a.x + ux * t - uz * l, a.z + uz * t + ux * l);
+                if (id >= 0) wet[id] = 1;
+            }
+    }
+    std::vector<int> tread;  // (cells of tread within 6 m of water, reached outward from the water)
+    for (int i = 6; i < n - 6; i += 1)
+        for (int j = 6; j < n - 6; j += 1) {
+            if (!wet[i * n + j] || (wet[(i - 1) * n + j] && wet[(i + 1) * n + j] && wet[i * n + j - 1] && wet[i * n + j + 1])) continue;
+            for (int a = i - 6; a <= i + 6; a++)
+                for (int b = j - 6; b <= j + 6; b++)
+                    if (!wet[a * n + b]) {
+                        const RoadInfo r = w.roadAt(a - half, b - half);
+                        if (r.near && (r.paint == PAINT_TRAIL || r.paint == PAINT_ROAD || r.paint == PAINT_TRACK || std::fabs(r.lateral) > 0)) tread.push_back(a * n + b);
+                    }
+        }
+    for (int id : tread) wet[id] = 1;
+    return wet;
+}
+
+std::vector<WaterPiece> waterPieces(const World& w, std::vector<char> wet) {
+    const int n = w.gridSize();
     std::vector<WaterPiece> out;
     std::vector<int> st;
     for (int s = 0; s < n * n; s++) {
@@ -36,7 +72,7 @@ std::vector<WaterPiece> waterPieces(const World& w) {
         while (!st.empty()) {
             const int id = st.back(), i = id / n, j = id % n;
             st.pop_back();
-            p.cells++, p.flowing += w.flowX[id] != 0 || w.flowZ[id] != 0, p.ids.push_back(id);
+            p.cells += w.waterY[id] > -1e8f, p.flowing += w.flowX[id] != 0 || w.flowZ[id] != 0, p.ids.push_back(id);
             p.i0 = std::min(p.i0, i), p.i1 = std::max(p.i1, i), p.j0 = std::min(p.j0, j), p.j1 = std::max(p.j1, j);
             for (int a = std::max(0, i - 1); a <= std::min(n - 1, i + 1); a++)
                 for (int b = std::max(0, j - 1); b <= std::min(n - 1, j + 1); b++)
@@ -47,6 +83,8 @@ std::vector<WaterPiece> waterPieces(const World& w) {
     }
     return out;
 }
+
+std::vector<WaterPiece> waterPieces(const World& w) { return waterPieces(w, wetCells(w)); }
 
 void report(Ctx& ctx, const World& w, const std::vector<WaterPiece>& ps, const std::string& label) {
     const int n = w.gridSize();
@@ -63,6 +101,51 @@ void report(Ctx& ctx, const World& w, const std::vector<WaterPiece>& ps, const s
             std::printf("  %s %ld cells, x %.0f..%.0f z %.0f..%.0f\n", p.flows() ? "flow " : "still", p.cells, p.i0 - w.halfSize(), p.i1 - w.halfSize(), p.j0 - w.halfSize(), p.j1 - w.halfSize());
         }
     }
+}
+
+// Flowing channels (falls and tread crossings counted through), how many are cut off under 100 m long, and how many pairs lie within 15 m
+// of each other: a break in what should be one channel.
+struct Continuity {
+    long flowing = 0, cutOff = 0, breaks = 0;
+};
+Continuity continuity(const World& w) {
+    const int n = w.gridSize();
+    const std::vector<WaterPiece> ps = waterPieces(w, withCrossings(w, wetCells(w)));
+    Continuity c;
+    constexpr int kBin = 16;
+    const int nb = n / kBin + 1;
+    std::vector<std::vector<int>> bins((size_t)nb * nb);
+    for (size_t k = 0; k < ps.size(); k++) {
+        if (!ps[k].flows()) continue;
+        c.flowing++, c.cutOff += ps[k].span() < 100 && !ps[k].clipped(n);
+        for (int id : ps[k].ids) {
+            std::vector<int>& b = bins[(size_t)(id / n / kBin) * nb + (id % n) / kBin];
+            if (b.empty() || b.back() != (int)k) b.push_back((int)k);
+        }
+    }
+    std::set<std::pair<int, int>> pairs;
+    for (int a = 0; a < nb; a++)
+        for (int b = 0; b < nb; b++)
+            for (int p : bins[(size_t)a * nb + b])
+                for (int da = 0; da <= 1 && a + da < nb; da++)
+                    for (int db = -1; db <= 1 && b + db >= 0 && b + db < nb; db++)
+                        for (int q : bins[(size_t)(a + da) * nb + b + db]) {
+                            if (p == q) continue;
+                            // (two pieces in neighbouring bins: how near, by their cells there)
+                            double best = 1e18;
+                            for (int u : ps[p].ids) {
+                                const int ui = u / n, uj = u % n;
+                                if (ui / kBin != a || uj / kBin != b) continue;
+                                for (int v : ps[q].ids) {
+                                    const int vi = v / n, vj = v % n;
+                                    if (vi / kBin != a + da || vj / kBin != b + db) continue;
+                                    best = std::min(best, std::hypot((double)(ui - vi), (double)(uj - vj)));
+                                }
+                            }
+                            if (best < 15) pairs.insert({std::min(p, q), std::max(p, q)});
+                        }
+    c.breaks = (long)pairs.size();
+    return c;
 }
 
 // The piece of water at (x, z), by the cell nearest it that's wet within `reach` m: its index in pieces, -1 if none.
@@ -120,13 +203,12 @@ SCENARIO(waterBackcountry, "water/backcountry", "Backcountry's water runs in cha
     const World w(MAP_BACKCOUNTRY);
     const std::vector<WaterPiece> ps = waterPieces(w);
     report(ctx, w, ps, "backcountry");
-    const int n = w.gridSize();
-    // (Flowing pieces: Elk River between its two falls and the sea (3), Copper Creek, the Creek Crawl's and the canyon's trickles, the
+    // (Flowing water, falls and tread crossings counted through: Elk River, Copper Creek, the Creek Crawl's and the canyon's trickles, the
     // Open Country's river.)
-    int flowing = 0, cutOff = 0;
-    for (const WaterPiece& p : ps) flowing += p.flows(), cutOff += p.flows() && p.span() < 100 && !p.clipped(n);
-    ctx.metric("flowing pieces", flowing, "", 5, 8);
-    ctx.metric("...of them under 100 m", cutOff, "", 0, 1);
+    const Continuity c = continuity(w);
+    ctx.metric("flowing channels", c.flowing, "", 4, 6);
+    ctx.metric("...of them under 100 m", c.cutOff, "", 0, 0);
+    ctx.metric("...breaks of under 15 m", c.breaks, "", 0, 0);
 
     checkDescends(ctx, w, ps, "COPPER CREEK", 700, 0.7);
     checkDescends(ctx, w, ps, "ROCKY RIVER", 1100, 1.8);
@@ -157,10 +239,25 @@ SCENARIO(waterBackcountry, "water/backcountry", "Backcountry's water runs in cha
         ctx.metric("ROCKY RIVER: the ford on BOULDER GULLY", deepest, "m", 0.3, 0.8);
     }
 }
-SCENARIO(waterPiecesProc, "water/pieces-procedural", "The procedural world's water") {
-    for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
-        World::procSeed = seed, World::procOriginSet = false;
+
+SCENARIO(waterProcedural, "water/procedural", "The procedural world's rivers and creeks run unbroken through a window: no dry bands across them, few short pieces (falls and tread crossings counted through; v10 had 134, 9 and 91 pieces, most under 100 m)") {
+    struct Limit {
+        uint64_t seed;
+        long channels, cutOff, breaks;  // (at least, at most, at most)
+    };
+    // (What's left: a creek's head above a stretch too far over its land to sink, and trails riding a creek's line for a way.)
+    for (const Limit& l : {Limit{1, 8, 14, 18}, Limit{2, 3, 1, 1}, Limit{123456789, 8, 7, 7}, Limit{77, 6, 5, 9}}) {
+        World::procSeed = l.seed, World::procOriginSet = false;
         const World w(MAP_PROCEDURAL);
-        report(ctx, w, waterPieces(w), "seed " + std::to_string(seed));
+        report(ctx, w, waterPieces(w), "seed " + std::to_string(l.seed));
+        const Continuity c = continuity(w);
+        char b[120];
+        std::snprintf(b, sizeof b, "seed %llu: %ld channels, %ld cut off under 100 m, %ld breaks", (unsigned long long)l.seed, c.flowing, c.cutOff, c.breaks);
+        ctx.note(b);
+        const std::string tag = "seed " + std::to_string(l.seed) + ": ";
+        ctx.check(tag + "there are rivers and creeks", c.flowing >= l.channels, std::to_string(c.flowing));
+        ctx.check(tag + "few cut off under 100 m", c.cutOff <= l.cutOff, std::to_string(c.cutOff));
+        ctx.check(tag + "few breaks of under 15 m", c.breaks <= l.breaks, std::to_string(c.breaks));
     }
+    World::procOriginSet = false;
 }
