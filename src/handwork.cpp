@@ -454,6 +454,18 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
         h.hasWork = true, h.workAt = post;
         break;
     }
+    case IA_POUR_CAN: {  // the can tipped over the filler, its spout in
+        const double tilt = 0.35 + 1.0 * smooth(std::min(1.0, t * 2.5)), settle = 1 - std::pow(1 - std::min(1.0, t * 4), 2);
+        const V3 yv = norm(kUp * std::cos(tilt) - toward * std::sin(tilt)), side = cross(kUp, toward);
+        h.hasWork = true, h.workAt = o.at;
+        sc.put(repairPartModel(PART_FUEL_CAN), lerp(o.at + toward * 0.6 + kUp * 0.1, o.at + toward * 0.32 + kUp * 0.02, settle), side, yv);
+        sc.both(0.12, 0.3);
+        break;
+    }
+    case IA_FILL_CAN:  // set down under the pump's nozzle
+        h.hasWork = true, h.workAt = o.at;
+        sc.put(repairPartModel(PART_EMPTY_CAN), V3(o.at.x, sim.world.height(o.at.x, o.at.z), o.at.z) + toward * 0.45, cross(kUp, toward), kUp);
+        break;
     case IA_OPEN_CACHE:
     case IA_SEARCH_WRECK:
         sc.lever(toolId(TOOL_PRY_BAR), o.at + kUp * 0.1, toward, secs / 1.1 * M_PI * 2);

@@ -59,7 +59,7 @@ void wheel(B& b, const Wear& w, const V3& c, double R, bool tire, double width =
     const double hw = width / 2;
     if (tire) {
         b.style(V3(0.05, 0.05, 0.055), MATTE);
-        b.lathe(V3(0, 0, 0), {V2(R * 0.56, -hw), V2(R * 0.92, -hw), V2(R, -hw * 0.55), V2(R, hw * 0.55), V2(R * 0.92, hw), V2(R * 0.56, hw)}, 14, true);
+        b.lathe(V3(0, 0, 0), {V2(R * 0.56, -hw), V2(R * 0.92, -hw), V2(R, -hw * 0.55), V2(R, hw * 0.55), V2(R * 0.92, hw), V2(R * 0.56, hw)}, 12, true);
     }
     b.style(rustOf(w.seed, 300) * 0.9, METAL);
     b.lathe(V3(0, 0, 0), {V2(0.0, -hw * 0.5), V2(R * 0.56, -hw * 0.5), V2(R * 0.58, hw * 0.7), V2(R * 0.3, hw * 0.45), V2(0.0, hw * 0.45)}, 12, false);
@@ -161,7 +161,7 @@ void buildShell(B& b, Wear& w, const Shell& s) {
         for (double x : {dF, dB}) b.box(V3(x, (s.sill + s.belt) / 2 + 0.03, sz * (zc + 0.016)), V3(0.012, s.belt - s.sill - 0.1, 0.006));
         if (!s.slab) b.box(V3(dB - 0.95, (s.sill + s.belt) / 2, sz * (zc + 0.016)), V3(0.012, s.belt - s.sill - 0.1, 0.006));
         b.box(V3(dB + 0.1, s.belt - 0.1, sz * (zc + 0.018)), V3(0.12, 0.03, 0.01));
-        patches(b, w, 8, s.xr + 0.2, xf - 0.2, s.sill + 0.04, s.belt - 0.04, sz * (zc + 0.012), w.seed + 20 + k);
+        patches(b, w, 6, s.xr + 0.2, xf - 0.2, s.sill + 0.04, s.belt - 0.04, sz * (zc + 0.012), w.seed + 20 + k);
         // A door gone leaves a dark doorway; one hanging swings off its front hinge.
         if (!s.door[k] || s.doorOpen[k] > 0) {
             b.style(V3(0.035, 0.03, 0.028), MATTE);
@@ -400,7 +400,7 @@ void sedanCrushed(B& b, const P& p) {
     Shell s;
     s.crush = 0.3, s.crushRear = 0.1, s.hood = 2, s.wheels[1] = false, s.doorOpen[1] = 32;
     buildShell(b, w, s);
-    glass(b, w.seed, V3(0.3, 0.004, 1.5), 1.2, 16);
+    glass(b, w.seed, V3(0.3, 0.004, 1.5), 1.2, 8);
 }
 void sedanStripped(B& b, const P& p) {
     Wear w = wearOf(p, 111);
@@ -415,7 +415,7 @@ void sedanNose(B& b, const P& p) {
     s.noseIn = 0.55, s.cowl = 0.72, s.hood = 1, s.trunk = 2, s.crush = 0.1, s.wheels[2] = false, s.doorOpen[0] = 55;
     s.axles = {-1.4, 1.2};
     buildShell(b, w, s);
-    glass(b, w.seed, V3(2.2, 0.004, -0.2), 1.0, 18);
+    glass(b, w.seed, V3(2.2, 0.004, -0.2), 1.0, 10);
 }
 
 Reg sedanReg({"wreck_sedan", "WRECKED SEDAN", "BUILDINGS", "An old four-door left to rust: the roof pressed in, or stripped to the shell, or its nose stove in", 5.0,

@@ -144,7 +144,8 @@ std::string step(Sim& sim, const Walker* wk, double dt, int* cash) {
                 said = h.pumped > 0.05 ? stopNote("THE HOSE POPPED OUT:") : "THE HOSE POPPED OUT";
                 h.release();
             } else if (!h.full && !h.broke) {
-                const double rm = room(c);
+                const double spare = !c.remote && c.jerry >= 0 ? std::max(0.0, c.spec->jerryCan - c.jerry) : 0;  // (the truck's spare can tops up after the tank)
+                const double rm = room(c) + spare;
                 double l = std::min(kFlow * dt, rm);
                 if (cash && l > 0) {  // (a dollar at a time, and no further than the money goes)
                     const double affordable = (*cash - h.owed) / kPricePerLiter;
@@ -162,10 +163,12 @@ std::string step(Sim& sim, const Walker* wk, double dt, int* cash) {
                     if (c.remote) h.unsent += l;
                     else {
                         if (c.fuel < 0) c.fuel = c.spec->fuelCapacity;
-                        c.fuel = std::min(c.spec->fuelCapacity, c.fuel + l);
+                        const double tank = std::min(l, room(c));
+                        c.fuel = std::min(c.spec->fuelCapacity, c.fuel + tank);
+                        if (l > tank) c.jerry = std::min(c.spec->jerryCan, c.jerry + l - tank);
                     }
                 }
-                if (!c.remote && room(c) <= 1e-6) h.full = true, said = stopNote("TANK FULL:");
+                if (!c.remote && rm - l <= 1e-6) h.full = true, said = stopNote("TANK FULL:");
             }
             if (h.on() && c.remote) {
                 h.sendIn -= dt;

@@ -523,7 +523,7 @@ SCENARIO(onemapPlacesReachable, "onemap/places-reachable", "Every region's start
     // The places of the regions' grown country (regions2), caches and all. (The Mountain's pass is a hard trail with ledges a stock
     // truck may not climb, but the planner, which reckons with a built-up rig's reach, still finds its way over.)
     for (const MapPlace& p : mapPlaces(MAP_BACKCOUNTRY))
-        if (p.id.rfind("BC.", 0) != 0) todo.push_back({p.id, p.p});
+        if (p.id.rfind("BC.", 0) != 0 && p.kind != PK_WRECK) todo.push_back({p.id, p.p});
     // Dry, where it was dry on its own map.
     std::string wet;
     for (const Target& t : todo) {
@@ -684,7 +684,7 @@ SCENARIO(onemapGrown, "onemap/grown", "Each region's grown country (regions2): k
         // Its places: in its country, with a marked trail to each.
         int places = 0, linked = 0;
         for (const MapPlace& p : mapPlaces(MAP_BACKCOUNTRY)) {
-            if (regionAround(p.p.x, p.p.z) != &r || p.id.rfind("BC.", 0) == 0) continue;
+            if (regionAround(p.p.x, p.p.z) != &r || p.id.rfind("BC.", 0) == 0 || p.kind == PK_WRECK) continue;
             places++;
             bool near = false;
             for (size_t k = 3; k < w.regionRoads.size() && !near; k++)

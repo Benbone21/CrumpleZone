@@ -143,6 +143,7 @@ SCENARIO(fuelPumpFlow, "fuel/pump-flow", "Hose from the pump to the filler: fuel
     const double liters = c.spec->fuelCapacity - 20;
     ctx.check("charged per litre", std::abs(1000 - cash - (int)(liters * fuel::kPricePerLiter)) <= 1, std::to_string(cash));
     const int spent = cash;
+    ctx.check("a truck's spare can tops up after the tank", c.jerry < 0 || c.jerry == c.spec->jerryCan);
     fuel::step(ctx.sim, &f.wk, 5.0, &cash);
     ctx.check("no more flows", cash == spent);
     doAt(ctx.sim, f.ia, f.wk, f.fill, IA_UNPLUG_HOSE);

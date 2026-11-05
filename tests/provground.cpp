@@ -162,12 +162,12 @@ SCENARIO(provGroundYard, "levels/model-yard", "The proving ground's model yard s
     std::string missing;
     for (const mk::ModelDef& d : mk::catalog())
         for (int v = 0; v < (int)d.variants.size(); v++) {
-            bool in = d.id == "fp_hand" || d.id == "lug_nut" || d.id == "waterfall" || d.id == "timber_bridge";  // (the falls are on the rivers; the bridges over them, procedural)
+            bool in = d.id == "fp_hand" || d.id == "lug_nut" || d.id == "waterfall" || d.id == "timber_bridge" || (d.id.rfind("wreck_", 0) == 0 && d.id != "wreck_pickup");  // (the falls are on the rivers; the bridges over them, procedural)
             for (const R& r : rs) in |= r.id == d.id && r.variant == v;
             if (!in) missing += d.id + "/" + std::to_string(v) + " ";
         }
     ctx.check("every design of every model is there", missing.empty(), missing);
-    ctx.check("(count)", yard >= want - 8, std::to_string(yard) + " of " + std::to_string(want));
+    ctx.check("(count)", yard >= want - 8 - 11, std::to_string(yard) + " of " + std::to_string(want));  // (the 11 designs of the wrecks that are not the pickup: not shown here, the lab has them)
     int overlaps = 0;
     double minX = 1e9, minZ = 1e9;
     for (size_t i = 0; i < rs.size(); i++) {
