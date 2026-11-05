@@ -73,7 +73,7 @@ struct Settings {
 
 class PauseMenu {
 public:
-    enum Action { NONE, RESUME, GARAGE, CONTROLS, RESET, QUIT, CHANGED, HOST, JOIN, LEAVE, PILOT_GO, PILOT_STOP,
+    enum Action { NONE, RESUME, GARAGE, CONTROLS, QUIT, CHANGED, HOST, JOIN, LEAVE, PILOT_GO, PILOT_STOP,
                   DETECT_GFX, FREE_DRIVE, PLAY_LEVEL, EDIT_LEVEL, EDITOR, LEVEL_RESTART, LEVEL_QUIT, MAIN_MENU, JOB_START, JOB_STOP, MEET_UP,
                   CANCEL_JOIN, MODEL_LAB, NEW_SECTION, EDITOR_BACK, DEV_RUN };
     struct Result {
@@ -219,6 +219,7 @@ private:
     int devGroup = 0;                    // the DEV tab: which group
     int devSection = 0, devPlace = 0;    // the TELEPORT page's pickers
     bool settingsFromPause = false;      // Settings was opened from the pause menu's row (BACK returns there; otherwise BACK leaves the menu)
+    int returnPage = 0;                  // LEVELS or AUTOPILOT opened from a row of another page (2 multiplayer, 1 settings): BACK goes there
     bool standalone = false;             // opened straight onto a page by a key (autopilot, jobs): BACK leaves the menu
     int tab = T_GRAPHICS;                // the SETTINGS page's tab
     bool devInGroup = false;             // the DEV tab shows one group's rows (otherwise the groups)

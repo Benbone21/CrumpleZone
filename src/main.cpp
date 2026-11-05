@@ -77,6 +77,7 @@
 #include "hudkit.h"
 #include "level.h"
 #include "levelrun.h"
+#include "mpdistance.h"
 #include "mpmenu.h"
 #include "mpmenudraw.h"
 #include "rendezvous.h"
@@ -3014,6 +3015,8 @@ int main(int argc, char** argv) {
     };
     // Getting into other vehicles (carentry.h): riding along in a buddy's (sim.player is theirs
     // meanwhile, and nothing of yours is driven), or waiting for the one you asked for to be handed over.
+    mpdist::Referee referee;  // multiplayer on the procedural world: the host's watch on how far apart everyone is
+    mpdist::Guest mpGuest;    // ...and a guest's end of it
     uint32_t rideId = 0;    // the one you ride along in (its netId; 0: not riding)
     V3 rideAt;              // where it was last (if it goes, you're set down there)
     uint32_t enterAsk = 0;  // the one you asked for (its netId) to get into when it's yours
@@ -3337,11 +3340,6 @@ int main(int argc, char** argv) {
                 garageFromMenu = openGarage();
                 break;
             case PauseMenu::CONTROLS: closeMenu(); hud.showHelp = true; break;
-            case PauseMenu::RESET:
-                closeMenu();
-                if (sim.realRecovery) hud.toast(sim.towPlayerHome() ? "TOWED BACK TO THE START (DAMAGE STAYS)" : "TOWED TO THE NEAREST STATION (DAMAGE STAYS)");
-                else hud.toast(sim.respawnPlayer() ? "RESET" : "RESET AT THE NEAREST STATION");
-                break;
             case PauseMenu::QUIT: running = false; break;
             case PauseMenu::DETECT_GFX:
                 saveSettings();
@@ -5735,6 +5733,10 @@ int main(int argc, char** argv) {
                 net.proc.gen = proc::genStamp(), net.proc.seed = sim.world.proc.seed, net.proc.ox = sim.world.proc.ox, net.proc.oz = sim.world.proc.oz;
             }
             for (const NetSession::GameMsg& m : net.gameIn) {
+                if (sim.world.map == MAP_PROCEDURAL) {  // how far apart the players are (mpdistance.h)
+                    if (net.role == NetSession::HOST) referee.hear(sim, net, m, net.sharedTime((double)SDL_GetPerformanceCounter() / freq));
+                    else if (mpGuest.hear(sim, net, m)) continue;
+                }
                 if (m.player == 0 && m.text.rfind("procshift ", 0) == 0 && net.role == NetSession::CLIENT && sim.world.map == MAP_PROCEDURAL) {  // the host slides the window
                     unsigned long long seed = 0;
                     long long ox = 0, oz = 0;
@@ -5844,6 +5846,24 @@ int main(int argc, char** argv) {
                 }
             }
             net.gameIn.clear();
+            if (net.role == NetSession::CLIENT && sim.world.map == MAP_PROCEDURAL) {  // too far from the group, and sent back (mpdistance.h)
+                for (const std::string& e : mpGuest.events) hud.toast(e);
+                mpGuest.events.clear();
+                int backCar = -1;
+                if (mpGuest.apply(sim, net, backCar)) {
+                    if (backCar == sim.player) stopPilot();
+                    const V3 at = sim.cars[backCar].frame().com;
+                    if (walker.active) {  // (on foot: beside it)
+                        walker.p = V3(at.x + 3.0, sim.world.height(at.x + 3.0, at.z) + 0.02, at.z);
+                        walker.v = V3();
+                        walker.grounded = false;
+                    }
+                    cam.initialized = false;
+                }
+                mpGuest.tick(dt);
+            } else if (net.role != NetSession::CLIENT) {
+                mpGuest.reset();
+            }
             for (Car& c : sim.cars)
                 if (!c.remote) c.fuelUse = settings.fuelMode == 0 ? 0.0 : settings.fuelMode == 1 ? 1.0 : 4.0;
             if (walker.active && !sim.paused) {
@@ -6236,13 +6256,17 @@ int main(int argc, char** argv) {
                 if (net.role == NetSession::HOST) {
                     // The host slides everyone's window: round the middle of the group (the box round every vehicle), told 3 s ahead
                     // so each machine has it built, and swapped by all at that moment on the shared clock.
-                    // (Players km apart: no middle gives anyone land, so the window stays with the host: proc::groupFocus.)
+                    // (Players too far apart for one window: mpdistance.h keeps them in it, and says where it should go.)
+                    referee.update(sim, net, sharedNow, &focus);
+                    for (const std::string& e : referee.events) hud.toast(e);
+                    referee.events.clear();
                     V3 g;
-                    if (proc::groupFocus(sim, false, sim.cars[sim.player].remote ? -1 : sim.player, g)) focus = g;
-                    if (!procStream.busy() && !net.shiftPending() && std::max(std::fabs(focus.x), std::fabs(focus.z)) >= proc::kSlide) {
+                    bool edge = false;
+                    if (referee.focus(g, edge)) focus = g;
+                    if (!procStream.busy() && !net.shiftPending() && (edge || std::max(std::fabs(focus.x), std::fabs(focus.z)) >= proc::kSlide)) {
                         int64_t ox, oz;
                         proc::ProcWorld::snapOrigin((double)sim.world.proc.ox + focus.x, (double)sim.world.proc.oz + focus.z, ox, oz);
-                        const double due = sharedNow + 3.0;
+                        const double due = sharedNow + mpdist::kLead;
                         char msg[160];
                         std::snprintf(msg, sizeof msg, "procshift %llu %lld %lld %.4f", (unsigned long long)sim.world.proc.seed, (long long)ox, (long long)oz, due);
                         net.sendGame(msg);
@@ -7726,6 +7750,8 @@ int main(int argc, char** argv) {
             static const float jc[3] = {1.0f, 0.62f, 0.25f};
             if (jobMarker(job, sim, me, at, what)) coop.drawMarker(renderer, sim, view, W, H, at, what, jc);
         }
+        if (const std::string far = mpGuest.banner(); !far.empty())  // (shown with the HUD off too: it mustn't come as a surprise)
+            centeredPill(renderer, W / 2.0f, H * 0.2f, px(2.2f * std::max(0.75f, H / 720.0f)), far, 0.35f, 0, 0, 0.85f, 1.0f, 0.85f, 0.3f);
         if (showHud && jobBanner > 0)
             centeredPill(renderer, W / 2.0f, H * 0.28f, px(2.2f * std::max(0.75f, H / 720.0f)), jobBannerText, 0, 0, 0, (float)std::min(1.0, jobBanner), 1.0f, 0.75f, 0.35f);
         if (showHud && settings.fuelMode > 0) {  // the fuel gauge

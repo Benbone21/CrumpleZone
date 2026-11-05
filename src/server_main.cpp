@@ -32,6 +32,7 @@
 
 #include "bgwork.h"
 #include "daylight.h"
+#include "mpdistance.h"
 #include "net.h"
 #include "procrules.h"
 #include "procworld.h"
@@ -246,6 +247,7 @@ int main(int argc, char** argv) {
         else fprintf(stderr, "Failed to host on port %d: %s\n", opts.port, net.error.c_str());
         return 1;
     }
+    mpdist::Referee referee;  // (how far apart the players are: mpdistance.h)
     net.adopt(sim);  // (so what the guests spawn is kept, and told to whoever joins later)
     printf("Hosting on port %d\n", opts.port);
     printf("Tell players to join with: --join <YOUR_PUBLIC_IP>:%d%s\n", opts.port, opts.password.empty() ? "" : " --password <the password>");
@@ -274,18 +276,24 @@ int main(int argc, char** argv) {
         // Handle network input and send states
         net.receive(sim, t);
         net.send(sim, t);
-        // The procedural world: its window follows the players (the middle of the box round their vehicles), told 3 s ahead and
+        // The procedural world: its window follows the players (the middle of the box round them), told 3 s ahead and
         // swapped by everyone at that moment on the shared clock. (Built on a worker; the server only keeps the land and the solids.)
         if (sim.world.map == MAP_PROCEDURAL) {
             net.proc.on = true, net.proc.gen = proc::genStamp(), net.proc.seed = sim.world.proc.seed;
             net.proc.ox = sim.world.proc.ox, net.proc.oz = sim.world.proc.oz;
             const double shared = net.sharedTime(t);
+            // (Who's too far from whom (mpdistance.h): here the group is the most players together, and the window goes with them.)
+            for (const NetSession::GameMsg& m : net.gameIn) referee.hear(sim, net, m, t);
+            referee.update(sim, net, t, nullptr);
+            for (const std::string& e : referee.events) printf("%s\n", e.c_str());
+            referee.events.clear();
             if (!net.shiftPending()) {
                 V3 focus;
-                if (proc::groupFocus(sim, true, -1, focus) && std::max(std::fabs(focus.x), std::fabs(focus.z)) >= proc::kSlide) {
+                bool edge = false;
+                if (referee.focus(focus, edge) && (edge || std::max(std::fabs(focus.x), std::fabs(focus.z)) >= proc::kSlide)) {
                     int64_t ox, oz;
                     proc::ProcWorld::snapOrigin((double)sim.world.proc.ox + focus.x, (double)sim.world.proc.oz + focus.z, ox, oz);
-                    const double due = shared + 3.0;
+                    const double due = shared + mpdist::kLead;
                     char msg[160];
                     std::snprintf(msg, sizeof msg, "procshift %llu %lld %lld %.4f", (unsigned long long)sim.world.proc.seed, (long long)ox, (long long)oz, due);
                     net.sendGame(msg);

@@ -949,6 +949,7 @@ public:
     // there (`lift`: how far above it), so paid-out line lies on the ground rather than through it.
     std::vector<V3> ropePath(const Rope& r, double lift = 0) const;
     void dropRopes(int car);
+    void detachCar(int car);  // every line and cable on it let go: it's about to be somewhere else
     void carRemoved(int car);          // call BEFORE erasing cars[car]: drops its lines, shifts the line ends and every autopilot's followCar
     // Takes cars[i] out (a vehicle, not a prop, and not another player's) and fixes the player index. False if refused.
     // Removing the car you are in switches to another one first.

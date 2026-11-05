@@ -451,6 +451,13 @@ void Sim::dropRopes(int car) {
                 ropes.end());
 }
 
+void Sim::detachCar(int car) {
+    dropRopes(car);
+    cables.erase(std::remove_if(cables.begin(), cables.end(), [&](const JumperCable& j) { return j.a == car || j.b == car; }), cables.end());
+    if (handCable.car == car) handCable = HandCable();
+    if (handLine.car == car) dropHandLine();
+}
+
 void Sim::carRemoved(int car) {
     dropRopes(car);
     cables.erase(std::remove_if(cables.begin(), cables.end(), [&](const JumperCable& j) { return j.a == car || j.b == car; }), cables.end());
