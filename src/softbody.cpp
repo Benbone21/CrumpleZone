@@ -701,7 +701,30 @@ void Car::chassisForces(double h) {
         applyTorque(wh.assembly, tau, true);
         applyTorque(k.pickups, -tau);
     }
+    hubToeDampers();
     steeringStops(h);
+}
+
+// Live rear hubs, damped in toe against their housing (softbody.h). Both ends of the moment stay
+// on the axle, so nothing here turns it against the body.
+void Car::hubToeDampers() {
+    if (hubDampers.empty()) return;
+    const V3 up = chassis.rot.rotate(V3(0, 1, 0));
+    for (const HubDamper& hd : hubDampers) {
+        const Wheel& wh = wheels[hd.wheel];
+        if (wh.detached) continue;
+        const Node &seat = nodes[hd.ref[0]], &bracket = nodes[hd.ref[1]], &diff = nodes[hd.ref[2]], &in = nodes[wh.inner], &out = nodes[wh.outer];
+        const V3 ab = out.p - in.p, tube = (seat.p + bracket.p) * 0.5 - diff.p, tubeFlat = tube - up * dot(tube, up);
+        const double L2 = dot(ab, ab);
+        // How fast the hub's line is turning about the vertical, against the tube's.
+        const double rate = dot(cross(ab, out.v - in.v), up) / L2 - dot(cross(tube, (seat.v + bracket.v) * 0.5 - diff.v), up) / dot(tubeFlat, tubeFlat);
+        V3 tau = up * (-kToeC * rate);
+        tau -= ab * (dot(tau, ab) / L2);  // (nothing about its own axle: that's the bearing)
+        const V3 f = cross(tau, ab) * (1 / L2);
+        nodes[wh.outer].f += f;
+        nodes[wh.inner].f -= f;
+        applyTorque(hd.housing, -tau, true);
+    }
 }
 
 // Steering stops. A steered knuckle turns about its kingpin as far as the tie rod lets it, and the

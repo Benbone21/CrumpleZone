@@ -1407,8 +1407,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 Wheel wh = newWheel(s, zc);
                 nodes[wh.inner].m += am * 0.07;
                 nodes[wh.outer].m += am * 0.03;
-                // Spring seat behind and link bracket ahead of the tube: the housing is a
-                // solid 3D piece, so the wheels can't toe in or out.
+                // Spring seat behind and link bracket ahead of the tube: the housing is a solid
+                // 3D piece. (Its hubs are damped in toe against it: chassisForces.)
                 const double seatZ = steered && vs.leafFront ? std::min(az - 0.20, std::max(vs.railSpacing * 0.5, az - 0.40)) : az - 0.20;  // (under the leaf: see the pick-ups)
                 seat[sIdx] = addNode(V3(xw - dir * 0.06, R + vs.axleSeat, s * seatZ), am * 0.07, false);
                 lowMount[sIdx] = addNode(V3(xw + dir * 0.12, R - 0.12, s * (az - 0.30)), am * 0.07, false);
@@ -2379,6 +2379,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     chassis = ChassisFrame();
     for (ChassisFrame& rf : railFrame) rf = ChassisFrame();
     knuckles.clear();
+    hubDampers.clear();
     if (!isProp) {
         auto setUp = [&](ChassisFrame& cf, const std::vector<int>& members, double kappa) {
             cf.kappa = kappa;
@@ -2496,6 +2497,19 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 }
             k.rest0 = k.frame.rest;
             knuckles.push_back(std::move(k));
+        }
+        // Each live rear hub's toe damper, against its own housing (softbody.h).
+        for (const Axle& ax : axles) {
+            if (ax.front || ax.housing.empty()) continue;
+            const auto hub = [&](int n) { return n == wheels[ax.wheel[0]].inner || n == wheels[ax.wheel[0]].outer || n == wheels[ax.wheel[1]].inner || n == wheels[ax.wheel[1]].outer; };
+            for (int wi : ax.wheel) {
+                HubDamper hd;
+                hd.wheel = wi;
+                hd.ref[0] = wheels[wi].top, hd.ref[1] = wheels[wi].lower, hd.ref[2] = ax.diffNode;
+                for (int n : ax.housing)
+                    if (!hub(n)) hd.housing.push_back(n);
+                hubDampers.push_back(std::move(hd));
+            }
         }
     }
     chassisRest0 = chassis.rest;

@@ -400,6 +400,20 @@ public:
         std::vector<V3> rest0;     // its factory shape (frame.rest as built): a new knuckle's
     };
     std::vector<Knuckle> knuckles;
+    // Each live rear hub damped in toe against its own housing (chassisForces). The beams that
+    // carry a hub at the end of the tube hold it loosely fore and aft, and hardly damp it: with the
+    // tire's side force in the loop the hub axis rang +-2 degrees at ~22 Hz, the load swung +-530 N
+    // side to side, and the truck pulled off line. A damper and no spring: a spring at the hub's
+    // build toe cured that too, but it took away the toe-in the hubs settle at and their give under
+    // load, and at 160 km/h the Bronco wove in its lane until it hit the barrier. Against the
+    // housing, not the body: the whole axle steers and articulates on its links as it likes. No
+    // state, and nothing it has to know about a bent hub: saves and repairs have nothing to carry.
+    struct HubDamper {
+        int wheel = -1;
+        int ref[3] = {-1, -1, -1};  // the housing's spring seat and link bracket at this end, and its diff: the tube it's measured against
+        std::vector<int> housing;   // the housing but for the hubs, which takes the reaction
+    };
+    std::vector<HubDamper> hubDampers;
     int bodyNodes = 0;
     // Ladder frame (body-on-frame trucks): its nodes, station by station (left rail's four
     // section corners, then the right rail's), and the rubber body mounts.
@@ -795,6 +809,7 @@ public:
 private:
     void applyTorque(const std::vector<int>& set, const V3& torque, bool byMass = false);
     void chassisForces(double h);
+    void hubToeDampers();
     void steeringStops(double h);
     void chassisGroupForces(ChassisFrame& cf, double h);
     void releaseFromFrame(const Beam& b);

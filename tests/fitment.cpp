@@ -167,7 +167,7 @@ Fit runFit(Ctx& ctx, const VehicleSpec& spec, bool quick) {
         c.brake = 0;
         const double y = yawOf(c);
         if (!started) started = true, yaw0 = prevYaw = y;
-        if (started && std::getenv("CZ_FITMENT_DEBUG") && ((int)std::lround(ctx.t * 60)) % 6 == 0)
+        if (started && std::getenv("CZ_FITMENT_DEBUG"))  // (every frame: every sixth aliased a 22 Hz shake to a 2 Hz weave)
             std::printf("  t %.2f yaw %+.2f rate %+.2f steer %+.4f roll %+.2f lat %+.3f\n", ctx.t, y - yaw0, (y - prevYaw) / Ctx::kFrame, c.steer,
                         std::asin(clampd(dot(c.frame().left, V3(0, 1, 0)), -1, 1)) * 180 / M_PI, dot(c.frame().vel, c.frame().left));
         if (started) {
