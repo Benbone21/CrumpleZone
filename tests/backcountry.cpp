@@ -327,6 +327,8 @@ bool pilotRun(Ctx& ctx, Car& c, const V3& goal, double kmh, double maxS, int rou
 }
 }  // namespace
 
+// (Flaky, docs/agent-hardware-optimization.md: the route passes close by a tree and two poles, and
+// whether the Bronco clips them is chaotic. A 1e-9 m/s nudge flips it; 3 of 12 such runs fail.)
 SCENARIO(backcountryPilotFar, "backcountry/autopilot-far", "Autopilot plans the Bronco's way from the trailhead to Far Side Camp, across the ford, and drives it") {
     ctx.sim.world = World(MAP_BACKCOUNTRY);
     const V3 s = ctx.sim.world.spawn;
