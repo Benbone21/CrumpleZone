@@ -132,7 +132,7 @@ SCENARIO(repairCareerGear, "repair/career-gear", "every field repair (docs/repai
     for (int p = 0; p < PART_COUNT; p++) {
         bool on = false;
         for (const ShopItem& it : stationRack()) on |= it.key == repairPartKey((RepairPart)p);
-        ctx.check(std::string("the station sells ") + repairPartName((RepairPart)p), on);
+        ctx.check(std::string("the station sells ") + repairPartName((RepairPart)p), on == (p != PART_EMPTY_CAN));  // (a can comes full)
     }
     Career fresh;
     fresh.on = true;

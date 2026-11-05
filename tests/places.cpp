@@ -31,8 +31,9 @@ int count(const std::vector<MapPlace>& v, int kind) {
 SCENARIO(placesTable, "pois/table", "The Backcountry's places: how many of each, unique stable ids and names, each in the district it says, services where they belong, photo spots with a subject") {
     // The table holds the Backcountry's own places ("BC.", in its nine districts: the counts and the shipped ids below are theirs),
     // then the regions' grown country's (docs/plans/regions2.md: "OC.", "MT.", "FR.", each in its region: checked on their own below).
-    const std::vector<MapPlace>& all = mapPlaces(MAP_BACKCOUNTRY);
-    std::vector<MapPlace> v, grown;
+    std::vector<MapPlace> all, v, grown;
+    for (const MapPlace& p : mapPlaces(MAP_BACKCOUNTRY))
+        if (p.kind != PK_WRECK) all.push_back(p);  // (nameless and last: tests/wrecks.cpp)
     for (const MapPlace& p : all) (p.id.rfind("BC.", 0) == 0 ? v : grown).push_back(p);
     {
         std::set<std::string> ids, names;
@@ -206,7 +207,7 @@ SCENARIO(placesReachable, "pois/all-reachable", "The autopilot (a Bronco, anywhe
     // (The Shelf, a ledge cut across the Rimrock on COPPER PASS, is driven by bctrails/pass-shelf: the planner's cost grid can't see a
     // way onto a ledge built up against a cliff, any more than the Frontier's tarn.)
     for (const MapPlace& p : mapPlaces(MAP_BACKCOUNTRY))
-        if (p.id != "BC.THE_SHELF") todo.push_back(&p);
+        if (p.id != "BC.THE_SHELF" && p.kind != PK_WRECK) todo.push_back(&p);  // (a wreck is a solid thing, walked up to)
     std::vector<V3> reached = {w.spawn};
     std::string unreached;
     int ok = 0;

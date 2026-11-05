@@ -64,7 +64,7 @@ SCENARIO(invmenuSlots, "invmenu/slots", "A full load (career and sandbox, SUVs, 
             const std::string t2 = tag + (sandbox ? "sandbox: " : "career: ");
             const std::vector<InvSlot> slots = InvMenu::build(ctx.sim, ctx.sim.player, st, wk);
             const std::vector<TrunkItem> whole = trunk::wholeLoad(c, st, true, TrunkRef(), false, false);
-            ctx.check(t2 + "a card per kind in the back", slots.size() == whole.size() && (int)slots.size() == 1 + 1 + (TOOL_COUNT - 1) + PART_COUNT + GEAR_COUNT, std::to_string(slots.size()));
+            ctx.check(t2 + "a card per kind in the back", slots.size() == whole.size() && (int)slots.size() == 1 + 1 + (TOOL_COUNT - 1) + PART_COUNT - (sandbox ? 1 : 0) + GEAR_COUNT, std::to_string(slots.size()));  // (no empty can in sandbox)
             int noIcon = 0, noName = 0, noDesc = 0, noCount = 0, badOrder = 0, dup = 0;
             std::string which;
             std::set<std::string> seen;
@@ -86,7 +86,7 @@ SCENARIO(invmenuSlots, "invmenu/slots", "A full load (career and sandbox, SUVs, 
             if (sandbox) {
                 int endlessParts = 0;
                 for (const InvSlot& s : slots) endlessParts += s.ref.kind == TK_PART && s.endless;
-                ctx.check(t2 + "the parts are endless", endlessParts == PART_COUNT);
+                ctx.check(t2 + "the parts are endless", endlessParts == PART_COUNT - 1);
             }
         }
     }

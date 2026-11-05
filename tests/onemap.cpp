@@ -382,9 +382,9 @@ const Golden kBareGolden[] = {
     {"trees", 0xff9c864722e88248ull},
     {"logs", 0xe6e09f444f33c667ull},
     {"bushes", 0x9eaaa945cf5bffdaull},
-    {"boxes", 0xeaee9db4bc5cacb3ull},
+    {"boxes", 0x523683be84d84aa8ull},
     {"poles", 0x5d5b725f7c98047aull},
-    {"props", 0x0e403bd1d8542387ull},
+    {"props", 0xfc3f438394b8e71aull},
     {"places", 0xc4663ffe163282d9ull},
     {"trails", 0x1abb6d010909b118ull}};
 // ...and the scanned ones the game places (assets/props/rocks.hull).
@@ -396,9 +396,9 @@ const Golden kScansGolden[] = {
     {"trees", 0xfa0376f3b629c371ull},
     {"logs", 0x80c84e715c3cbb51ull},
     {"bushes", 0x5bf9fa57b43c8df8ull},
-    {"boxes", 0x27304ab23d141004ull},
+    {"boxes", 0xe6747a6a31398e67ull},
     {"poles", 0x12be7c26b987fb00ull},
-    {"props", 0x03e02f94aa6702a8ull},
+    {"props", 0xa11ccbe7428b30b9ull},
     {"places", 0xc4663ffe163282d9ull},
     {"trails", 0x1abb6d010909b118ull}};
 void checkPrint(Ctx& ctx, const char* what, const worldprint::Print& p, const Golden* g, size_t n) {
