@@ -251,15 +251,110 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
         return addRock(p.x, p.z, r, top, rockSeed++, tint, pose);
     };
 
-    // ---- Copper Creek: down the valley under Copper Peak, across the pass and the valley road ------------------------------------
-    // (Before the trails: they cross it at its bed, cut and filled down to it as they do through any ford.)
-    Poly creek;
-    std::vector<double> creekBed, creekSoft;
-    bool creekEast = true;
+    // ---- The channels: Copper Creek, and the river through BOULDER GULLY's ROCKY RIVER -----------------------------------------------
+    // Each is a line from its source to its outlet, a water level that only falls along it and a width that grows along it. It's cut
+    // here, before the trails (they ford it at its bed, as through any water), and cut again once they're laid: their earthworks don't
+    // fill it, so nothing breaks it into pieces.
+    struct Channel {
+        std::string name;
+        Poly c;                                // source to outlet, 1 m apart
+        std::vector<double> lvl, hw, dep, soft;  // water level, half-width, depth; soft: 1 at a ford (shallower, wider, easy banks)
+        double speed = 0.9;
+        V3 pond;  // (x, level, z): the pond it ends in; pondR 0: none (it runs into other water)
+        double pondR = 0;
+        int shelfK = -1;  // where it crosses a section's flat channel
+    };
+    CellTiles<uint8_t> channelWater;  // the cells a channel watered (not Elk River's, which one runs into)
+    channelWater.reset(hN, 0);
+    auto cutChannel = [&](const Channel& ch) {
+        const int n = (int)ch.c.size();
+        double cutMax = 0, hwMax = 0;
+        for (int k = 0; k < n; k++) cutMax = std::max(cutMax, height(ch.c[k].x, ch.c[k].z) - ch.lvl[k]), hwMax = std::max(hwMax, ch.hw[k]);
+        scanNear(ch.c, clampd(hwMax + 6 + cutMax / 0.7, 14.0, 44.0), [&](int id, double d, double k, double) {
+            const double L = yAt(ch.lvl, k), hw = yAt(ch.hw, k), dep = yAt(ch.dep, k), soft = yAt(ch.soft, k), e = d - hw;
+            // (Its banks: a short step up out of the bed, then no steeper than 1 in 1.4 (1 in 5 at a ford) up to the land.)
+            const double bankRun = 1.0 + 4.0 * soft;
+            const double target = e < 0 ? L - dep * (1 - sq(d / hw)) : L + std::min(e, bankRun) * 0.25 / bankRun + std::max(0.0, e - bankRun) * (0.7 - 0.5 * soft);
+            if (target < hgrid[id] && (e < 1.5 || edge[id] > 1.5)) hgrid[id] = (float)target;  // (its bank doesn't bite into a tread beside it)
+            if (e < 0.3) paint[id] = PAINT_GRAVEL, surf[id] = SURF_GRAVEL;
+            if (e < 4) keep[id] = 1;
+            const bool other = waterY[id] > -1e8f && !channelWater[id];  // (the river it runs into)
+            // (The water's edge: on the bank, but for a section's wide flat channel. A hollow beyond it, lower than the water, is filled:
+            // the bank holds the water in.)
+            const double edgeAt = 0.4 + (ch.shelfK < 0 ? 0.0 : 1.3 * smoothstep(46, 30, std::fabs(k - ch.shelfK)));
+            if (e >= edgeAt) {
+                if (e < 4 && hgrid[id] < L + 0.05 && !other) hgrid[id] = (float)(L + 0.05);
+                if (channelWater[id]) waterY[id] = -1e9f, flowX[id] = flowZ[id] = 0, channelWater[id] = 0;
+                return;
+            }
+            if (hgrid[id] >= L - 0.005) {  // (a trail's bank: no water here now, none left under it)
+                if (channelWater[id]) waterY[id] = -1e9f, flowX[id] = flowZ[id] = 0, channelWater[id] = 0;
+                return;
+            }
+            if (other) return;
+            const int ki = (int)clampd(std::floor(k), 0, n - 1), k0 = std::max(0, ki - 6), k1 = std::min(n - 1, ki + 6);
+            const double fall = (ch.lvl[k0] - ch.lvl[k1]) / std::max(1, k1 - k0), sp = ch.speed * (0.8 + std::min(1.2, 25 * fall)) * (1 - 0.5 * sq(std::min(1.0, d / hw)));
+            const V3 dir = dirAlong(ch.c, k);
+            waterY[id] = (float)L, flowX[id] = (float)(dir.x * sp), flowZ[id] = (float)(dir.z * sp), channelWater[id] = 1;
+        });
+        if (ch.pondR <= 0) return;
+        // Its pond: still water in a dish, its shore uneven, shelving gently up to the land round it.
+        const double R = ch.pondR, W = ch.pond.y;
+        for (int i = cellI(ch.pond.x - R - 16); i <= cellI(ch.pond.x + R + 16); i++)
+            for (int j = cellI(ch.pond.z - R - 16); j <= cellI(ch.pond.z + R + 16); j++) {
+                const double x = X(i), z = X(j), d = dm::hypot(x - ch.pond.x, z - ch.pond.z);
+                const double r = R * (0.72 + 0.56 * valueNoise(x * 0.035 + 7, z * 0.035 + 3)), e = d - r;
+                if (e > 14) continue;
+                const int id = i * hN + j;
+                const double target = e < 0 ? W - 1.1 * (1 - sq(d / r)) : W + 0.3 * e;
+                if (target < hgrid[id]) hgrid[id] = (float)target;
+                if (e < 3) keep[id] = 1;
+                if (e < 2) paint[id] = PAINT_GRAVEL, surf[id] = SURF_GRAVEL;
+                if (hgrid[id] < W - 0.005) waterY[id] = (float)W, flowX[id] = flowZ[id] = 0, channelWater[id] = 1;
+            }
+    };
+    // Where a trail rated `maxRating` or easier crosses a channel's line, a ford: soft, by how near along it (26 m to 12 m).
+    auto markFords = [&](const Poly& c, int maxRating, std::vector<double>& soft) {
+        const int n = (int)c.size();
+        double x0 = 1e18, x1 = -1e18, z0 = 1e18, z1 = -1e18;
+        for (const V3& p : c) x0 = std::min(x0, p.x), x1 = std::max(x1, p.x), z0 = std::min(z0, p.z), z1 = std::max(z1, p.z);
+        for (size_t t = 0; t < R.size(); t++) {
+            if (R[t].rating > maxRating) continue;
+            const Poly& L = Ls[t];
+            for (size_t q = 0; q + 1 < L.size(); q++) {
+                const V3 &a = L[q], &b = L[q + 1];
+                if (std::max(a.x, b.x) < x0 || std::min(a.x, b.x) > x1 || std::max(a.z, b.z) < z0 || std::min(a.z, b.z) > z1) continue;
+                for (int k = 0; k + 1 < n; k++) {  // (the two lines' segments cross: each one's ends lie on either side of the other)
+                    const V3 &p = c[k], &r = c[k + 1];
+                    auto side = [](const V3& u, const V3& v, const V3& w) { return (v.x - u.x) * (w.z - u.z) - (v.z - u.z) * (w.x - u.x); };
+                    if (side(a, b, p) * side(a, b, r) > 0 || side(p, r, a) * side(p, r, b) > 0) continue;
+                    for (int m = std::max(0, k - 26); m <= std::min(n - 1, k + 26); m++) soft[m] = std::max(soft[m], smoothstep(26, 12, std::fabs((double)(m - k))));
+                }
+            }
+        }
+    };
+    auto smoothLine = [](std::vector<double>& v, int passes) {
+        for (int pass = 0; pass < passes; pass++) {
+            double prev = v[0];
+            for (size_t k = 1; k + 1 < v.size(); k++) {
+                const double here = v[k];
+                v[k] = 0.25 * prev + 0.5 * here + 0.25 * v[k + 1], prev = here;
+            }
+        }
+    };
+    // (A level only ever falling, source to outlet, a whisper a metre at the least.)
+    auto falling = [](std::vector<double>& v) {
+        for (size_t k = 1; k < v.size(); k++) v[k] = std::min(v[k], v[k - 1] - 0.003);
+    };
+    std::vector<Channel> channels;
+
+    // Copper Creek: down the valley under Copper Peak, from a spring at its head to a pond at the valley's low west end. The valley road
+    // shares the floor with it, so it keeps to one side of the road, the road crossing it at two fords; the pass wades it between them.
     if (passRow >= 0) {
-        // Its line: the valley's floor (the lowest ground across it, every 20 m), smoothed.
+        // Its line: the valley's floor (the lowest ground across it, every 20 m), smoothed, flowing west.
+        const V3 pondAt(-368, 0, 886);
         std::vector<V3> ctl;
-        for (double x = -330; x <= 430; x += 20) {
+        for (double x = 430; x >= -330; x -= 20) {
             double bz = 880, bh = 1e9;
             for (double z = 820; z <= 960; z += 4) {
                 const double h = height(x, z);
@@ -267,50 +362,124 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
             }
             ctl.push_back(V3(x, 0, bz));
         }
+        ctl.push_back(pondAt);
         for (int pass = 0; pass < 3; pass++)
             for (size_t k = 1; k + 1 < ctl.size(); k++) ctl[k].z = 0.25 * ctl[k - 1].z + 0.5 * ctl[k].z + 0.25 * ctl[k + 1].z;
-        const Poly c = resample(splinePoints(ctl, false), 1.0);
-        const int n = (int)c.size();
-        // Its bed: the land along it, falling all the way to whichever end is lower.
-        std::vector<double> bed(n);
-        for (int k = 0; k < n; k++) bed[k] = height(c[k].x, c[k].z) - 0.6;
-        const bool east = bed[n - 1] < bed[0];
-        for (int pass = 0; pass < 20; pass++)
-            for (int k = 1; k + 1 < n; k++) bed[k] = 0.25 * bed[k - 1] + 0.5 * bed[k] + 0.25 * bed[k + 1];
-        if (east)
-            for (int k = 1; k < n; k++) bed[k] = std::min(bed[k], bed[k - 1] - 0.004);
-        else
-            for (int k = n - 2; k >= 0; k--) bed[k] = std::min(bed[k], bed[k + 1] - 0.004);
-        // Where the green road crosses it, a shallow ford with easy banks; elsewhere (and at the pass) cut banks.
+        Poly c = resample(splinePoints(ctl, false), 1.0);
+        // Beside the road, kClear from its middle to the creek's, south of it from one ford to the other, north of it beyond them.
         const int road = rowOf("COPPER VALLEY ROAD");
-        std::vector<double> soft(n, 0.0);
-        if (road >= 0)
-            for (int k = 0; k < n; k++) {
-                const int q = nearestIdx(Ls[road], c[k].x, c[k].z);
-                soft[k] = smoothstep(26, 12, dm::hypot(Ls[road][q].x - c[k].x, Ls[road][q].z - c[k].z));
+        if (road >= 0) {
+            constexpr double kClear = 9.5, kFordW = -265, kFordE = 277;
+            const Poly& rd = Ls[road];
+            auto roadZ = [&](double x) {
+                for (size_t q = 0; q + 1 < rd.size(); q++)
+                    if ((rd[q].x - x) * (rd[q + 1].x - x) <= 0 && rd[q].z > 840 && rd[q].z < 960)
+                        return rd[q].z + (rd[q + 1].z - rd[q].z) * (x - rd[q].x) / (std::fabs(rd[q + 1].x - rd[q].x) < 1e-6 ? 1.0 : rd[q + 1].x - rd[q].x);
+                return 1e9;
+            };
+            auto hold = [&](V3& p) {
+                const double rz = roadZ(p.x);
+                if (rz > 1e8) return;
+                if (std::fabs(p.x - kFordW) < 24 || std::fabs(p.x - kFordE) < 24) return;
+                p.z = p.x > kFordW && p.x < kFordE ? std::max(p.z, rz + kClear) : std::min(p.z, rz - kClear);
+            };
+            std::vector<double> z(c.size());
+            for (int pass = 0; pass < 30; pass++) {
+                for (V3& p : c) hold(p);
+                for (size_t k = 0; k < c.size(); k++) z[k] = c[k].z;
+                smoothLine(z, 8);
+                for (size_t k = 0; k < c.size(); k++) c[k].z = z[k];
             }
-        scanNear(c, 14, [&](int id, double d, double k, double) {
-            const int ki = (int)clampd(std::floor(k), 0, n - 1);
-            const double fade = smoothstep(0, 25, k) * smoothstep(n - 1, n - 26, k);
-            const double hw = 2.4 + 0.6 * soft[ki], depth = (0.55 - 0.25 * soft[ki]) * fade;
-            const double b = yAt(bed, k) + 0.6 - depth;  // (the bed: deeper in the middle)
-            const double bankRun = 1.0 + 4.0 * soft[ki];
-            // (Its banks: a short step up out of the bed, then no steeper than 1 in 1.4 (1 in 5 at the road's ford) up to the land.)
-            const double target = d < hw ? b - 0.12 * (1 - sq(d / hw)) : b + std::min(d - hw, bankRun) * (depth + 0.2) / bankRun + std::max(0.0, d - hw - bankRun) * (0.7 - 0.5 * soft[ki]);
-            if (target < hgrid[id]) hgrid[id] = (float)target;
-            if (d < hw + 0.3 && fade > 0.2) {
-                const double level = b + 0.32 * fade;
-                if (level > hgrid[id] + 0.03) {
-                    waterY[id] = (float)level;
-                    const V3 dir = dirAlong(c, k) * (east ? 1.0 : -1.0);
-                    flowX[id] = (float)(dir.x * 0.9), flowZ[id] = (float)(dir.z * 0.9);
-                }
-                paint[id] = PAINT_GRAVEL, surf[id] = SURF_GRAVEL;
+            for (V3& p : c) hold(p);
+            for (size_t k = 0; k < c.size(); k++) z[k] = c[k].z;
+            smoothLine(z, 3);
+            for (size_t k = 0; k < c.size(); k++) c[k].z = z[k];
+            c = resample(c, 1.0);
+        }
+        const int n = (int)c.size();
+        Channel ch;
+        ch.name = "COPPER CREEK", ch.c = c;
+        // The pond's level: under the land round it. The creek's: under the land along it and under the road beside it.
+        double rim = 1e9;
+        for (double a = 0; a < 6.28; a += 0.2) rim = std::min(rim, height(pondAt.x + 34 * dm::cos(a), pondAt.z + 34 * dm::sin(a)));
+        ch.pond = V3(pondAt.x, rim - 0.5, pondAt.z), ch.pondR = 24;
+        ch.lvl.resize(n), ch.hw.resize(n), ch.dep.resize(n), ch.soft.assign(n, 0.0);
+        for (int k = 0; k < n; k++) {
+            ch.lvl[k] = height(c[k].x, c[k].z) - 0.35;
+            if (road >= 0) {
+                const V3& q = Ls[road][nearestIdx(Ls[road], c[k].x, c[k].z)];
+                if (dm::hypot(q.x - c[k].x, q.z - c[k].z) < 16) ch.lvl[k] = std::min(ch.lvl[k], height(q.x, q.z) - 0.4);
             }
-            if (d < hw + 4) keep[id] = 1;
-        });
-        creek = c, creekBed = bed, creekSoft = soft, creekEast = east;
+        }
+        smoothLine(ch.lvl, 20);
+        falling(ch.lvl);
+        for (int k = n - 1; k >= 0; k--) ch.lvl[k] = std::max(ch.lvl[k], ch.pond.y + 0.003 * (n - 1 - k));
+        markFords(c, 1, ch.soft);
+        for (int k = 0; k < n; k++) {
+            const double s = (double)k / (n - 1);  // (a spring at its head, widening down the valley)
+            ch.hw[k] = (0.8 + 1.6 * smoothstep(0, 0.6, s)) * (1 + 0.25 * ch.soft[k]);
+            ch.dep[k] = (0.1 + 0.32 * smoothstep(0, 0.4, s)) * (1 - 0.3 * ch.soft[k]);
+        }
+        channels.push_back(std::move(ch));
     }
+
+    // The river through ROCKY RIVER: from a spring on the rise east of it, across the section (straight over its channel, the trail
+    // wading it), then west round the foot of the hill sections and south through the knobs in a gorge, into Elk River.
+    SectionFrame rockyFrame;
+    int rockyPiece = -1;
+    size_t rockySection = 0;
+    for (size_t pi = 0; pi < bcSetPieces().size(); pi++) {
+        const BcSetPiece& sp = bcSetPieces()[pi];
+        double along = 0;
+        const V3 dir(dm::cos(sp.heading), 0, -dm::sin(sp.heading));
+        for (size_t k = 0; k < sp.types.size(); k++) {
+            const SectionFootprint fp = sectionFootprint((SectionType)sp.types[k]);
+            if (sp.types[k] == SEC_ROCKY_RIVER) {
+                rockyPiece = (int)pi, rockySection = k;
+                rockyFrame.entry = sp.entry + dir * (along + fp.apron);
+                rockyFrame.heading = sp.heading;
+            }
+            along += fp.length + 2 * fp.apron + kSetPieceGap;
+        }
+    }
+    if (rockyPiece >= 0) {
+        rockyFrame.entry.y = height(rockyFrame.entry.x, rockyFrame.entry.z);
+        const V3 dirS(dm::cos(rockyFrame.heading), 0, -dm::sin(rockyFrame.heading));
+        const V3 F = rockyFrame.entry + dirS * sectionRiverAt();  // (the ford: its line runs square across the section)
+        std::vector<V3> ctl = {V3(F.x + 205, 0, F.z - 40), V3(F.x + 150, 0, F.z - 22), V3(F.x + 100, 0, F.z - 8), V3(F.x + 56, 0, F.z), V3(F.x + 30, 0, F.z), V3(F.x, 0, F.z), V3(F.x - 30, 0, F.z),
+                               V3(F.x - 40, 0, F.z), V3(634, 0, F.z + 8), V3(615, 0, -872), V3(603, 0, -825), V3(592, 0, -770), V3(575, 0, -700), V3(556, 0, -640), V3(556, 0, -596), V3(566, 0, -540),
+                               V3(575, 0, -480), V3(572, 0, -420), V3(590, 0, -350), V3(574, 0, -280), V3(592, 0, -200), V3(574, 0, -120), V3(586, 0, -40)};
+        ctl.push_back(V3(576, 0, elkRiverZ(576)));
+        const Poly c = resample(splinePoints(ctl, false), 1.0);
+        const int n = (int)c.size(), kf = nearestIdx(c, F.x, F.z);
+        Channel ch;
+        ch.name = "ROCKY RIVER", ch.c = c, ch.speed = 1.2, ch.shelfK = kf;
+        ch.lvl.resize(n), ch.hw.resize(n), ch.dep.resize(n), ch.soft.assign(n, 0.0);
+        constexpr double kFordDepth = 1.05;  // (the section's channel under its plane)
+        const double fordL = sectionPlaneAt(*this, SEC_ROCKY_RIVER, rockyFrame, sectionRiverAt()) - kFordDepth + 0.55;
+        const double mouth = waterLevel(c[n - 1].x, c[n - 1].z);
+        for (int k = 0; k < n; k++) ch.lvl[k] = height(c[k].x, c[k].z) - 0.7;
+        smoothLine(ch.lvl, 12);
+        for (int k = 0; k < n; k++) ch.lvl[k] = k < kf ? std::max(ch.lvl[k], fordL + 0.003 * (kf - k)) : k <= kf + 40 ? fordL - 0.003 * (k - kf) : std::min(ch.lvl[k], fordL - 0.003 * (k - kf));
+        falling(ch.lvl);
+        for (int k = n - 1; k > kf + 40; k--) ch.lvl[k] = std::max(ch.lvl[k], mouth + 0.003 * (n - 1 - k));
+        {
+            std::vector<double> tail(ch.lvl.begin() + kf + 40, ch.lvl.end());
+            smoothLine(tail, 30);
+            std::copy(tail.begin(), tail.end(), ch.lvl.begin() + kf + 40);
+        }
+        markFords(c, 2, ch.soft);
+        for (int k = std::max(0, kf - 40); k <= std::min(n - 1, kf + 40); k++) ch.soft[k] = 0;  // (the section's own ford)
+        for (int k = 0; k < n; k++) {
+            const double s = (double)k / (n - 1), wide = 1.2 + 5.8 * std::sqrt(s);
+            ch.hw[k] = wide * (1 + 0.25 * ch.soft[k]);
+            ch.dep[k] = (0.25 + 0.5 * smoothstep(0, 0.5, s)) * (1 - 0.45 * ch.soft[k]);
+            ch.dep[k] += (0.55 - ch.dep[k]) * smoothstep(60, 36, std::abs(k - kf));
+        }
+        rockyFrame.riverWidth = 2 * ch.hw[kf], rockyFrame.riverDepth = kFordDepth;
+        channels.push_back(std::move(ch));
+    }
+    for (const Channel& ch : channels) cutChannel(ch);
 
     // The places' yards (places.h: levelled before the trails), which a trail runs into but doesn't change.
     std::vector<std::pair<V3, double>> pads;
@@ -474,6 +643,9 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
         trails.push_back(std::move(mt));
     }
 
+    // (Cut again: the trails' earthworks don't fill a channel, or stand over its water.)
+    for (const Channel& ch : channels) cutChannel(ch);
+
     // ---- What grew where the trails now run (the old map's trees, rocks, logs, bushes and stumps were placed before them): gone ----
     {
         std::unordered_set<int64_t> clear;  // 2 m cells within the treads and a little more
@@ -486,6 +658,13 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
                     for (double dz = -reach; dz <= reach; dz += 2)
                         if (dx * dx + dz * dz <= reach * reach) clear.insert(key(pts[k].x + dx, pts[k].z + dz));
         }
+        for (const Channel& ch : channels)  // (and in the channels)
+            for (size_t k = 0; k < ch.c.size(); k += 2) {
+                const double reach = ch.hw[k] + 2.5;
+                for (double dx = -reach; dx <= reach; dx += 2)
+                    for (double dz = -reach; dz <= reach; dz += 2)
+                        if (dx * dx + dz * dz <= reach * reach) clear.insert(key(ch.c[k].x + dx, ch.c[k].z + dz));
+            }
         auto gone = [&](double x, double z) { return clear.count(key(x, z)) > 0; };
         std::set<std::pair<double, double>> felled;
         trees.erase(std::remove_if(trees.begin(), trees.end(), [&](const Tree& tr) {
@@ -504,36 +683,23 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
         rocks.erase(std::remove_if(rocks.begin(), rocks.end(), [&](const Rock& k) { return k.r < 3 && gone(k.c.x, k.c.z); }), rocks.end());
     }
 
-    // ---- Copper Creek's stones, and its record (now the trails are laid across it) ----
-    if (!creek.empty()) {
-        const Poly& c = creek;
+    // ---- The channels' stones, and their records (now the trails are laid across them) ----
+    for (const Channel& ch : channels) {
+        const Poly& c = ch.c;
         const int n = (int)c.size();
-        const std::vector<double>& bed = creekBed;
-        const std::vector<double>& soft = creekSoft;
-        // Stones in its bed (low: the crossing is a step down and up, not a wall), bigger ones along its banks.
+        // Stones in the bed (low: a crossing is a step down and up, not a wall), bigger ones along the banks.
         for (int k = 4; k < n - 4; k += 3) {
             const V3 p = c[k], l = leftAlong(c, k);
-            if (h01((uint32_t)k, 11) < 0.35 * (1 - soft[k]) && edge[cellIndex(p.x, p.z)] > 3) rock(p + l * ((h01((uint32_t)k, 12) - 0.5) * 3.6), V3(0.32, 0.2, 0.26) * (0.8 + 0.6 * h01((uint32_t)k, 13)), 0.14, 0.95f);
+            const double hw = ch.hw[k];
+            if (hw < 1 || waterLevel(p.x, p.z) < height(p.x, p.z)) continue;
+            if (h01((uint32_t)k, 11) < 0.35 * (1 - ch.soft[k]) && edge[cellIndex(p.x, p.z)] > 3) rock(p + l * ((h01((uint32_t)k, 12) - 0.5) * 1.5 * hw), V3(0.32, 0.2, 0.26) * (0.8 + 0.6 * h01((uint32_t)k, 13)), 0.14, 0.95f);
             if (h01((uint32_t)k, 14) < 0.3) {
                 const double side = h01((uint32_t)k, 15) < 0.5 ? -1 : 1, r = 0.7 + 1.1 * h01((uint32_t)k, 16);
-                const V3 q = p + l * (side * (4.0 + r));
+                const V3 q = p + l * (side * (hw + 1.6 + r));
                 if (edge[cellIndex(q.x, q.z)] > r + 1.5) rock(q, V3(r, r * 0.6, r * 0.8), r * 0.55, 0.9f);
             }
         }
-        // (It's a river of the map's: the sounds and the M map know it.)
-        River rv;
-        rv.name = "COPPER CREEK";
-        for (int k = 0; k < n; k += 6) {
-            RiverSpot sp;
-            const double lv = waterLevel(c[k].x, c[k].z), dep = lv - height(c[k].x, c[k].z);
-            if (dep < 0.05) continue;  // (its dry ends)
-            sp.p = V3(c[k].x, lv, c[k].z), sp.depth = (float)dep, sp.halfWidth = 2.4f, sp.speed = 0.9f;
-            sp.cls = (uint8_t)riverClassForDepth(dep), sp.bed = (uint8_t)BED_GRAVEL;
-            rv.spots.push_back(sp);
-        }
-        rivers.push_back(std::move(rv));
     }
-
 
     // ---- COPPER PASS's obstacles -----------------------------------------------------------------------------------------------------
     if (passRow >= 0) {
@@ -709,6 +875,7 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
             f.entry.y = height(f.entry.x, f.entry.z);
             f.heading = sp.heading;
             f.keepCountry = true;
+            if ((int)pi == rockyPiece && k == rockySection) f.riverWidth = rockyFrame.riverWidth, f.riverDepth = rockyFrame.riverDepth;
             buildSection(*this, t, (uint32_t)(11 + pi * 7 + k), f);
             along += fp.length + 2 * fp.apron + kSetPieceGap;
         }
@@ -738,6 +905,23 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
             mt.pts.push_back(V3(q.x, height(q.x, q.z), q.z));
         }
         trails.push_back(std::move(mt));
+    }
+
+    // ---- The channels, last: ROCKY RIVER's water over the section stamped on its way, and their records (the sounds and the M map know them).
+    for (const Channel& ch : channels) {
+        cutChannel(ch);
+        River rv;
+        rv.name = ch.name;
+        for (size_t k = 0; k < ch.c.size(); k += 6) {
+            const V3& p = ch.c[k];
+            const double lv = waterLevel(p.x, p.z), dep = lv - height(p.x, p.z);
+            if (dep < 0.05) continue;  // (its spring)
+            RiverSpot sp;
+            sp.p = V3(p.x, lv, p.z), sp.depth = (float)dep, sp.halfWidth = (float)ch.hw[k], sp.speed = (float)ch.speed;
+            sp.cls = (uint8_t)riverClassForDepth(dep), sp.bed = (uint8_t)BED_GRAVEL;
+            rv.spots.push_back(sp);
+        }
+        rivers.push_back(std::move(rv));
     }
 }
 

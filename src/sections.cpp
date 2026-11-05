@@ -588,10 +588,13 @@ void rockyRiver(Canvas& c) {
     fx.amp = 0.2, fx.holes = 1, fx.washouts = 0, fx.cambers = 1;
     roughen(c, 3.0, 8, fx, [](double) { return 0.0; });
     for (double u = 0; u <= c.fp.length; u += 2) c.lineUV.push_back({u, 0.0});
-    const double xr = kRiverAt, width = c.rng.range(kRiverWidth), depth = c.rng.range(kRiverDepth), skew = c.rng.range(kRiverSkew);
+    const double xr = kRiverAt;
+    double width = c.rng.range(kRiverWidth), depth = c.rng.range(kRiverDepth), skew = c.rng.range(kRiverSkew);
     const double level = -depth + c.rng.range(kRiverWater);  // water depth over the bed
+    const bool through = c.f.riverWidth > 0;  // (a river running on past it: the map's water, in a channel straight across)
+    if (through) width = c.f.riverWidth, depth = c.f.riverDepth, skew = 0;
     const double hw = c.fp.half;
-    auto bend = [&](double v) { return xr + skew * v + 6 * dm::sin(v * 0.03 + seed); };
+    auto bend = [&](double v) { return xr + skew * v + (through ? 0.0 : 6 * dm::sin(v * 0.03 + seed)); };
     c.each(-c.fp.apron, c.fp.length + c.fp.apron, -hw, hw, [&](int id, double u, double v) {
         const double d = std::fabs(u - bend(v)) - width / 2;
         if (d > 14) return;
@@ -599,17 +602,18 @@ void rockyRiver(Canvas& c) {
         const double bank = d < 0 ? bed : bed + (c.getH(id) - bed) * smoothstep(0, 14, d);
         const double h = d < 0 ? bed : std::min(c.getH(id), bank + d * 0.35);
         // The channel runs out at the sides of the cleared ground (a marsh, not a trench).
-        const double run = smoothstep(hw - 2, hw - 18, std::fabs(v)), end = c.getH(id) + (h - c.getH(id)) * run;
+        const double run = through ? 1.0 : smoothstep(hw - 2, hw - 18, std::fabs(v)), end = c.getH(id) + (h - c.getH(id)) * run;
         c.setH(id, end);
         if (d < 0 && run > 0.3) {
             c.paint(id, SURF_GRAVEL);
-            if (end < level) c.water(id, level, 0, kRiverCurrent);
+            if (end < level && !through) c.water(id, level, 0, kRiverCurrent);
         } else if (d < 5 && run > 0.3) c.paint(id, SURF_SAND);
     });
     c.commit();
     // Boulders: lots, mixed sizes, thickest mid-channel. Some too big to climb: pick a line.
     int placed = 0;
-    for (int k = 0; k < 4000 && placed < kRiverBoulders; k++) {
+    const int boulders = through ? (int)(kRiverBoulders * width / 24) : kRiverBoulders;  // (as thick on the bed)
+    for (int k = 0; k < 4000 && placed < boulders; k++) {
         const double v = c.rng.range(-(hw - 10), hw - 10), cu = bend(v);
         const double u = cu + c.rng.range(-width / 2, width / 2);
         const double mid = 1 - std::fabs(u - cu) / (width / 2);
@@ -1372,6 +1376,14 @@ const Spec& specOf(SectionType t) { return kSpecs[std::min((int)t, (int)SEC_COUN
 const char* sectionName(SectionType t) { return specOf(t).name; }
 double sectionLength(SectionType t) { return specOf(t).length; }
 SectionFootprint sectionFootprint(SectionType t) { return {specOf(t).length, specOf(t).half, kApron, kBlend}; }
+
+double sectionRiverAt() { return kRiverAt; }
+double sectionPlaneAt(const World& w, SectionType t, const SectionFrame& f, double u) {
+    const SectionFootprint fp = sectionFootprint(t);
+    const double dx = dm::cos(f.heading), dz = -dm::sin(f.heading);
+    const double ha = w.height(f.entry.x - dx * fp.apron, f.entry.z - dz * fp.apron), hb = w.height(f.entry.x + dx * (fp.length + fp.apron), f.entry.z + dz * (fp.length + fp.apron));
+    return f.entry.y + clampd((hb - ha) / (fp.length + 2 * fp.apron), -kMaxSlope, kMaxSlope) * u;
+}
 
 SectionBuilt buildSection(World& w, SectionType t, uint32_t seed, const SectionFrame& f, std::vector<LevelObject>* record) {
     Canvas c(w, t, seed, f, record);

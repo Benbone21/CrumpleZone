@@ -29,7 +29,14 @@ struct SectionFrame {
     // Set where the section is stamped on country of its own (MAP_WILDS levels): the ground's own surface and the growth in the blend
     // round the section stay (growth is set down on the blended ground), instead of grass and a cleared ring.
     bool keepCountry = false;
+    // ROCKY RIVER only, where a river runs on past the section (the Backcountry's): the channel across it is this wide and deep (below the
+    // plane), straight at sectionRiverAt(), right across the cleared ground, and carries no water of its own: the river's is the map's.
+    double riverWidth = 0, riverDepth = 0;
 };
+
+double sectionRiverAt();  // m along ROCKY RIVER: the channel's middle
+// The height of a section's plane (what heights in it are measured from) u m along it, as the ground stands now.
+double sectionPlaneAt(const World& w, SectionType t, const SectionFrame& f, double u);
 
 // Where it ended up, once built.
 struct SectionBuilt {

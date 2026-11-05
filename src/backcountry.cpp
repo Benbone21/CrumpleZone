@@ -1276,11 +1276,13 @@ void World::buildBackcountry() {
     // ---- Water: the creek down the crawl, the canyon's stream --------------------------------------
     auto stream = [&](const Poly& pts, double k0, double k1, double halfW, double depth, double speed, bool downToStart) {
         scanNear(pts, halfW + 1, [&](int id, double d, double k, double) {
-            if (d > halfW || k < k0 || k > k1 || waterY[id] > -1e8) return;
+            // (A trickle at each end, a spring and a seep, widening and deepening over 30 m: never a cut end.)
+            const double taper = smoothstep(k0, k0 + 30, k) * smoothstep(k1, k1 - 30, k), hw = halfW * (0.4 + 0.6 * taper);
+            if (d > hw || k < k0 || k > k1 || waterY[id] > -1e8) return;
             const V3 dir = dirAlong(pts, k);
-            const double sgn = downToStart ? -1 : 1, u = d / halfW;
+            const double sgn = downToStart ? -1 : 1, u = d / hw;
             hgrid[id] = (float)(hgrid[id] - 0.12 * (1 - u * u));
-            waterY[id] = (float)(hgrid[id] + depth * (1 - 0.6 * u * u));
+            waterY[id] = (float)(hgrid[id] + depth * (0.5 + 0.5 * taper) * (1 - 0.6 * u * u));
             flowX[id] = (float)(sgn * dir.x * speed), flowZ[id] = (float)(sgn * dir.z * speed);
             if (paint[id] == PAINT_ROCK || paint[id] == PAINT_GRAVEL) paint[id] = PAINT_GRAVEL, surf[id] = SURF_GRAVEL;
         });
