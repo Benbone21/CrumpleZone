@@ -52,9 +52,15 @@ V3 momentum(const Car& c) {
     return p;
 }
 
+// When the first hit is over: the noses are at their deepest and about to part. What comes after
+// is the rebound, whether they meet again is down to how square they stayed, and it scatters
+// (+-0.1 kJ of bend work up to here, +-3 kJ by 0.6 s).
+constexpr double kFirstHit = 0.3;
+
 struct Crash {
     double dmgA = 0, dmgB = 0;    // damage after (0..1)
     double workA = 0, workB = 0;  // bend work (J)
+    double firstA = 0, firstB = 0;  // ...at the end of the first hit, kFirstHit after they touch
     V3 dpA, dpB;                  // momentum change across the contact (the first 0.3 s)
     double frameA = 0, frameB = 0;  // frame members bent
     double setA = 0, setB = 0;      // worst rail set (m)
@@ -99,6 +105,7 @@ Crash crash(Ctx& ctx, const Setup& s) {
     // ground takes the noses' dive and lift).
     V3 pa0 = momentum(a), pb0 = momentum(b);
     double touched = -1;
+    bool first = false;
     ctx.run(2.0, [&] {
         if (touched < 0) {
             const bool near = a.bbMax.x >= b.bbMin.x && a.bbMin.x <= b.bbMax.x;
@@ -109,6 +116,7 @@ Crash crash(Ctx& ctx, const Setup& s) {
             r.dpB = momentum(b) - pb0;
             r.dpA.y = r.dpB.y = 0;
         }
+        if (touched >= 0 && !first && ctx.t - touched >= kFirstHit) first = true, r.firstA = bendWork(a) - w0a, r.firstB = bendWork(b) - w0b;
         if (touched >= 0 && ctx.t - touched > 0.1 && b.sleeping) r.bWoke = false;
         r.upB = std::min(r.upB, b.frame().up.y);
     });
@@ -128,6 +136,7 @@ Crash crashes(Ctx& ctx, Setup s) {
         const Crash r = crash(ctx, s);
         sum.dmgA += r.dmgA / 3, sum.dmgB += r.dmgB / 3;
         sum.workA += r.workA / 3, sum.workB += r.workB / 3;
+        sum.firstA += r.firstA / 3, sum.firstB += r.firstB / 3;
         sum.dpA += r.dpA / 3, sum.dpB += r.dpB / 3;
         sum.frameA += r.frameA / 3, sum.frameB += r.frameB / 3;
         sum.setA += r.setA / 3, sum.setB += r.setB / 3;
@@ -231,7 +240,8 @@ SCENARIO(shareAiAndAsleep, "damage/share/ai-asleep", "The parked Blazer hit asle
 
 // The Blazer's nose is boxed onto its frame horns: half as hard again to crush as the stock
 // lattice. Nose to nose with one built without that, the plain one takes about 1.5 times
-// the bending (the same force through both, set over 1.5 times the distance).
+// the bending (the same force through both, set over 1.5 times the distance). That's the
+// first hit: measured there, not after the rebound (see kFirstHit).
 SCENARIO(shareNose, "damage/share/blazer-nose", "Blazer nose to nose with a Blazer built with a stock-strength nose: the stock one crushes about 1.5 times as much") {
     static const VehicleSpec stock = [] {
         VehicleSpec v = vehicleCatalog()[7];
@@ -240,7 +250,7 @@ SCENARIO(shareNose, "damage/share/blazer-nose", "Blazer nose to nose with a Blaz
     }();
     const Crash r = crashes(ctx, {&blazer(), &stock});
     report(ctx, "Blazer / stock nose", r);
-    ctx.metric("bend work, stock nose / Blazer's", r.workB / std::max(r.workA, 1.0), "", 1.2, 2.2);
+    ctx.metric("bend work in the first hit, stock nose / Blazer's", r.firstB / std::max(r.firstA, 1.0), "", 1.2, 2.2);
 }
 
 // The doors, sills and tail give: a nose into another truck's side or tail bends both
