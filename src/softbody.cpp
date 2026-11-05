@@ -715,9 +715,10 @@ void Car::hubToeDampers() {
         if (wh.detached) continue;
         const Node &seat = nodes[hd.ref[0]], &bracket = nodes[hd.ref[1]], &diff = nodes[hd.ref[2]], &in = nodes[wh.inner], &out = nodes[wh.outer];
         const V3 ab = out.p - in.p, tube = (seat.p + bracket.p) * 0.5 - diff.p, tubeFlat = tube - up * dot(tube, up);
-        const double L2 = dot(ab, ab);
-        // How fast the hub's line is turning about the vertical, against the tube's.
-        const double rate = dot(cross(ab, out.v - in.v), up) / L2 - dot(cross(tube, (seat.v + bracket.v) * 0.5 - diff.v), up) / dot(tubeFlat, tubeFlat);
+        const double L2 = dot(ab, ab), flat2 = dot(tubeFlat, tubeFlat);
+        if (L2 < 1e-3 || flat2 < 0.25 * dot(tube, tube)) continue;  // (a wreck: the hub folded up, or the tube stood on end against the body, and they say nothing about toe)
+        // How fast the hub's line is turning about the vertical, against the tube's. (Clamped as a steering stop's is: a hub doesn't turn faster.)
+        const double rate = clampd(dot(cross(ab, out.v - in.v), up) / L2 - dot(cross(tube, (seat.v + bracket.v) * 0.5 - diff.v), up) / flat2, -30.0, 30.0);
         V3 tau = up * (-kToeC * rate);
         tau -= ab * (dot(tau, ab) / L2);  // (nothing about its own axle: that's the bearing)
         const V3 f = cross(tau, ab) * (1 / L2);
