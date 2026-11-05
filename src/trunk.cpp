@@ -309,6 +309,7 @@ std::vector<TrunkItem> wholeLoad(const Car& c, const TrunkStock& own, bool prima
         if (t != TOOL_JACK && own.kit.has((Tool)t)) add({TK_TOOL, t}, 1, false, inHand.kind == TK_TOOL && inHand.id == t);
     for (int p = 0; p < PART_COUNT; p++) {
         if (!own.kit.hasPart((RepairPart)p)) continue;
+        if (own.kit.unlimited && p == PART_EMPTY_CAN) continue;  // (sandbox's cans are never empty)
         const bool held = inHand.kind == TK_PART && inHand.id == p;
         if (own.kit.unlimited) add({TK_PART, p}, 2, true, 0);  // (a sandbox's supply: a couple on show)
         else add({TK_PART, p}, own.kit.parts[p], false, held);

@@ -497,6 +497,36 @@ const Terrain::Plan& Terrain::plan() const {
                     if (m.kind == PK_RIVER_CROSSING && (m.p.x - q.x) * (m.p.x - q.x) + (m.p.z - q.z) * (m.p.z - q.z) < 150.0 * 150.0) near = true;
                 if (!near) place(id, PK_RIVER_CROSSING, "RT.FORD." + std::to_string(p.places.size()), dirWord(q.x, q.z, half) + " FORD", 45, 0, 0);
             }
+        // The wrecks (wrecks.h): dry, gentle ground off the roads, well apart: about one a square kilometre, 12 to 40.
+        {
+            const int want = (int)std::clamp(4 * half * half / 1e6, 12.0, 40.0);
+            int made = 0;
+            uint32_t rng = 0x7EC4u;
+            auto next = [&] {
+                rng ^= rng << 13, rng ^= rng >> 17, rng ^= rng << 5;
+                return rng;
+            };
+            std::vector<V3> at;
+            for (const MapPlace& m : p.places) at.push_back(m.p);
+            const size_t ownFrom = at.size();
+            for (int t = 0; t < 4000 && made < want; t++) {
+                const int ci = 2 + (int)(next() % (uint32_t)(n - 4)), cj = 2 + (int)(next() % (uint32_t)(n - 4)), id = ci * n + cj;
+                if (p.lake[id] != -1 || p.wet[id] || p.wash[id] || network[id] || !edgeOK(id, 160)) continue;
+                if (std::fabs((double)H[id + n] - H[id - n]) / (2 * cs) > 0.35 || std::fabs((double)H[id + 1] - H[id - 1]) / (2 * cs) > 0.35) continue;
+                const V3 q(X(ci), 0, X(cj));
+                bool ok = true;
+                for (size_t k = 0; k < at.size() && ok; k++) ok = len(at[k] - q) > (k < ownFrom ? 70.0 : 180.0);
+                for (int a = -2; a <= 2 && ok; a++)
+                    for (int b = -2; b <= 2 && ok; b++) ok = !network[(ci + a) * n + cj + b];
+                if (!ok) continue;
+                MapPlace m;
+                m.id = "RT.WRECK." + std::to_string(++made), m.kind = PK_WRECK, m.map = MAP_REAL, m.p = q;
+                m.yaw = (next() % 628) / 100.0, m.radius = 8;
+                p.places.push_back(m);
+                p.padY.push_back((double)H[id]);
+                at.push_back(q);
+            }
+        }
         plan_ = std::move(P);
     });
     return *plan_;

@@ -59,6 +59,7 @@ void ToolSounds::update(const Play& play, const Interact& ia, const Handwork& hw
         if (share_ < 0.12 && share >= 0.12) play(SFX_WHEEL_ON, at, 0.8f, 0, pitch(0.1f));
         break;
     case IA_OPEN_CACHE:
+    case IA_SEARCH_WRECK:
         if (beat(1.1, true)) play(SFX_PRY_CREAK, at, 0.6f, 0, pitch(0.15f));
         break;
     case IA_OPEN_HOOD:

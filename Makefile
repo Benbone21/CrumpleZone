@@ -16,7 +16,7 @@ SCEN     := tests/perf.cpp tests/carsleep.cpp tests/drivetrain.cpp tests/net_sta
 PHYS     += src/allocstat.cpp
 PHYS     += src/carentry.cpp src/drivetrainlook.cpp
 PHYS     += src/worldcache.cpp src/bytepack.cpp
-PHYS     += src/toolsounds.cpp src/repairsync.cpp src/battery.cpp
+PHYS     += src/toolsounds.cpp src/repairsync.cpp src/battery.cpp src/fuel.cpp src/wrecks.cpp
 PHYS     += src/rivers.cpp src/places.cpp
 PHYS     += src/onemap.cpp src/onemapbuild.cpp
 PHYS     += src/procworld.cpp src/procrules.cpp src/procreveal.cpp src/proceros.cpp src/procdress.cpp src/bridgelayout.cpp
@@ -41,6 +41,7 @@ SCEN     += tests/carpaint.cpp tests/attachments.cpp
 SCEN     += tests/net_rendezvous.cpp tests/net_codes.cpp
 SCEN     += tests/onemap.cpp
 SCEN     += tests/treestuck.cpp
+SCEN     += tests/wrecks.cpp tests/fuel.cpp
 SCEN     += tests/procworld.cpp tests/procreveal.cpp tests/procmodels.cpp tests/procbiomes.cpp
 SCEN     += tests/hitches.cpp
 PHYS     += src/bgwork.cpp src/menu.cpp src/daylight.cpp
@@ -106,6 +107,10 @@ build/bench_sim: build/tools/bench_sim.o $(patsubst %.cpp,build/%.o,$(PHYS))
 
 # Headless world-build timer (docs/plans/big-maps.md): build/worldtime [--scans] [MAP...]
 build/worldtime: build/tools/worldtime.o $(patsubst %.cpp,build/%.o,$(PHYS))
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+
+# Where the built maps' wrecks go (src/places_wrecks.inc): build/wreckscan > src/places_wrecks.inc
+build/wreckscan: build/tools/wreckscan.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
 
 # The world's fingerprint, by category (src/worldprint.h): build/worldprint [--scans] [--threads N] [--dump FILE] [MAP...]

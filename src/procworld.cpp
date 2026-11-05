@@ -2,6 +2,7 @@
 // (a window of the land). See procworld.h and docs/superpowers/specs/2026-10-25-procedural-world-design.md.
 #include "detmath.h"
 #include "procworld.h"
+#include "wrecks.h"
 #include "procdress.h"
 #include "procrules.h"
 
@@ -3961,6 +3962,29 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         s.edge = grove > 0.4;
         c->bushes.push_back(s);
     }
+    // The wrecks round here (nodeWrecks): nothing grows or lies where one stands.
+    {
+        const int64_t ni = floorDiv((int64_t)gx0, kCell), nj = floorDiv((int64_t)gz0, kCell);
+        std::vector<V3> sites;  // (at offsets from the chunk's corner)
+        for (int64_t a = ni - 1; a <= ni + 1; a++)
+            for (int64_t b = nj - 1; b <= nj + 1; b++)
+                for (const WreckSite& s : nodeWrecks(a, b)) {
+                    const V3 o(s.x - (double)gx0, 0, s.z - (double)gz0);
+                    if (o.x > -60 && o.x < kChunk + 60 && o.z > -60 && o.z < kChunk + 60) sites.push_back(o);
+                }
+        auto near = [&](double x, double z, double r) {
+            for (const V3& o : sites)
+                if (sqr(o.x - x) + sqr(o.z - z) < r * r) return true;
+            return false;
+        };
+        if (!sites.empty()) {
+            auto drop = [](auto& v, auto&& f) { v.erase(std::remove_if(v.begin(), v.end(), f), v.end()); };
+            drop(c->rocks, [&](const RockSpec& s) { return near(s.x, s.z, std::max(s.rx, s.rz) * 1.25 + 4.5); });
+            drop(c->trees, [&](const TreeSpec& s) { return near(s.x, s.z, 4.0); });
+            drop(c->stumps, [&](const StumpSpec& s) { return near(s.x, s.z, 4.0); });
+            drop(c->logs, [&](const LogSpec& s) { return near(s.ax, s.az, 5.0) || near(s.bx, s.bz, 5.0) || near((s.ax + s.bx) / 2, (s.az + s.bz) / 2, 5.0); });
+        }
+    }
     c->genMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() - c->edgeMs;  // (its own work: the trails are laid out ahead)
     return c;
 }
@@ -4040,6 +4064,74 @@ double ProcWorld::plazaRadius(const TrailNode& n) const {
 
 double ProcWorld::nodeYaw(const TrailNode& n) const { return M_PI / 2 * (double)(hashIJ(params_->s[S_DITHER] + 601, n.i, n.j) % 4); }
 
+namespace {
+struct WreckKey {
+    uint64_t seed;
+    int64_t i, j;
+    bool operator==(const WreckKey& o) const { return seed == o.seed && i == o.i && j == o.j; }
+};
+struct WreckKeyHash {
+    size_t operator()(const WreckKey& k) const { return (size_t)hashIJ(k.seed ^ 0x3EC4ull, k.i, k.j); }
+};
+std::mutex wreckMutex;
+std::unordered_map<WreckKey, std::vector<ProcWorld::WreckSite>, WreckKeyHash> wreckCache;
+}  // namespace
+
+std::vector<ProcWorld::WreckSite> ProcWorld::nodeWrecks(int64_t i, int64_t j) const {
+    const WreckKey key{seed_, i, j};
+    {
+        std::lock_guard<std::mutex> lock(wreckMutex);
+        auto it = wreckCache.find(key);
+        if (it != wreckCache.end()) return it->second;
+    }
+    std::vector<WreckSite> out;
+    const TrailNode n = node(i, j);
+    const uint64_t S = params_->s[S_DITHER];
+    const uint64_t hw = hashIJ(S + 703, i, j);
+    const int r = (int)(hw % 100), nWrecks = r < 10 ? 1 : r < 35 ? 2 : r < 70 ? 3 : r < 90 ? 4 : 5;
+    const double clear = plazaRadius(n) + 14;
+    for (int q = 0; q < nWrecks; q++) {
+        // What sort of spot this one's in: the scrub (the first dry spot), a gully (the lowest of a few), the foot of a cliff (with the
+        // most land standing over it), the trees (the woodiest), the open.
+        const uint64_t base = S + 711 + (uint64_t)q * 32;
+        const int niche = (int)(hashIJ(base + 31, i, j) % 5), tries = niche == 0 ? 3 : 6;
+        double best = -1e18;
+        bool found = false;
+        WreckSite site;
+        for (int t = 0; t < tries && !(niche == 0 && found); t++) {
+            const double u1 = hash01(base + (uint64_t)t * 2, i, j), u2 = hash01(base + (uint64_t)t * 2 + 1, i, j);
+            const double ang = u1 * 6.2831853, dist = clear + (230 - clear) * std::sqrt(u2);
+            const double wx = n.x + dm::cos(ang) * dist, wz = n.z + dm::sin(ang) * dist;
+            bool crowded = false;  // (not on top of another of the node's)
+            for (const WreckSite& o : out) crowded |= sqr(o.x - wx) + sqr(o.z - wz) < 18.0 * 18.0;
+            if (crowded) continue;
+            const Macro m = macro(wx, wz);
+            const bool wet = (m.riverOn > 0.1 && std::fabs(m.riverS) < m.riverHW + 12) || (m.creekOn > 0.1 && std::fabs(m.creekS) < m.creekHW + 7) || m.lakeLevel > -1e8;
+            if (wet) continue;
+            const double hx = macro(wx + 6, wz).h, hz = macro(wx, wz + 6).h;
+            if (std::fabs(hx - m.h) > 3.0 || std::fabs(hz - m.h) > 3.0) continue;  // (a slope it wouldn't stay on)
+            double score = 0;
+            if (niche == 1) score = -m.h;
+            else if (niche == 2) score = std::max(std::max(macro(wx + 22, wz).h, macro(wx - 22, wz).h), std::max(macro(wx, wz + 22).h, macro(wx, wz - 22).h)) - m.h;
+            else if (niche == 3) score = m.w[PB_FOREST] + 0.4 * m.wet;
+            else if (niche == 4) score = -m.w[PB_FOREST];
+            if (score > best) {
+                best = score, found = true;
+                site.x = wx, site.z = wz;
+            }
+        }
+        if (!found) continue;
+        site.q = q;
+        site.yaw = hash01(base + 28, i, j) * 6.2831853;
+        site.cash = 50 + (int)(250 * remoteness(site.x, site.z)) / 10 * 10;
+        out.push_back(site);
+    }
+    std::lock_guard<std::mutex> lock(wreckMutex);
+    if (wreckCache.size() > 40000) wreckCache.clear();
+    wreckCache.emplace(key, out);
+    return out;
+}
+
 void ProcWorld::nodePlaces(int64_t i, int64_t j, std::vector<MapPlace>& out) const {
     const TrailNode n = node(i, j);
     const int kind = nodeKind(n);
@@ -4069,22 +4161,17 @@ void ProcWorld::nodePlaces(int64_t i, int64_t j, std::vector<MapPlace>& out) con
         const bool wet = (m.riverOn > 0.3 && std::fabs(m.riverS) < m.riverHW + 6) || (m.creekOn > 0.3 && std::fabs(m.creekS) < m.creekHW + 4) || m.lakeLevel > -1e8;
         if (!wet) add("CACHE", nm + " CACHE", PK_CACHE, cx, cz, 12, 0, 0)->reward = 150 + (int)(450 * remoteness(cx, cz)) / 10 * 10;
     }
-    // Wrecks: rusting cars and trucks round the node, on the trails and off them, unlabelled; some still hold something worth the
-    // walk (searched on foot, as a cache is: a cache's reward, else nothing).
+    // Wrecks (wrecks.h): rusting cars and trucks round the node, off the trails: unnamed and unmarked, searched on foot.
     {
-        const uint64_t hw = hashIJ(params_->s[S_DITHER] + 703, i, j);
-        const int nWrecks = (int)(hw % 100 < 35 ? 0 : hw % 100 < 75 ? 1 : 2);
-        for (int q = 0; q < nWrecks; q++) {
-            const double u1 = hash01(params_->s[S_DITHER] + 711 + (uint64_t)q, i, j), u2 = hash01(params_->s[S_DITHER] + 721 + (uint64_t)q, i, j);
-            const double ang = u1 * 6.2831853, dist = 25 + 180 * u2;
-            const double wx = n.x + dm::cos(ang) * dist, wz = n.z + dm::sin(ang) * dist;
-            const Macro m = macro(wx, wz);
-            const bool wet = (m.riverOn > 0.3 && std::fabs(m.riverS) < m.riverHW + 6) || (m.creekOn > 0.3 && std::fabs(m.creekS) < m.creekHW + 4) || m.lakeLevel > -1e8;
-            if (wet) continue;
-            MapPlace* p = add("WRECK" + std::to_string(q), "", PK_CACHE, wx, wz, 8, 0, 0);
-            p->vehicle = "wreck";
-            p->yaw = u1 * 37.0;
-            p->reward = hash01(params_->s[S_DITHER] + 731 + (uint64_t)q, i, j) < 0.4 ? 50 + (int)(250 * remoteness(wx, wz)) / 10 * 10 : 0;
+        std::vector<std::shared_ptr<const TrailEdge>> edges = {edge(i, j, 0), edge(i, j, 1), edge(i - 1, j, 0), edge(i, j - 1, 1)};
+        for (const WreckSite& s : nodeWrecks(i, j)) {
+            bool onTrail = false;  // (not across a tread)
+            for (const auto& e : edges)
+                if (e && e->on)
+                    for (size_t k = 0; k < e->x.size() && !onTrail; k += 2) onTrail = sqr(e->ax + e->x[k] - s.x) + sqr(e->az + e->z[k] - s.z) < 8.0 * 8.0;
+            if (onTrail) continue;
+            MapPlace* p = add("WRECK" + std::to_string(s.q), "", PK_WRECK, s.x, s.z, 8, 0, 0);
+            p->yaw = s.yaw, p->reward = s.cash;
         }
     }
     // Now and then an abandoned vehicle by a node, for the career to recover.
@@ -4190,8 +4277,8 @@ void buildPlaces(World& w, const std::vector<MapPlace>& places) {
     for (const MapPlace& pl : places) {
         const V3 P = grounded(pl.p);
         const double yw = pl.yaw;
-        if (pl.kind == PK_CACHE && pl.vehicle == "wreck") {  // (a wreck: the rusted pickup, no sign, no label)
-            decor("wreck_pickup", P, yw);
+        if (pl.kind == PK_WRECK) {  // (no sign, no label)
+            wrecks::place(w, pl);
             continue;
         }
         switch (pl.kind) {
@@ -4242,7 +4329,7 @@ void buildPlaces(World& w, const std::vector<MapPlace>& places) {
                 break;
             default: break;
         }
-        if (pl.kind != PK_CACHE && pl.kind != PK_RIVER_CROSSING && pl.kind != PK_ABANDONED_VEHICLE && pl.kind != PK_WATERFALL) sign(rel(P, yw, 3, -(pl.pad + 2)), yw, PROP_SIGN);
+        if (pl.kind != PK_CACHE && pl.kind != PK_RIVER_CROSSING && pl.kind != PK_ABANDONED_VEHICLE && pl.kind != PK_WATERFALL && pl.kind != PK_WRECK) sign(rel(P, yw, 3, -(pl.pad + 2)), yw, PROP_SIGN);
     }
 }
 
@@ -4409,6 +4496,8 @@ void shiftSim(Sim& sim, const V3& d) {
     for (Sim::DroppedPart& dp : sim.droppedParts) dp.p += d;
     sim.handLine.hand += d;
     sim.handCable.hand += d;
+    sim.hose.pump += d, sim.hose.hand += d, sim.hose.plugAt += d;
+    for (Sim::RemoteHose& h : sim.remoteHoses) h.pump += d, h.end += d;
     for (V3& p : sim.lodWatch) p += d;
 }
 

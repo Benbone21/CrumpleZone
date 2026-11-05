@@ -72,6 +72,7 @@ std::vector<std::string> cacheGear(int i) {
     if (i == 7) g.push_back(toolKey(TOOL_CABLES));
     if (i == 2 || i == 6) g.push_back(anchors::gearKey(GEAR_ICE));
     if (i == 3 || i == 7) g.push_back(anchors::gearKey(GEAR_BOLT));
+    if (i % 4 == 1) g.push_back(repairPartKey(PART_FUEL_CAN));  // (a full can in every fourth)
     return g;
 }
 
@@ -212,10 +213,11 @@ std::string Career::openCache(const CacheSpot& c) {
 
 std::string Career::takeCache(const CacheSpot& c) {
     std::string said;
-    if (!c.part.empty()) said = "FOUND: " + grant(c.part);
-    else cash += c.cash, said = "FOUND: $" + std::to_string(c.cash);
-    for (const std::string& g : c.gear) said += ", " + grant(g);
-    return said;
+    auto found = [&](const std::string& what) { said += (said.empty() ? "FOUND: " : ", ") + what; };
+    if (!c.part.empty()) found(grant(c.part));
+    if (c.cash > 0 || (c.part.empty() && !c.wreck)) cash += c.cash, found("$" + std::to_string(c.cash));
+    for (const std::string& g : c.gear) found(grant(g));
+    return said.empty() ? "NOTHING USEFUL" : said;  // (a wreck with nothing left in it)
 }
 
 Kit Career::kit() const {
@@ -257,9 +259,10 @@ const std::vector<ShopItem>& stationRack() {
     static const std::vector<ShopItem> r = [] {
         std::vector<ShopItem> v;
         const int toolPrice[TOOL_COUNT] = {60, 140, 220, 45, 70, 55, 180, 150, 45};
-        const int partPrice[PART_COUNT] = {160, 240, 300, 90, 190, 40, 25, 210};
+        const int partPrice[PART_COUNT] = {160, 240, 300, 90, 190, 40, 25, 210, 60, 0};  // (a can comes full; an empty one isn't sold)
         for (int t = 0; t < TOOL_COUNT; t++) v.push_back({toolKey((Tool)t), toolPrice[t], toolModel((Tool)t)});
-        for (int p = 0; p < PART_COUNT; p++) v.push_back({repairPartKey((RepairPart)p), partPrice[p], p == PART_TIRE ? "" : repairPartModel((RepairPart)p)});
+        for (int p = 0; p < PART_COUNT; p++)
+            if (partPrice[p] > 0) v.push_back({repairPartKey((RepairPart)p), partPrice[p], p == PART_TIRE ? "" : repairPartModel((RepairPart)p)});
         for (int g = 0; g < GEAR_COUNT; g++) v.push_back({anchors::gearKey((AnchorGear)g), anchors::kPrice[g], anchors::gearModel((AnchorGear)g)});
         return v;
     }();

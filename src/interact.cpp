@@ -3,6 +3,8 @@
 
 #include "battery.h"
 #include "carentry.h"
+#include "fuel.h"
+#include "wrecks.h"
 
 #include <cmath>
 #include <cstdio>
@@ -24,6 +26,8 @@ constexpr double kTakeChain = 0.6, kFitChain = 3.0, kRemoveChain = 2.0, kStowCha
 constexpr double kGrabLine = 1.0, kHookLine = 1.2, kUnhookLine = 0.8, kStowLine = 0.6;  // the recovery line jobs
 constexpr double kLineReach = 3.0;  // m from your chest to the anchor you hook to
 constexpr double kOpenCache = 1.5;  // prise the lid off a supply cache
+constexpr double kSearchWreck = 3.0;  // go through a wreck
+constexpr double kHoseTap = 0.15, kPourCan = 4.0, kFillCan = 4.0;  // the hose jobs are a tap of E; a can takes a while (fuel.h)
 constexpr double kTakeItem = 0.5, kStowItem = 0.5;  // the back, and things in and out of it
 constexpr double kJumpPack = 4.0, kClampCable = 2.0, kUnclampCable = 1.5;  // jump pack on, cables clamped, taken off
 constexpr double kReach = prompts::kReach;  // m from your chest
@@ -254,7 +258,8 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
         else if (lift && !lifted) o.blocked = true, o.prompt += ": JACK THIS CORNER UP FIRST";
     };
     const bool lineHeld = sim.handLine.on() && sim.handLine.car < (int)sim.cars.size();
-    const bool hands = wk.carrying.has_value() || wk.holdingChain || lineHeld;
+    const bool hoseHeld = sim.hose.held();
+    const bool hands = wk.carrying.has_value() || wk.holdingChain || lineHeld || hoseHeld;
     const bool busy = hands || wk.holdingJack;
     const bool wheelInHands = wk.carrying.has_value() && !wk.carrying->tireOnly, tireInHands = wk.carrying.has_value() && wk.carrying->tireOnly;
     for (int ci = 0; ci < (int)sim.cars.size(); ci++) {
@@ -554,10 +559,55 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
     if (!hands && spots)
         for (int si = 0; si < (int)spots->size(); si++) {
             InteractOption o;
-            o.kind = IA_OPEN_CACHE, o.spot = si, o.hold = kOpenCache, o.at = (*spots)[si].at + V3(0, 0.5, 0);
+            const bool wreck = (*spots)[si].wreck;
+            o.kind = wreck ? IA_SEARCH_WRECK : IA_OPEN_CACHE, o.spot = si, o.hold = wreck ? kSearchWreck : kOpenCache, o.at = (*spots)[si].at + V3(0, 0.5, 0);
             o.prompt = (*spots)[si].prompt;
+            consider(o, wreck ? wrecks::kReach : kReach);
+        }
+    {  // The fuel jobs (fuel.h): a pump's hose, and a can in your hand.
+        const int money = opts ? opts->money : -1;
+        const bool canFull = wk.hand == TrunkRef{TK_PART, PART_FUEL_CAN}, canEmpty = wk.hand == TrunkRef{TK_PART, PART_EMPTY_CAN};
+        if (opts && opts->pumps)
+            for (int pi = 0; pi < (int)opts->pumps->size(); pi++) {
+                const V3& at = (*opts->pumps)[pi];
+                if (len(at - chest) > prompts::kMarkerRange + 1) continue;
+                InteractOption o;
+                o.spot = pi, o.at = at;
+                if (hoseHeld) {
+                    if (len(at - sim.hose.pump) > 0.2) continue;
+                    o.kind = IA_HANG_HOSE, o.hold = kHoseTap, o.prompt = "HANG THE HOSE BACK";
+                } else if (canEmpty) {
+                    o.kind = IA_FILL_CAN, o.hold = kFillCan;
+                    o.prompt = money >= 0 ? "FILL THE CAN ($" + std::to_string(fuel::kCanFillCost) + ")" : "FILL THE CAN";
+                    if (money >= 0 && money < fuel::kCanFillCost) o.blocked = true, o.prompt += ": NOT ENOUGH CASH";
+                } else if (!hands && !sim.hose.on()) {
+                    o.kind = IA_TAKE_HOSE, o.hold = kHoseTap;
+                    o.prompt = money >= 0 ? "TAKE THE HOSE ($" + std::to_string(fuel::kPricePerLiter) + " A LITER)" : "TAKE THE HOSE";
+                    if (money == 0) o.blocked = true, o.prompt += ": YOU HAVE NO MONEY";
+                } else continue;
+                consider(o);
+            }
+        for (int ci = 0; ci < (int)sim.cars.size(); ci++) {
+            const Car& c = sim.cars[ci];
+            if (c.isProp() || !c.spec || !(hoseHeld || canFull || (sim.hose.state == Sim::FuelHose::PLUGGED && sim.hose.car == ci))) continue;
+            if (len(c.frame().com - chest) > 9) continue;
+            InteractOption o;
+            o.car = ci, o.at = fuel::filler(c);
+            const double room = fuel::room(c);
+            if (hoseHeld) {
+                o.kind = IA_PLUG_HOSE, o.hold = kHoseTap, o.prompt = "PUT THE HOSE IN THE TANK";
+                if (len(o.at - sim.hose.pump) > fuel::kHoseLen) o.blocked = true, o.prompt += ": THE HOSE WON'T REACH";
+                else if (room < 0.5) o.blocked = true, o.prompt += ": THE TANK IS FULL";
+            } else if (sim.hose.state == Sim::FuelHose::PLUGGED && sim.hose.car == ci) {
+                o.kind = IA_UNPLUG_HOSE, o.hold = kHoseTap, o.prompt = "TAKE THE HOSE OUT";
+            } else {
+                o.kind = IA_POUR_CAN, o.hold = kPourCan, o.prompt = "POUR THE CAN IN";
+                if (room < 1) o.blocked = true, o.prompt += ": THE TANK IS FULL";
+                else if (room < fuel::kCanLiters) o.prompt += " (ROOM FOR " + std::to_string((int)room) + " L)";
+            }
             consider(o);
         }
+    }
     if (!hands)
         for (int li = 0; li < (int)sim.looseWheels.size(); li++) {
             const LooseWheel& lw = sim.looseWheels[li];
@@ -647,6 +697,11 @@ std::string Interact::run(Sim& sim, Walker& wk, const V3& eye, const V3& look, b
     po.stickyBonus = holdE && progress > 0 ? prompts::kHoldBonus : prompts::kStickyBonus;  // (working on it: only a clear change of aim lets go)
     nearby.clear();
     po.nearby = &nearby;
+    if (pumpStamp != sim.world.stamp || pumpModels != sim.world.models.size()) {  // (the world has changed: a slide, a new map, a career's station pumps)
+        fuel::findPumps(sim.world, pumps);
+        pumpStamp = sim.world.stamp, pumpModels = sim.world.models.size();
+    }
+    po.pumps = &pumps, po.money = money;
     InteractOption o = pick(sim, wk, eye, look, &spots, kit, trunkOn ? &own : nullptr, hover.ok ? &hover : nullptr, &po);
     if (!holdE) waitRelease = false;
     // Working the jack: it goes on while E is held, whatever it turns into on the way.
@@ -705,7 +760,8 @@ std::string Interact::run(Sim& sim, Walker& wk, const V3& eye, const V3& look, b
     if (progress < o.hold) return "";
     progress = 0;
     if (o.kind == IA_FIX || o.kind == IA_TIRE_WORK || o.kind == IA_GRAB_LINE || o.kind == IA_HOOK_LINE || o.kind == IA_UNHOOK_LINE || o.kind == IA_STOW_LINE ||
-        o.kind == IA_JUMP_PACK || o.kind == IA_CLAMP_CABLE || o.kind == IA_UNCLAMP_CABLE)
+        o.kind == IA_JUMP_PACK || o.kind == IA_CLAMP_CABLE || o.kind == IA_UNCLAMP_CABLE || o.kind == IA_TAKE_HOSE || o.kind == IA_HANG_HOSE ||
+        o.kind == IA_PLUG_HOSE || o.kind == IA_UNPLUG_HOSE || o.kind == IA_POUR_CAN || o.kind == IA_FILL_CAN)
         waitRelease = true;  // (a step at a time: let go before the next)
     return perform(sim, wk, o);
 }
@@ -713,7 +769,7 @@ std::string Interact::run(Sim& sim, Walker& wk, const V3& eye, const V3& look, b
 std::string Interact::perform(Sim& sim, Walker& wk, const InteractOption& o) {
     WheelItem it;
     switch (o.kind) {  // (what fills your arms puts down whatever's in your hand)
-        case IA_TAKE_SPARE: case IA_REMOVE_WHEEL: case IA_PICK_UP: case IA_TAKE_CHAIN: case IA_REMOVE_CHAIN: case IA_TAKE_JACK: case IA_REMOVE_JACK:
+        case IA_TAKE_SPARE: case IA_REMOVE_WHEEL: case IA_PICK_UP: case IA_TAKE_CHAIN: case IA_REMOVE_CHAIN: case IA_TAKE_JACK: case IA_REMOVE_JACK: case IA_TAKE_HOSE:
             wk.hand = TrunkRef();
             break;
         default:
@@ -750,8 +806,33 @@ std::string Interact::perform(Sim& sim, Walker& wk, const InteractOption& o) {
             wk.carrying = it;
             return "";
         case IA_OPEN_CACHE:
+        case IA_SEARCH_WRECK:
             if (o.spot >= 0 && o.spot < (int)spots.size()) openedSpot = spots[o.spot].id;
             return "";
+        case IA_TAKE_HOSE:
+            sim.hose.state = Sim::FuelHose::HAND, sim.hose.pump = o.at, sim.hose.hand = wk.p + V3(0, 1.0, 0), sim.hose.car = -1;
+            return "WALK THE HOSE TO THE FILLER";
+        case IA_HANG_HOSE:
+            sim.hose.release();
+            return "HOSE BACK ON THE PUMP";
+        case IA_PLUG_HOSE:
+            sim.hose.plug(o.car, o.at);
+            return "";
+        case IA_UNPLUG_HOSE: {
+            Sim::FuelHose& h = sim.hose;
+            const std::string said = fuel::gauge(sim);
+            h.state = Sim::FuelHose::HAND, h.car = -1, h.hand = wk.p + V3(0, 1.0, 0);
+            return said;
+        }
+        case IA_POUR_CAN: {
+            canPoured = true;
+            wk.hand = TrunkRef{TK_PART, PART_EMPTY_CAN};
+            return fuel::pour(sim, o.car, fuel::kCanLiters);
+        }
+        case IA_FILL_CAN:
+            canFilled = true;
+            wk.hand = TrunkRef{TK_PART, PART_FUEL_CAN};
+            return "CAN FILLED";
         case IA_TAKE_CHAIN: {
             Car& c = sim.cars[o.car];
             if (c.chains <= 0) return "";

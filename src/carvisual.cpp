@@ -1,4 +1,5 @@
 #include "battery.h"
+#include "fuel.h"
 #include "thread_cache.h"
 #include "loadprof.h"
 #include "carvisual.h"
@@ -2127,6 +2128,24 @@ void buildRopes(const Sim& sim, std::vector<Vtx>& out) {
         const std::vector<V3> path = sim.ropePath(tmp, rad + 0.015);
         for (size_t k = 1; k < path.size(); k++) tube(out, path[k - 1], path[k], rad, winch ? 5 : 4, winch ? V3(0.72, 0.1, 0.05) : V3(0.95, 0.6, 0.08), SM_MATTE);
         blob(out, hl.hand, 0.03, V3(0.55, 0.55, 0.57), SM_METAL);  // the hook in the hand
+    }
+    {  // pump hoses (fuel.h): a black hose drooping from the pump to a nozzle in your hand or in the filler; the others' too
+        auto hose = [&](const V3& a, const V3& b) {
+            const double d = len(b - a), sag = std::max(0.0, (fuel::kHoseLen - d) * 0.3) + 0.15;
+            V3 last = a;
+            for (int k = 1; k <= 12; k++) {
+                const double u = k / 12.0;
+                V3 q = a + (b - a) * u;
+                q.y = std::max(q.y - sag * 4 * u * (1 - u), sim.world.height(q.x, q.z) + 0.03);
+                tube(out, last, q, 0.016, 5, V3(0.05, 0.05, 0.055), SM_MATTE);
+                last = q;
+            }
+            blob(out, b, 0.03, V3(0.6, 0.6, 0.58), SM_METAL);  // the nozzle
+            tube(out, b, b + norm(b - a) * 0.13, 0.012, 5, V3(0.65, 0.65, 0.62), SM_METAL);
+        };
+        if (sim.hose.on()) hose(sim.hose.pump, sim.hose.hand);
+        for (const Sim::RemoteHose& h : sim.remoteHoses)
+            if (h.shown) hose(h.pump, h.end);
     }
     {  // jumper cables (battery.h): a red and a black lead between the clamps on two batteries (or from one to your hand), drooping to the ground
         auto lead = [&](const V3& a, const V3& b, const V3& col, double off) {

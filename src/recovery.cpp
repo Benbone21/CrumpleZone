@@ -462,6 +462,8 @@ void Sim::carRemoved(int car) {
     else if (handCable.car > car) handCable.car--;
     if (handLine.car == car) dropHandLine();
     else if (handLine.car > car) handLine.car--;
+    if (hose.state == FuelHose::PLUGGED && hose.car == car) hose.release();
+    else if (hose.car > car) hose.car--;
     for (Rope& r : ropes) {
         if (r.a.kind == ANCHOR_CAR && r.a.car > car) r.a.car--;
         if (r.b.kind == ANCHOR_CAR && r.b.car > car) r.b.car--;
@@ -958,7 +960,7 @@ void Sim::updateTrail(double dt) {
         }
         if (st >= 0 && speed < 0.5 && i == player) refillAnchors();  // (sandbox: the shop restocks your anchor gear)
         // The shop's pump: fills the tank (and the spare can) while you're on its pad.
-        if (st >= 0 && speed < 0.5 && c.fuel >= 0) {
+        if (padFuel && st >= 0 && speed < 0.5 && c.fuel >= 0) {
             c.fuel = std::min(c.spec->fuelCapacity, c.fuel + 3.0 * dt);
             if (c.jerry >= 0) c.jerry = std::min(c.spec->jerryCan, c.jerry + 3.0 * dt);
         }

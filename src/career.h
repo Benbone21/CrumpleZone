@@ -30,6 +30,7 @@ struct CacheSpot {
     int cash = 0;
     std::vector<std::string> gear;  // and some trail-repair gear: "TOOL:HAMMER", "REPAIR:CV AXLE" (fixes.h)
     std::string label;  // what's shown, when the id isn't (the procedural world's: its id is the seed and place id)
+    bool wreck = false;  // a wreck to search (wrecks.h), not a crate: maybe nothing in it, no marker, no name
     const std::string& shown() const { return label.empty() ? id : label; }
 };
 

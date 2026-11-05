@@ -1,5 +1,6 @@
 // On-foot prompts (prompts.h): the table of kinds, the aim, the markers and the hint.
 #include "prompts.h"
+#include "wrecks.h"
 
 #include <algorithm>
 #include <cmath>
@@ -23,7 +24,8 @@ const KindInfo& info(InteractKind k) {
         kAirUp{"THE TIRE", "AIR UP", 0.4, KEY_INTERACT}, kAirDown{"THE TIRE", "LET AIR OUT", 0.4, KEY_INTERACT},
         kHoodUp{"THE HOOD", "OPEN IT", 0.5, KEY_INTERACT}, kHoodDown{"THE HOOD", "CLOSE IT", 0.5, KEY_INTERACT},
         kJump{"THE BATTERY", "JUMP START IT", 0.35, KEY_INTERACT}, kClamp{"THE BATTERY", "CLAMP THE CABLES ON", 0.35, KEY_INTERACT},
-        kUnclamp{"THE CLAMPS", "TAKE THE CABLES OFF", 0.3, KEY_INTERACT}, kOther{"A MARKER", "USE IT", 0.3, KEY_INTERACT};
+        kUnclamp{"THE CLAMPS", "TAKE THE CABLES OFF", 0.3, KEY_INTERACT}, kOther{"A MARKER", "USE IT", 0.3, KEY_INTERACT},
+        kPump{"THE PUMP", "USE IT", 0.4, KEY_INTERACT}, kFiller{"THE FUEL FILLER", "FILL THE TANK", 0.25, KEY_INTERACT}, kWreck{"THE WRECK", "SEARCH IT", 0.9, KEY_INTERACT};
     switch (k) {
         case IA_TAKE_SPARE: case IA_STOW_SPARE: return kTake;
         case IA_REMOVE_WHEEL: case IA_RESEAT_TIRE: return kWheel;
@@ -49,6 +51,9 @@ const KindInfo& info(InteractKind k) {
         case IA_JUMP_PACK: return kJump;
         case IA_CLAMP_CABLE: return kClamp;
         case IA_UNCLAMP_CABLE: return kUnclamp;
+        case IA_TAKE_HOSE: case IA_HANG_HOSE: case IA_FILL_CAN: return kPump;
+        case IA_PLUG_HOSE: case IA_UNPLUG_HOSE: case IA_POUR_CAN: return kFiller;
+        case IA_SEARCH_WRECK: return kWreck;
         case IA_NONE: return kDoor;
         default: return kOther;
     }
@@ -106,11 +111,11 @@ Focus Prompter::update(const Sim& sim, const Walker& wk, const Interact& ia, con
         if (o.kind == IA_NONE && !o.passive) continue;
         Marker m;
         m.at = o.at, m.radius = o.radius > 0 ? o.radius : info(o.kind).radius, m.kind = o.kind, m.key = info(o.kind).key;
-        m.hold = o.hold > 0 || o.continuous, m.blocked = o.blocked, m.car = o.car;
+        m.hold = o.hold > 0.2 || o.continuous, m.blocked = o.blocked, m.car = o.car;
         m.current = haveCurrent && o.same(ia.current);
         const bool door = o.passive || o.kind == IA_ENTER_CAR || o.kind == IA_RIDE_ALONG;
         m.door = door;
-        m.far = len(o.at - chest) > (door ? kReach + 1.0 : o.kind == IA_OPEN_INVENTORY ? 3.2 : kReach);
+        m.far = len(o.at - chest) > (door ? kReach + 1.0 : o.kind == IA_OPEN_INVENTORY ? 3.2 : o.kind == IA_SEARCH_WRECK ? wrecks::kReach : kReach);
         split(o, m.label, m.reason);
         // One marker to a job (the pick has spread the ones that shared a spot: spread), so only the very same job is merged.
         bool merged = false;

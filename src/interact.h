@@ -54,6 +54,13 @@ enum InteractKind {
     IA_JUMP_PACK,     // the jump pack in your hands on a dead battery (battery.h): yours, or a buddy's
     IA_CLAMP_CABLE,   // jumper cables in your hands onto a battery (step 0 the first end, 1 the second: the cable is made)
     IA_UNCLAMP_CABLE, // cables off (the cable is Sim::cables[rope]); the cables come back into your hands
+    IA_TAKE_HOSE,     // a pump's hose into your hand (fuel.h; `at` is the pump)
+    IA_HANG_HOSE,     // ...and back on the pump
+    IA_PLUG_HOSE,     // the hose in your hand into a vehicle's filler
+    IA_UNPLUG_HOSE,   // out again, back into your hand
+    IA_POUR_CAN,      // the fuel can in your hand poured in at a vehicle's filler
+    IA_FILL_CAN,      // the empty can in your hand filled at a pump
+    IA_SEARCH_WRECK,  // go through a wreck (wrecks.h): as a cache is opened (spots)
 };
 
 // The repair in progress, as the on-foot checklist shows it: "CV AXLE, FRONT LEFT" and its steps.
@@ -70,6 +77,7 @@ struct InteractSpot {
     std::string id;
     V3 at;
     std::string prompt;  // "OPEN THE SUPPLY CACHE"
+    bool wreck = false;  // a wreck to search: a big thing, reached from any side of it (wrecks.h)
 };
 
 struct InteractOption {
@@ -104,6 +112,8 @@ struct PickOpts {
     const InteractOption* sticky = nullptr;  // the job you have now: it keeps the target a little past where another would take it over
     double stickyBonus = 0.12;               // rad
     std::vector<InteractOption>* nearby = nullptr;  // filled with every job within marker range, aimed at or not (the markers, prompts.h)
+    const std::vector<V3>* pumps = nullptr;  // the world's pumps (fuel.h)
+    int money = -1;                          // a career's cash for the fuel jobs (-1: sandbox, free)
 };
 
 struct Interact {
@@ -122,6 +132,11 @@ struct Interact {
     std::vector<InteractSpot> spots;  // things out in the world to open (set by the game)
     std::string openedSpot;           // set when one's been opened (its id): the game takes it from here
     int openedInventory = -1;         // set when E opened a truck's inventory (its car): the game shows the menu
+    int money = -1;                   // your cash, for what a pump charges (set by the game; -1: sandbox, free)
+    std::vector<V3> pumps;            // the world's pumps (fuel.h: kept up to date by run)
+    uint64_t pumpStamp = 0;
+    size_t pumpModels = 0;
+    bool canPoured = false, canFilled = false;  // a can job done: the game takes it from here (fuel::settle)
     int jumpedCar = -1;               // set when the pack went on a vehicle (its index): repairsync tells its owner
     int enterCar = -1;                // set when E at a door says get in (its car: IA_ENTER_CAR, IA_RIDE_ALONG): the game does it
     PartHit hover;                    // the car part under the crosshair (set by the game each frame): its repair, if any, is the one picked

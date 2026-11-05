@@ -241,6 +241,11 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
     }
     // Reaching for a line (the fairlead's hook, a strap's end, a hooked line's end, the drum to stow it): the right hand
     // goes out to it, opening, and closes on it.
+    if (mine && sim.hose.held()) {  // the pump's hose in your right hand (fuel.h)
+        h.hands[1].on = true, h.hands[1].grip = 0.9;
+        h.hands[1].p = sim.hose.hand;
+        h.hands[1].axis = norm(sim.hose.pump - sim.hose.hand);
+    }
     if (working && (o.kind == IA_GRAB_LINE || o.kind == IA_UNHOOK_LINE || o.kind == IA_STOW_LINE) && std::isfinite(o.at.x)) {
         const V3 rest = eye + flat(F) * 0.35 + R * 0.2 - kUp * 0.55;
         const double s = smooth(std::min(1.0, t * 1.7));
@@ -450,6 +455,7 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
         break;
     }
     case IA_OPEN_CACHE:
+    case IA_SEARCH_WRECK:
         sc.lever(toolId(TOOL_PRY_BAR), o.at + kUp * 0.1, toward, secs / 1.1 * M_PI * 2);
         break;
     default: break;

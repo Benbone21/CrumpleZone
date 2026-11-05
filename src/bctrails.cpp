@@ -748,7 +748,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
     (void)edge;
     // Every place (a cache, a photo spot, a crossing) is kept clear of the fill: 10 m round it.
     for (const MapPlace& pl : mapPlaces(MAP_BACKCOUNTRY))
-        for (double dx = -10; dx <= 10; dx += 1)
+        for (double dx = -10; dx <= 10 && pl.kind != PK_WRECK; dx += 1)
             for (double dz = -10; dz <= 10; dz += 1) {
                 const int id = dx * dx + dz * dz <= 100 ? cellIndex(pl.p.x + dx, pl.p.z + dz) : -1;
                 if (id >= 0) keep[id] = 1;

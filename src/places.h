@@ -27,6 +27,7 @@ enum PlaceKind : int {
     PK_CACHE,
     PK_ABANDONED_VEHICLE,
     PK_OBSTACLE,  // a trail's set piece: a shelf, a rock garden, a staircase of slabs (the Backcountry's trails, bctrails.cpp)
+    PK_WRECK,     // a rusting wreck out in the country (wrecks.h): no name, no marker, never "found"; searched on foot
     PK_COUNT
 };
 const char* placeKindName(int kind);  // "RANGER STATION"

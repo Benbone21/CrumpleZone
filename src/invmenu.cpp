@@ -65,6 +65,8 @@ std::string InvMenu::describe(TrunkRef r) {
                 case PART_SPARK_PLUGS: return "SPARK PLUGS: A DRY SET FOR AN ENGINE THAT FLOODED";
                 case PART_ENGINE_OIL: return "ENGINE OIL: REFILLS THE SUMP AFTER THE WATER IS DRAINED FROM A FLOODED ENGINE";
                 case PART_SPRING: return "SPRING: A NEW COILOVER OR LEAF SPRING FOR A BROKEN ONE";
+                case PART_FUEL_CAN: return "FUEL CAN: 20 L. AIM AT A VEHICLE'S FILLER AND HOLD E TO POUR IT IN";
+                case PART_EMPTY_CAN: return "EMPTY FUEL CAN: HOLD E AT A PUMP WITH IT IN YOUR HAND TO FILL IT";
                 default: break;
             }
             break;

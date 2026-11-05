@@ -5,6 +5,7 @@
 #include "world.h"
 #include "onemap.h"
 #include "worldcache.h"
+#include "wrecks.h"
 #include "realterrain.h"
 #include "laptimer.h"
 #include "loadprof.h"
@@ -487,6 +488,7 @@ World::World(int m) : map(m) {
         else buildProvingGround();
         // The slab the player starts on (and the parked trucks): in the game's proving ground, as the other maps are always built.
         if ((map != MAP_PROVING_GROUND || withShowcase) && map != MAP_PROCEDURAL) addMapSpawnPads(*this);  // (the procedural world lays its own)
+        wrecks::placeAll(*this);  // (the rusting wrecks out in the country: wrecks.h)
         splitPendingRocks();
         loadprof::Scope lpStore("world.cache write");
         worldcache::store(*this);
@@ -607,7 +609,7 @@ void World::buildModelYard() {
         if (id == "jersey_barrier") return {{"length", 6}};
         return {};
     };
-    auto see = [](const std::string& id) { return id != "fp_hand" && id != "lug_nut" && id != "waterfall" && id != "timber_bridge"; };  // (the falls: drawn by the water pass, on rivers; the bridges span rivers, 10-40 m: the procedural world's)
+    auto see = [](const std::string& id) { return id != "fp_hand" && id != "lug_nut" && id != "waterfall" && id != "timber_bridge" && (id.rfind("wreck_", 0) != 0 || id == "wreck_pickup"); };  // (the falls: drawn by the water pass, on rivers; the bridges span rivers, 10-40 m: the procedural world's)
     // Things to walk through or round rather than bump into.
     auto ghost = [](const std::string& id) {
         return id == "repair_shed" || id == "fire_tower" || id == "race_gate" || id == "sign_gantry" || id == "mine_portal" || id == "tent" ||

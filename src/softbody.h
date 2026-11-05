@@ -886,6 +886,36 @@ public:
         V3 hand;                       // where it is held (set each frame by the game)
         bool on() const { return car >= 0; }
     } handLine;
+    // A pump's hose (fuel.h): in your hand, or plugged into a vehicle's filler. Nothing in the physics holds it: it pops out.
+    struct FuelHose {
+        enum State { OFF, HAND, PLUGGED } state = OFF;
+        V3 pump;                 // where it comes out of the pump
+        V3 hand;                 // its nozzle: your hand (set each frame by the game), or the filler
+        V3 plugAt;               // where the filler was when it went in
+        int car = -1;            // (PLUGGED) into which
+        double pumped = 0;       // L so far
+        double owed = 0;         // $ not yet a whole dollar
+        int paid = 0;            // $ so far
+        bool full = false, broke = false;  // it's stopped: the tank won't take any more; the money's gone
+        double unsent = 0, sendIn = 0;     // (a buddy's vehicle) L not told yet, and when
+        std::string told;        // the last place it was said to run (fuel.h "hose ...")
+        double tellIn = 0;
+        std::vector<std::string> outbox;  // chatter for the others (the game sends it)
+        bool on() const { return state != OFF; }
+        bool held() const { return state == HAND; }
+        void plug(int c, const V3& at) { state = PLUGGED, car = c, plugAt = at, hand = at, pumped = owed = 0, paid = 0, full = broke = false, unsent = 0; }
+        void release() { state = OFF, car = -1, full = broke = false; }  // (back on the pump)
+    } hose;
+    // The others' hoses, to draw.
+    struct RemoteHose {
+        int player = -1;
+        V3 pump, end;
+        uint32_t carId = 0;
+        double heard = 0;
+        bool shown = false;
+    };
+    std::vector<RemoteHose> remoteHoses;
+    bool padFuel = true;  // a repair station's pad fills your tank free (sandbox); a career pays at a pump (fuel.h)
     std::string takeLine(int car, RopeKind kind, int hook, const V3& hand);  // "" on success, else why not
     void dropHandLine() { handLine = HandLine(); }                          // let go: the line spools back
     double handLineReach(const HandLine& h) const;                          // how far from its recovery point you can walk with it (m)

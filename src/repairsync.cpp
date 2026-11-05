@@ -125,7 +125,7 @@ bool decode(const std::string& text, Work& out) {
             out.carry.R = v[0], out.carry.rimR = v[1], out.carry.width = v[2], out.carry.style = (int)v[3];
             out.carry.popped = v[4] == 1, out.carry.tireOnly = v[5] == 1;
         } else if (key == "do" && v.size() >= 16) {
-            const bool ok = whole(v[0], IA_NONE + 1, IA_UNCLAMP_CABLE) && whole(v[1], 0, 4294967295.0) && whole(v[2], -1, 31) && whole(v[3], -1, 31) && whole(v[4], -1, TOOL_COUNT - 1) &&
+            const bool ok = whole(v[0], IA_NONE + 1, IA_SEARCH_WRECK) && whole(v[1], 0, 4294967295.0) && whole(v[2], -1, 31) && whole(v[3], -1, 31) && whole(v[4], -1, TOOL_COUNT - 1) &&
 
                             whole(v[5], -1, PART_COUNT - 1) && whole(v[6], Fix::CV_AXLE, Fix::SPRING) && whole(v[7], -1, 31) && whole(v[8], 0, PART_COUNT - 1) &&
                             inRange(v[11], 0, 60) && inRange(v[12], 0, 600) && okPos(V3(v[13], v[14], v[15]));

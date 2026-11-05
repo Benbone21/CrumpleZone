@@ -389,7 +389,7 @@ void Coop::drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, in
     // A place found is marked by what it is (a letter in a coloured square); one not found yet is a "?".
     static const float kKindCol[PK_COUNT][3] = {{0.55f, 1.0f, 0.55f}, {1.0f, 0.65f, 0.25f}, {0.85f, 0.65f, 0.45f}, {0.75f, 0.8f, 0.45f}, {0.6f, 0.85f, 1.0f},
                                                 {0.4f, 0.7f, 1.0f},   {0.8f, 0.75f, 0.7f},  {1.0f, 1.0f, 1.0f},   {0.5f, 0.9f, 0.9f},  {0.7f, 0.6f, 0.55f},
-                                                {1.0f, 0.5f, 0.8f},   {1.0f, 0.9f, 0.3f},   {0.9f, 0.45f, 0.4f},  {1.0f, 0.55f, 0.2f}};
+                                                {1.0f, 0.5f, 0.8f},   {1.0f, 0.9f, 0.3f},   {0.9f, 0.45f, 0.4f},  {1.0f, 0.55f, 0.2f}, {0.6f, 0.45f, 0.35f}};
     for (const auto& pl : places) {
         const bool known = isDiscovered(pl.keyMap(mapNow), pl.name);
         found += known;

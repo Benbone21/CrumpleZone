@@ -30,6 +30,8 @@ enum RepairPart {
     PART_SPARK_PLUGS,  // a set, for a flooded engine
     PART_ENGINE_OIL,   // a jug of oil, to refill the sump after the water is drained
     PART_SPRING,       // a coilover or a leaf spring pack, for a broken one
+    PART_FUEL_CAN,     // a full can of fuel (fuel.h): poured in at a vehicle's filler; an EMPTY one stays with you
+    PART_EMPTY_CAN,    // ...and the can once it's been poured: refilled at a pump
     PART_COUNT
 };
 

@@ -13,6 +13,8 @@
 #include "loadprof.h"
 #include "realterrain.h"
 #include "watchdog.h"
+#include "fuel.h"
+#include "wrecks.h"
 #include "benchreport.h"
 #include "meshcache.h"
 #include "carvisual.h"
@@ -641,7 +643,7 @@ std::vector<Place> pilotPlaces(const Sim& sim, const NetSession& net) {
     } else if (sim.world.map == MAP_PROCEDURAL) {  // the window's places (procworld.h), nearest first
         std::vector<const MapPlace*> v;
         for (const MapPlace& mp : mapPlaces(MAP_PROCEDURAL))
-            if (mp.kind != PK_CACHE && mp.kind != PK_PHOTO_SPOT && mp.kind != PK_ABANDONED_VEHICLE) v.push_back(&mp);
+            if (mp.kind != PK_CACHE && mp.kind != PK_PHOTO_SPOT && mp.kind != PK_ABANDONED_VEHICLE && mp.kind != PK_WRECK) v.push_back(&mp);
         const V3 me = sim.cars.empty() ? V3() : sim.cars[sim.player].frame().com;
         std::sort(v.begin(), v.end(), [&](const MapPlace* a, const MapPlace* b) { return std::hypot(a->p.x - me.x, a->p.z - me.z) < std::hypot(b->p.x - me.x, b->p.z - me.z); });
         for (size_t k = 0; k < v.size() && k < 24; k++) out.push_back({v[k]->name, V3(v[k]->p.x, sim.world.height(v[k]->p.x, v[k]->p.z), v[k]->p.z)});
@@ -664,7 +666,7 @@ std::vector<Place> pilotPlaces(const Sim& sim, const NetSession& net) {
         out.push_back({"TRAPPER'S CABIN", backcountryFeature("cabinend")});
         // The places of the big map (places.h): the ones not already listed here (within 40 m of one that is).
         for (const MapPlace& mp : mapPlaces(MAP_BACKCOUNTRY)) {
-            if (mp.kind == PK_CACHE || mp.kind == PK_PHOTO_SPOT || mp.kind == PK_ABANDONED_VEHICLE) continue;
+            if (mp.kind == PK_CACHE || mp.kind == PK_PHOTO_SPOT || mp.kind == PK_ABANDONED_VEHICLE || mp.kind == PK_WRECK) continue;
             bool have = false;
             for (const Place& q : out) have |= q.kind == 0 && std::hypot(q.p.x - mp.p.x, q.p.z - mp.p.z) < 40;
             if (!have) out.push_back({mp.name, V3(mp.p.x, sim.world.height(mp.p.x, mp.p.z), mp.p.z)});
@@ -2252,6 +2254,11 @@ int main(int argc, char** argv) {
     horn::Remote hornRemote;  // theirs
     repairsync::Sender repairOut;  // what you hold and the work you do on foot, the jacks under yours, as told to the others (repairsync.h)
     repairsync::Remote repairIn;   // theirs
+    std::vector<CacheSpot> wreckList;  // the wrecks on this map, to search (wrecks.h)
+    uint64_t wreckStamp = 0;
+    int wreckMap = -1, wreckPeers = 0;
+    wrecks::Searched searchedWrecks;   // (sandbox's: this session's; a career keeps them with the world)
+    Sim::FuelHose::State hoseWas = Sim::FuelHose::OFF;
     // Time of day: the clock (hours) carries on from last time; --time holds it still.
     double dayHours = opt.timeHours >= 0 ? opt.timeHours : settings.clockHours;
     double levelHours = -1;  // the playing level's own hour (-1: none)
@@ -2890,6 +2897,15 @@ int main(int argc, char** argv) {
     std::string jobBannerText;
     // A supply cache opened (by you, or by `who` in your session): its part or cash is yours.
     auto openCache = [&](const std::string& id, const std::string& who) {
+        for (const CacheSpot& c : wreckList) {  // (a wreck: searched, with or without a career, and maybe nothing in it)
+            if (c.id != id) continue;
+            const std::string said = wrecks::search(careerRun, sim, searchedWrecks, c);
+            if (said.empty()) return false;
+            jobBanner = std::max(jobBanner, 5.0);
+            jobBannerText = (who.empty() ? "" : who + " SEARCHED A WRECK: ") + said;
+            if (career.on && !careerRun.active) saveCareer();
+            return true;
+        }
         for (const CacheSpot& c : caches) {
             if (c.id != id) continue;
             const std::string said = careersession::openCache(careerRun, sim, c);  // (a world's own opened caches, saved with it)
@@ -3298,6 +3314,7 @@ int main(int argc, char** argv) {
         if (jobOn && net.role == NetSession::HOST) net.sendGame("jobstop");
         jobOn = false;  // (its wreck and its places were the last world's)
         cachesMap = -1;
+        sim.hose.release(), sim.remoteHoses.clear();  // (the last world's pump)
         if (walker.active) {  // (back in your seat: the sim has you there)
             walker.active = false, crouchLatch = false;
             cam.dist = carCamDist;
@@ -5034,6 +5051,7 @@ int main(int argc, char** argv) {
                         case SC_G:
                             if (walker.active) {
                                 if (sim.handLine.on()) { sim.dropHandLine(); hud.toast("LET GO OF THE LINE: IT SPOOLS BACK"); }
+                                else if (sim.hose.held()) { sim.hose.release(); hud.toast("LET GO OF THE HOSE: IT GOES BACK ON THE PUMP"); }
                                 else if (walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);  // (on foot: put down what you carry)
                                 else if (walker.holdingJack) Interact::dropJack(sim, walker);  // (put the jack down)
                                 else if (walker.hand.any()) hud.toast("PUT IT BACK IN THE TRUCK: PRESS " + K(KA_INTERACT) + " AT ITS BACK");
@@ -5092,7 +5110,7 @@ int main(int argc, char** argv) {
                                 {  // pour your truck's spare can into the nearest vehicle
                                     Car& mine = sim.cars[sim.player];
                                     if (mine.jerry <= 0.5) {
-                                        hud.toast(mine.spec->jerryCan > 0 ? "YOUR SPARE CAN IS EMPTY (FILL IT AT A SHOP)" : "YOUR VEHICLE HAS NO SPARE CAN");
+                                        hud.toast(mine.spec->jerryCan > 0 ? "YOUR SPARE CAN IS EMPTY (FILL IT AT A SHOP)" : "NO SPARE CAN ON THIS VEHICLE: TAKE A FUEL CAN FROM THE BACK");
                                         break;
                                     }
                                     int best = -1;
@@ -5372,6 +5390,27 @@ int main(int argc, char** argv) {
             if (opt.script == "procslide" && sim.world.map == MAP_PROCEDURAL) {  // the window slides 64 m under a parked truck: nothing should change on screen
                 up = down = left = right = false;
                 if (frame % 300 == 100 && !procStream.busy() && !std::getenv("CZ_PROC_NOSLIDE")) procStream.want(sim.world.proc.seed, sim.world.proc.ox + 64, sim.world.proc.oz + 128);
+            }
+            if (opt.script == "wreckrow" && frame == 5) {  // screenshots of the wrecks' models: a row of them at z = 40, 12 m apart from x = -84
+                for (int k = 0; k < wrecks::modelCount(); k++) {
+                    const double x = -84 + 12.0 * k;
+                    if (sim.world.placeModel(wrecks::modelAt(k), V3(x, sim.world.height(x, 40), 40), 0.5)) sim.world.models.back().variant = wrecks::variantAt(k);
+                }
+                renderer.updateObjects(sim.world);
+            }
+            if (opt.script == "hoseshot" && frame == 40) {  // screenshots of the pump's hose: out of the truck by the nearest pump, CZ_HOSE=hand / plug
+                std::vector<V3> ps;
+                fuel::findPumps(sim.world, ps);
+                const V3 com = sim.cars[sim.player].frame().com;
+                std::sort(ps.begin(), ps.end(), [&](const V3& a, const V3& b) { return len(a - com) < len(b - com); });
+                if (!ps.empty()) {
+                    const char* mode = std::getenv("CZ_HOSE");
+                    walker.exitCar(sim.world, sim.cars[sim.player]);
+                    walker.active = true;
+                    sim.cars[sim.player].fuel = 25;
+                    sim.hose.state = Sim::FuelHose::HAND, sim.hose.pump = ps[0], sim.hose.hand = walker.p + V3(0, 1, 0);
+                    if (mode && !std::strcmp(mode, "plug")) sim.hose.plug(sim.player, fuel::filler(sim.cars[sim.player]));
+                }
             }
             if (opt.script == "trafficlod") {  // screenshots of far traffic as proxies and the handover: one AI car, you 600 m up the road facing it
                 up = down = left = right = false;
@@ -5745,6 +5784,22 @@ int main(int argc, char** argv) {
                     }
                     continue;
                 }
+                {
+                    int wreckAt = 0;
+                    std::string wreckId;
+                    if (wrecks::takeMessage(m.text, wreckAt, wreckId)) {  // a buddy searched a wreck: it's searched for you too
+                        if (wreckAt == sim.world.map) {
+                            const std::string who = m.player >= 0 && m.player < net::kMaxPeers ? net.players[m.player].name : std::string("A BUDDY");
+                            if (!openCache(wreckId, who)) {  // (one outside this window: kept for when you're there)
+                                CacheSpot c;
+                                c.id = wreckId, c.map = wreckAt, c.wreck = true;
+                                if (!wrecks::isSearched(careerRun, searchedWrecks, c)) wrecks::search(careerRun, sim, searchedWrecks, c);
+                            }
+                        }
+                        continue;
+                    }
+                }
+                if (m.player >= 0 && fuel::onMessage(sim, m.player, m.text, clock)) continue;  // a buddy's hose, or a tank they were filling is full
                 if (m.text == "jobdone") {
                     if (jobOn && !job.done) {
                         job.done = true;
@@ -5758,15 +5813,9 @@ int main(int argc, char** argv) {
                     continue;
                 }
                 if (m.text.rfind("fuel ", 0) == 0) {  // a buddy poured their can into one of mine
-                    unsigned id = 0;
                     double liters = 0;
-                    if (std::sscanf(m.text.c_str(), "fuel %u %lf", &id, &liters) == 2 && std::isfinite(liters) && liters > 0 && liters <= 60)  // (a can holds a few liters: not whatever a buddy typed)
-                        for (Car& c : sim.cars)
-                            if (c.netId == id && !c.remote) {
-                                if (c.fuel < 0) c.fuel = c.spec->fuelCapacity;
-                                c.fuel = std::min(c.spec->fuelCapacity, c.fuel + liters);
-                                hud.toast(net.players[std::min(std::max(m.player, 0), net::kMaxPeers - 1)].name + " POURED IN " + std::to_string((int)liters) + " L OF FUEL");
-                            }
+                    fuel::takeFuel(sim, m.text, liters);
+                    if (liters >= 5) hud.toast(net.players[std::min(std::max(m.player, 0), net::kMaxPeers - 1)].name + " POURED IN " + std::to_string((int)liters) + " L OF FUEL");  // (a pump's trickle isn't news)
                     continue;
                 }
                 if (m.text.rfind("ride ", 0) == 0 && m.player >= 0 && m.player < net::kMaxPeers) {  // a buddy got in with someone: not on foot
@@ -5819,7 +5868,12 @@ int main(int argc, char** argv) {
                 {  // hands on: hold E (pad: X) for the job in front of you
                     const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                     const bool holdE = (!menu.open && !inv.open && settings.keys.held(KA_INTERACT, ks, ks[SC_LSHIFT] || ks[SC_RSHIFT])) || (padCtx == pad::Mode::Drive && padLogic.in.interact) || scriptE;
-                    interact.spots.clear();  // (a career's supply caches in reach: E opens one)
+                    interact.spots.clear();  // (a wreck in reach, a career's supply caches: E goes through it)
+                    for (const CacheSpot& c : wreckList)
+                        if (len(c.at - walker.p) < 8 && !wrecks::isSearched(careerRun, searchedWrecks, c)) {
+                            interact.spots.push_back({c.id, c.at, "SEARCH THE WRECK"});
+                            interact.spots.back().wreck = true;
+                        }
                     if (career.on) {
                         for (const CacheSpot& c : caches)
                             if (!careersession::cacheOpened(careerRun, c) && len(c.at - walker.p) < 6) interact.spots.push_back({c.id, c.at, "OPEN THE SUPPLY CACHE"});
@@ -5866,6 +5920,12 @@ int main(int argc, char** argv) {
                         if (interact.progress > 0 && io.kind == IA_HOOK_LINE && std::isfinite(io.at.x)) hold = hold + (io.at - hold) * smoothstep(0, 1, std::min(1.0, interact.share() * 1.4));
                         sim.handLine.hand = hold;
                     }
+                    if (sim.hose.held()) {  // (the pump's nozzle in your right hand; going in, it goes to the filler)
+                        const double hy = cam.mode != 3 ? footYaw : walker.yaw;
+                        const V3 hf(std::cos(hy), 0, -std::sin(hy)), hr = cross(hf, V3(0, 1, 0));
+                        sim.hose.hand = walker.p + V3(0, 1.0, 0) + hf * 0.4 + hr * 0.2;
+                    }
+                    interact.money = career.on ? career.cash : -1;
                     if (sim.handCable.on()) {  // (the cables' free end in your hand while you walk them to the other battery; battery.h)
                         if (!(walker.hand.kind == TK_TOOL && walker.hand.id == TOOL_CABLES)) sim.handCable = Sim::HandCable();
                         else {
@@ -5899,6 +5959,7 @@ int main(int argc, char** argv) {
                         if (audioOn && (interact.usedPart >= 0 || (interact.checklist.any() && interact.checklist.title == clTitle && done > clDone))) audio.play(SFX_CLUNK, 0.7f);
                         clTitle = interact.checklist.title, clDone = done;
                     }
+                    if (fuel::settle(interact, career)) saveCareer();  // (a can poured, or filled at a pump)
                     if (interact.usedPart >= 0) {  // a repair used a part
                         if (career.on) {
                             career.usePart((RepairPart)interact.usedPart);
@@ -5919,7 +5980,8 @@ int main(int argc, char** argv) {
                         interact.openedSpot.clear();
                     }
                     if (!interact.openedSpot.empty()) {
-                        if (openCache(interact.openedSpot, "") && net.active()) net.sendGame("cache " + std::to_string(sim.world.map) + " " + interact.openedSpot);
+                        const bool wreck = std::any_of(wreckList.begin(), wreckList.end(), [&](const CacheSpot& c) { return c.id == interact.openedSpot; });
+                        if (openCache(interact.openedSpot, "") && net.active()) net.sendGame(wreck ? wrecks::message(sim.world.map, interact.openedSpot) : "cache " + std::to_string(sim.world.map) + " " + interact.openedSpot);
                         interact.openedSpot.clear();
                     }
                     // (The pad's put-down and inventory are their actions' presses now: the key switch, PUT DOWN and TRUCK INVENTORY.)
@@ -6000,6 +6062,33 @@ int main(int argc, char** argv) {
                 if (job.done && jobBanner <= 0) jobOn = false;
             }
             jobBanner = std::max(0.0, jobBanner - dt);
+            {  // The pump's hose (fuel.h): the flow, what it costs, and telling the others.
+                sim.padFuel = !career.on;
+                if (wreckStamp != sim.world.stamp || wreckMap != sim.world.map) {  // (the world has changed: its wrecks to search)
+                    wreckList = wrecks::spots(sim.world);
+                    wreckStamp = sim.world.stamp, wreckMap = sim.world.map;
+                }
+                const std::string said = fuel::step(sim, walker.active ? &walker : nullptr, sim.paused ? 0.0 : dt, career.on ? &career.cash : nullptr);
+                if (!said.empty()) hud.toast(said);
+                if (hoseWas == Sim::FuelHose::PLUGGED && sim.hose.state != hoseWas && career.on) saveCareer();
+                if (audioOn && sim.hose.state != hoseWas) audio.play(SFX_CLUNK, 0.5f);
+                hoseWas = sim.hose.state;
+                if (net.active())
+                    for (const std::string& t : sim.hose.outbox) net.sendGame(t);
+                sim.hose.outbox.clear();
+                fuel::updateRemote(sim, clock, [&](int player, V3& hand) {
+                    if (player < 0 || player >= net::kMaxPeers) return false;
+                    for (const RemoteWalker& rw : coop.walkers)
+                        if (rw.who == net.players[player].name) return hand = rw.p + V3(0, 1.0, 0), true;
+                    return false;
+                });
+                // Someone new in the session: the wrecks searched here so far.
+                const int peers = net.active() ? net.playerCount() : 0;
+                if (peers > wreckPeers && net.active())
+                    for (const CacheSpot& c : wreckList)
+                        if (wrecks::isSearched(careerRun, searchedWrecks, c)) net.sendGame(wrecks::message(sim.world.map, c.id));
+                wreckPeers = peers;
+            }
             {  // Anchor gear. A career's stock is the truth (bought, found): the sim's counts follow it, and what the winch
                // uses goes back into it. Sandbox is the sim's own set, refilled at a station.
                 if (!career.on) sim.anchorStock.refills = true;
@@ -6034,6 +6123,15 @@ int main(int argc, char** argv) {
                             for (int i = 0; i < (int)stationRack().size(); i++)
                                 if (!stationRack()[i].model.empty())
                                     sim.world.placeModel(stationRack()[i].model, rackSpot(sim.world, s, i), sim.world.stations[s].yaw + M_PI / 2);
+                        // (A career pays at a pump, so every station has one: fuel.h.)
+                        for (const Station& st : sim.world.stations) {
+                            bool pump = false;
+                            for (const Placed& pl : sim.world.models) pump |= pl.id == "fuel_pump" && len(pl.p - st.p) < 45;
+                            if (pump) continue;
+                            const V3 at = st.p + V3(std::sin(st.yaw), 0, std::cos(st.yaw)) * 6.0 + V3(std::cos(st.yaw), 0, -std::sin(st.yaw)) * 3.0;
+                            sim.world.placeModel("fuel_pump", V3(at.x, sim.world.height(at.x, at.z), at.z), st.yaw);
+                            sim.world.models.back().variant = 0;
+                        }
                         renderer.updateObjects(sim.world);
                     }
                 }
@@ -7591,6 +7689,12 @@ int main(int argc, char** argv) {
                 std::snprintf(lb, sizeof lb, "%s: %.0f OF %.0f M OUT   WALK IT TO AN ANCHOR, HOLD %s TO HOOK   %s: LET GO", hl.kind == ROPE_WINCH ? "WINCH LINE" : "TOW STRAP", out, most,
                               K(KA_INTERACT).c_str(), K(KA_PUT_DOWN).c_str());
                 drawPrompt(renderer, u, W, H, 0, lb, 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
+            }
+            if (sim.hose.held()) drawPrompt(renderer, u, W, H, 0, "FUEL HOSE: AIM AT THE FILLER, " + K(KA_INTERACT) + " TO PLUG IT IN", 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
+            if (const std::string g = fuel::gauge(sim); !g.empty()) {  // (the pump's dial: what's gone in and what it's costing)
+                const float gs = px(2.0f * u), gw = renderer.textWidth(g, gs) + 28 * u, gy = H * 0.66f;
+                pill(renderer, (W - gw) / 2, gy, gw, 8 * gs + 14 * u, 0.02f, 0.025f, 0.035f, 0.8f);
+                renderer.text((W - gw) / 2 + 14 * u, gy + 7 * u, gs, g, 1.0f, 0.82f, 0.35f);
             }
             if (walker.carrying) {
                 const std::string line = "CARRYING A " + walker.carrying->sizeName() + (walker.carrying->tireOnly ? "" : " WHEEL") +

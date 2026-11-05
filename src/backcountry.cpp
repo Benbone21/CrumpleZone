@@ -1865,7 +1865,7 @@ void World::buildBackcountry() {
         auto outhouse = [&](const V3& at, double yaw) { build("outhouse", at, yaw, V3(0.6, 1.1, 0.6)); };
 
         for (const MapPlace& pl : mapPlaces(MAP_BACKCOUNTRY)) {
-            if (std::max(std::fabs(pl.p.x), std::fabs(pl.p.z)) > half - 60) continue;  // (the regions' places: not on the 6 km map)
+            if (std::max(std::fabs(pl.p.x), std::fabs(pl.p.z)) > half - 60 || pl.kind == PK_WRECK) continue;  // (the regions' places: not on the 6 km map; wrecks: wrecks.h)
             const V3 P = grounded(pl.p);
             const double yw = pl.yaw;
             if (pl.id == "BC.RANGER") {
@@ -2014,7 +2014,7 @@ void World::buildBackcountry() {
         // The regions' places (docs/plans/regions2.md): their outposts' repair bays, cabins and camps, fire lookouts, and the lookouts
         // out on a ledge of rock (a slab reaching out over the drop from the lookout's yard).
         for (const MapPlace& pl : mapPlaces(MAP_BACKCOUNTRY)) {
-            if (pl.id.rfind("BC.", 0) == 0 || !stitch) continue;
+            if (pl.id.rfind("BC.", 0) == 0 || !stitch || pl.kind == PK_WRECK) continue;
             const V3 P = grounded(pl.p);
             const double yw = pl.yaw;
             int variant = pl.id[0] == 'M' ? 2 : pl.id[0] == 'F' ? 1 : 0;

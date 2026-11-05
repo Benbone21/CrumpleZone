@@ -15,11 +15,11 @@
 
 const char* placeKindName(int kind) {
     static const char* n[PK_COUNT] = {"RANGER STATION", "FUEL STOP", "CABIN",  "OLD CAMP", "LOOKOUT", "WATERFALL", "MINE",
-                                      "SUMMIT",         "CROSSING",  "RUIN",   "PHOTO SPOT", "CACHE",   "ABANDONED VEHICLE", "OBSTACLE"};
+                                      "SUMMIT",         "CROSSING",  "RUIN",   "PHOTO SPOT", "CACHE",   "ABANDONED VEHICLE", "OBSTACLE", "WRECK"};
     return kind >= 0 && kind < PK_COUNT ? n[kind] : "";
 }
 char placeKindGlyph(int kind) {
-    static const char g[PK_COUNT + 1] = "RFCALWMSXUPKVO";
+    static const char g[PK_COUNT + 1] = "RFCALWMSXUPKVOZ";
     return kind >= 0 && kind < PK_COUNT ? g[kind] : '?';
 }
 
@@ -56,12 +56,33 @@ struct CacheRow {
     int cash;
 };
 #include "places_caches.inc"
+struct WreckRow {
+    double x, z, yaw;
+};
+#include "places_wrecks.inc"
 
 void add(std::vector<MapPlace>& v, int map, const char* id, const char* name, int kind, V3 p, double yaw, double radius, double pad, unsigned svc = 0) {
     MapPlace m;
     m.id = id, m.name = name, m.kind = kind, m.map = map, m.p = V3(p.x, 0, p.z), m.yaw = yaw, m.radius = radius, m.pad = pad, m.services = svc;
     m.region = regionAt(map, p.x, p.z);
     v.push_back(m);
+}
+
+// A table of wrecks (wrecks.h), scanned from the land: ids by their row, so new ones go at the end.
+void wreckRows(std::vector<MapPlace>& v, int map, const char* prefix, const WreckRow* rows, size_t n, V3 shift = V3()) {
+    for (size_t i = 0; i < n; i++) {
+        char id[32];
+        std::snprintf(id, sizeof id, "WRECK.%s.%03d", prefix, (int)i + 1);
+        add(v, map, id, "", PK_WRECK, V3(rows[i].x, 0, rows[i].z) + shift, rows[i].yaw, 8, 0);
+    }
+}
+
+// The freeway's: one period's worth, repeated along (as its trees are).
+std::vector<MapPlace> freewayPlaces() {
+    std::vector<MapPlace> v;
+    const char* prefix[3] = {"FW.A", "FW.B", "FW.C"};
+    for (int k = -1; k <= 1; k++) wreckRows(v, MAP_FREEWAY, prefix[k + 1], kFreewayWrecks, sizeof(kFreewayWrecks) / sizeof(kFreewayWrecks[0]), V3(k * 400.0, 0, 0));
+    return v;
 }
 
 std::vector<MapPlace> backcountryPlaces() {
@@ -212,13 +233,17 @@ std::vector<MapPlace> backcountryPlaces() {
         add(v, M, c.id, c.name, PK_CACHE, V3(c.x, 0, c.z), 0, 12, 0);
         v.back().reward = c.cash;
     }
+    // -- The wrecks (wrecks.h), last of all: from a scan of the land (tools/wreckscan.cpp) --
+    wreckRows(v, M, "BC", kBackcountryWrecks, sizeof(kBackcountryWrecks) / sizeof(kBackcountryWrecks[0]));
     return v;
 }
 }  // namespace
 
 const std::vector<MapPlace>& mapPlaces(int map) {
     static const std::vector<MapPlace> bc = backcountryPlaces();
+    static const std::vector<MapPlace> freeway = freewayPlaces();
     static const std::vector<MapPlace> none;
+    if (map == MAP_FREEWAY) return freeway;
     if (map == MAP_PROCEDURAL) return proc::activePlaces();  // (the window in play: procworld.h setActiveWindow)
     if (map == MAP_REAL) return realterrain::places();  // (the active real terrain's, from its plan)
     return map == MAP_BACKCOUNTRY ? bc : none;
@@ -278,14 +303,14 @@ std::vector<DiscoverSpot> discoverSpots(int map) {
     std::vector<DiscoverSpot> out;
     if (map == MAP_PROCEDURAL) {  // (kept by the world's seed and the place's id, so another world's same name isn't found; shown by name)
         for (const MapPlace& p : mapPlaces(map))
-            if (p.kind != PK_CACHE && p.kind != PK_PHOTO_SPOT) {
+            if (p.kind != PK_CACHE && p.kind != PK_PHOTO_SPOT && p.kind != PK_WRECK) {
                 out.push_back({proc::placeKey(proc::activeSeed(), p.id), p.p, p.radius, p.kind});
                 out.back().label = p.name;
             }
         return out;
     }
     for (const MapPlace& p : mapPlaces(map))
-        if (p.kind != PK_CACHE && p.kind != PK_PHOTO_SPOT) out.push_back({p.name, p.p, p.radius, p.kind});
+        if (p.kind != PK_CACHE && p.kind != PK_PHOTO_SPOT && p.kind != PK_WRECK) out.push_back({p.name, p.p, p.radius, p.kind});
     return out;
 }
 
