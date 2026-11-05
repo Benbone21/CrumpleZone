@@ -3323,11 +3323,6 @@ int main(int argc, char** argv) {
                 garageFromMenu = openGarage();
                 break;
             case PauseMenu::CONTROLS: closeMenu(); hud.showHelp = true; break;
-            case PauseMenu::RESET:
-                closeMenu();
-                if (sim.realRecovery) hud.toast(sim.towPlayerHome() ? "TOWED BACK TO THE START (DAMAGE STAYS)" : "TOWED TO THE NEAREST STATION (DAMAGE STAYS)");
-                else hud.toast(sim.respawnPlayer() ? "RESET" : "RESET AT THE NEAREST STATION");
-                break;
             case PauseMenu::QUIT: running = false; break;
             case PauseMenu::DETECT_GFX:
                 saveSettings();
