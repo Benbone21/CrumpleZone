@@ -739,6 +739,7 @@ void Car::hubToeDampers() {
 constexpr double kStopMargin = 0.08;     // rad past the inside wheel's full lock (~4.6 deg)
 constexpr double kStopK = 200000;        // N*m/rad (~3.5 kN*m a degree)
 constexpr double kStopC = 400;           // N*m*s/rad (about a third of critical on a 37 in wheel's knuckle)
+constexpr double kStopMax = 40000;       // N*m: as hard as it holds (0.2 rad in; rammed further, the bolt doesn't push back harder)
 
 void Car::steeringStops(double h) {
     if (chassis.nodes.empty() || restLocal.empty() || !spec) return;
@@ -752,6 +753,9 @@ void Car::steeringStops(double h) {
         d = std::remainder(d, 2 * M_PI);
         const double rate = clampd((d - wh.stopSteer) / h, -30.0, 30.0);  // (a knuckle doesn't turn faster: a fresh car or a reset starts from 0)
         wh.stopSteer = d;
+        // (An axle stood on end against the body, in a wreck, has no steer to read: the angle of what's left is noise.)
+        const double L2 = dot(a, a);
+        if (L2 < 1e-3 || a.x * a.x + a.z * a.z < 0.25 * L2) continue;
         // The stop: the inside wheel's angle at the rack's full lock (Ackermann, as the rack sets it), plus a little.
         const double track = std::fabs(restLocal[wh.outer].z + restLocal[wh.inner].z);
         const double dt = wheelbase > 0.5 ? 0.5 * track / wheelbase * 0.7 : 0;
@@ -759,8 +763,13 @@ void Car::steeringStops(double h) {
         const double over = std::fabs(d) - stop;
         if (over <= 0) continue;
         const double sgn = d > 0 ? 1.0 : -1.0;
-        const double T = std::max(0.0, kStopK * over + kStopC * rate * sgn);
-        const V3 tau = up * (-sgn * T);
+        const double T = std::min(kStopMax, std::max(0.0, kStopK * over + kStopC * rate * sgn));
+        // (Nothing about its own axle: that's the bearing. On a tilted axle that part never turned the
+        // wheel back off the stop, it only spun the knuckle up, and a stop past its reach went on doing
+        // so: 5 MJ into a rolling 4Runner in 7 s, nodes at 500 m/s.)
+        V3 tau = up * (-sgn * T);
+        const V3 axle = nodes[wh.outer].p - nodes[wh.inner].p;
+        tau -= axle * (dot(tau, axle) / L2);
         // Its reaction goes into the arms' pick-ups (the lower arm carries the stop's bolt).
         // (A live axle's knuckle stops on its own housing: the hub and steering arm turn against the
         // kingpins and the tie rod's fixed end. Without one a rock kicked a Blazer's wheel past lock,
@@ -790,6 +799,15 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
     const int n = (int)cf.nodes.size();
     // Nodes in a fresh dent are left to the beams; everything else holds its shape.
     auto active = [&](int k) { return cf.attached[k] && cf.release[k] <= 0; };
+    // Hit hard enough, one dent runs into the next until the whole structure's let go (a 4Runner on
+    // its side into a rock: all 241 body nodes in 80 ms). Nothing is held then, but the fit goes on
+    // over all of it: it's what says which way up the car is, and what a dent settles against. (With
+    // nothing to fit, the rotation stopped dead while the truck tumbled on, no dent could ever settle
+    // to end it, and steering stops and toe holds read sound knuckles against that stale attitude.)
+    int holding = 0;
+    for (int k = 0; k < n && holding < 3; k++) holding += active(k);
+    const bool loose = holding < 3;
+    auto fitted = [&](int k) { return loose ? cf.attached[k] != 0 : active(k); };
 
     // Center of mass and momentum of the structure. (The shape is fitted by mass alone: a
     // member held harder, a bracket on a rail, follows the rail's shape rather than leading it.)
@@ -799,7 +817,7 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
     V3 c, vc, rc, cm;
     double M = 0, Mv = 0;
     for (int k = 0; k < n; k++) {
-        if (!active(k)) continue;
+        if (!fitted(k)) continue;
         const Node& nd = nodes[cf.nodes[k]];
         const double w = held(k);
         c += nd.p * w;
@@ -819,7 +837,7 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
     V3 L;
     M3 I;
     for (int k = 0; k < n; k++) {
-        if (!active(k)) continue;
+        if (!fitted(k)) continue;
         const Node& nd = nodes[cf.nodes[k]];
         V3 d = nd.p - c;
         V3 r = cf.rest[k] - rc;
@@ -834,7 +852,8 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
         I.c[1] += V3(-e.x * e.y, dd - e.y * e.y, -e.z * e.y) * nd.m;
         I.c[2] += V3(-e.x * e.z, -e.y * e.z, dd - e.z * e.z) * nd.m;
     }
-    for (int it = 0; it < 4; it++) {
+    // (Loose, each dent's rest follows the fit, so what the fit doesn't catch up with is lost for good: it runs until it has.)
+    for (int it = 0, its = loose ? 32 : 4; it < its; it++) {
         V3 R0 = cf.rot.rotate(V3(1, 0, 0)), R1 = cf.rot.rotate(V3(0, 1, 0)), R2 = cf.rot.rotate(V3(0, 0, 1));
         V3 om = (cross(R0, A.c[0]) + cross(R1, A.c[1]) + cross(R2, A.c[2])) /
                 (std::fabs(dot(R0, A.c[0]) + dot(R1, A.c[1]) + dot(R2, A.c[2])) + 1e-9);
@@ -910,6 +929,7 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
             if (dot(rel, rel) < 0.1 * 0.1) cf.release[k] -= h;
             continue;
         }
+        if (loose) continue;
         V3 d = c + cf.rot.rotate(cf.rest[k] - rc) - nd.p;
         const double wk = weighted ? cf.weight[k] : 1.0;
         double nodeCap = cap;

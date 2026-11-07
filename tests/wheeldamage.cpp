@@ -1,5 +1,6 @@
 // Front wheel damage: what ordinary off-road hits do to a front corner's geometry, and
 // whether a field repair puts it back.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -276,6 +277,78 @@ FRONT_MILD(frontMildBlazer, "damage/front-wheel-mild/blazer", "BLAZER", false)
 FRONT_MILD(frontMildCivic, "damage/front-wheel-mild/civic", "CIVIC", true)
 FRONT_MILD(frontMildBronco, "damage/front-wheel-mild/bronco", "BRONCO", true)
 FRONT_MILD(frontMildJesko, "damage/front-wheel-mild/jesko", "JESKO", true)
+
+// A hit that lets go of the whole body at once: its nodes are left to the beams, but the car still
+// knows which way up it is, and the dents settle. (4Runner on its side into a rock: all 241 let go
+// in 80 ms, the attitude froze there for good, and the steering stops read sound knuckles against it.)
+SCENARIO(bodyLetGoWhole, "damage/body-let-go-whole", "A body let go whole in a tumble: its attitude keeps up with it, and it takes hold again") {
+    Sim sim2;
+    sim2.setupEmpty();
+    Ctx c2(sim2);
+    Car& c = c2.add(byName("4RUNNER"), 0, 0, 0);
+    c2.run(1.0);
+    const Frame f = c.frame();
+    const double spin = 3;
+    const V3 at = f.com + V3(0, 100, 0);
+    for (Node& n : c.nodes) {
+        n.p.y += 100;
+        n.v = cross(f.fwd * spin, n.p - at);
+    }
+    std::fill(c.chassis.release.begin(), c.chassis.release.end(), 0.15f);
+    c.wake();
+    c2.run(1.0);
+    // (Across the body, its own two far corners say which way it's turned.)
+    int lo = 0, hi = 0;
+    for (int i = 0; i < c.bodyNodes; i++) {
+        if (c.restLocal[i].z < c.restLocal[lo].z) lo = i;
+        if (c.restLocal[i].z > c.restLocal[hi].z) hi = i;
+    }
+    const V3 was = norm(c.chassis.rot.rotate(c.restLocal[hi] - c.restLocal[lo])), is = norm(c.nodes[hi].p - c.nodes[lo].p);
+    ctx.metric("its attitude against its own nodes", std::acos(clampd(dot(was, is), -1, 1)) * 180 / M_PI, "deg", 0, 5);
+    int held = 0;
+    for (float r : c.chassis.release) held += r <= 0;
+    ctx.metric("the body's nodes held again a second on", 100.0 * held / c.chassis.release.size(), "%", 90, 100);
+}
+
+// A steering stop in a wreck: the moment it puts on the knuckle, with the hub's axle tilted against
+// the body (the body's attitude is set for the test) and the wheel well past lock.
+SCENARIO(steerStopWreck, "damage/steer-stop-wreck", "A steering stop on a tilted axle: bounded, none of it about the axle itself, and nothing from an axle on end") {
+    Sim sim2;
+    sim2.setupEmpty();
+    Ctx c2(sim2);
+    Car& c = c2.add(byName("4RUNNER"), 0, 0, 0);
+    c2.run(1.0);
+    int fw = 0;
+    while (!c.wheels[fw].front) fw++;
+    const std::vector<int> set = c.wheels[fw].assembly;
+    const V3 axle = norm(c.nodes[c.wheels[fw].outer].p - c.nodes[c.wheels[fw].inner].p);
+    c.chassis.kappa = 0;  // (the attitude stays as set)
+    const Quat level = c.chassis.rot;
+    const auto moment = [&](const Quat& rot) {
+        c.chassis.rot = rot;
+        c.computeForces(sim2.h, sim2.world);
+        V3 mid, sum;
+        double M = 0;
+        for (int i : set) mid += c.nodes[i].p * c.nodes[i].m, M += c.nodes[i].m;
+        mid = mid / M;
+        for (int i : set) sum += cross(c.nodes[i].p - mid, c.nodes[i].f);
+        return sum;
+    };
+    const auto stopAt = [&](double tilt) {
+        // The attitude that reads the axle as `tilt` out of level, steered 80 degrees.
+        const double steer = 1.4;
+        const V3 u = V3(std::sin(steer) * std::cos(tilt), std::sin(tilt), std::cos(steer) * std::cos(tilt)) * (axle.z > 0 ? 1.0 : -1.0);
+        const V3 about = cross(u, axle);
+        const Quat rot = Quat::axisAngle(norm(about), std::acos(clampd(dot(u, axle), -1, 1))) * level;
+        const V3 free = moment(level);
+        c.wheels[fw].stopSteer = steer;
+        return moment(rot) - free;
+    };
+    const V3 tilted = stopAt(0.8);
+    ctx.metric("axle tilted: the stop's moment", len(tilted), "N*m", 5000, 40400);
+    ctx.metric("axle tilted: of that, about the axle itself", std::fabs(dot(tilted, axle)), "N*m", 0, 200);
+    ctx.metric("axle on end: the stop's moment", len(stopAt(1.4)), "N*m", 0, 200);
+}
 
 // A severe crash, 65 km/h with the corner into a wall: the frame or body at the pick-ups takes
 // a set no trail repair can put back (it's the station's job).
