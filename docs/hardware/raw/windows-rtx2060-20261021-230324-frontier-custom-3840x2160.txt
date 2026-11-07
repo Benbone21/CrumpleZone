@@ -1,0 +1,35 @@
+Crumple Zone benchmark report
+
+GPU:       NVIDIA GeForce RTX 2060/PCIe/SSE2
+Vendor:    NVIDIA Corporation
+GL:        3.3.0 NVIDIA 610.88 (GLSL 3.30 NVIDIA via Cg compiler)
+CPU:       12th Gen Intel(R) Core(TM) i5-12400
+Cores:     12 logical
+RAM:       32538 MB
+OS:        Windows 11 Pro 25H2 (build 26200)
+Display:   U32J59x 3840x2160, refresh 60 Hz
+Video:     windows
+
+Run:       FRONTIER, quality CUSTOM
+Window:    3840x2160 (drawable 3840x2160)
+Frames:    300 after 120 to warm up
+Settings:  scale 1.00, shadows 2, MSAA 2, AO 0, bloom 1, grass 2, ground 1, props 2, draw distance 0, vsync 0, adaptive 0, physics threads 4
+
+bench: FRONTIER, CUSTOM
+bench: 300 frames: avg 8.07 ms (123.9 fps), 1% low 9.79 ms (102.1 fps), worst 9.84 ms
+bench: 0 frames over 30 ms, 0 hitches (over twice the median)
+bench:   stage        cpu ms   gpu ms
+bench:   GAME           0.32        -
+bench:   SIM            0.00        -
+bench:   SHADOWS        0.12     0.14
+bench:   SKY            0.01     0.79
+bench:   TERRAIN        0.32     4.70
+bench:   OPAQUE         4.46     0.14
+bench:   VEGETATION     0.24     0.74
+bench:   PROPS          0.15     0.16
+bench:   FX             0.02     0.02
+bench:   POST           0.00     1.12
+bench:   UI             0.06     0.02
+bench:   SWAP           2.36        -
+bench:   TOTAL          8.07     7.83
+bench-csv: avg=8.07,low1=9.79,hitches=0,GAME=0.32,SIM=0.00,SHADOWS=0.12/0.14,SKY=0.01/0.79,TERRAIN=0.32/4.70,OPAQUE=4.46/0.14,VEGETATION=0.24/0.74,PROPS=0.15/0.16,FX=0.02/0.02,POST=0.00/1.12,UI=0.06/0.02,SWAP=2.36
