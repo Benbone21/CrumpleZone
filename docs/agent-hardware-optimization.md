@@ -96,7 +96,6 @@ If a step in that doc is wrong for this machine, fix the doc in the same branch.
 - Never run `./build/run_tests --update-baseline`.
   - Known failing tests (ignore): frontier/current, freeway/top-speed/turbo utv, structure/weight/koenigsegg jesko, structure/weight/toyota tacoma, components/axle-landing, components/tire-into-fender/rock buggy, components/tire-into-fender/turbo utv, structure/rock-hits/4runner, offroad/whoops, tires/shear, tires/debead.
   - Flaky under load: engine/performance, frontier/wall-stairs, net/find.
-  - Flaky from chaotic path sensitivity: backcountry/autopilot-far. A nudge of 1e-9 m/s is enough to send the Bronco into a tree or a pole on its way: main fails 3 of 12 perturbed runs, and any physics change can land the unperturbed run on either side.
 - Visuals must stay the same at HIGH. Take before and after screenshots with `--debug-screen` and look at them. The user judges visuals harshly. Lower presets may trade looks for speed.
 - Keep changes portable: one code path, with small `#ifdef _WIN32` or `__APPLE__` pieces only where needed (see `src/platform.h`). The Linux build must still pass its test suite.
 - Match the surrounding code style. Use terse comments. Add no new dependencies.

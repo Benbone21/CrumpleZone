@@ -60,6 +60,7 @@ struct Grid {
     std::vector<float> obs;               // tallest rock / log / ledge in the cell, above the ground
     std::vector<uint8_t> surf, track;     // surface; on a road or trail
     std::vector<uint8_t> tall;            // blocked for anything (walls, trees, deep water)
+    std::vector<uint8_t> nearTree;        // how close to a tree or post (255: at its grown edge, 0: well clear)
     std::vector<Lump> lumps;
 };
 
@@ -96,6 +97,7 @@ const Grid& gridFor(const World& w, const V3& from, const V3& to) {
     g.surf.assign(N, SURF_GRASS);
     g.track.assign(N, 0);
     g.tall.assign(N, 0);
+    g.nearTree.assign(N, 0);
     g.lumps.clear();
     // (Row by row on a few threads: the window's corner and size are this thread's (thread_local), so taken along.)
     const double ox = gOx, oz = gOz;
@@ -169,7 +171,16 @@ const Grid& gridFor(const World& w, const V3& from, const V3& to) {
     }
     // Trees and posts: grown by half a truck's width plus a margin so the route keeps clear.
     const double grow = 1.3;
-    for (const Pole& p : w.poles) disc(p.x, p.z, p.r + grow, [&](int id) { g.tall[id] = 1; });
+    // Past that, the route costs more the closer it runs, so it takes the middle of a gap: smoothing and the
+    // truck's own wander both eat into a line that only just misses.
+    const double band = 2.0;
+    for (const Pole& p : w.poles) {
+        disc(p.x, p.z, p.r + grow, [&](int id) { g.tall[id] = 1; });
+        disc(p.x, p.z, p.r + grow + band, [&](int id) {
+            const double d = std::hypot(centerX(id / kN) - p.x, centerZ(id % kN) - p.z) - p.r - grow;
+            g.nearTree[id] = std::max(g.nearTree[id], (uint8_t)(255 * clampd(1 - d / band, 0, 1)));
+        });
+    }
     for (const Box& b : w.boxes) {
         if (!b.solid && !b.hidden) continue;
         const double reach = std::hypot(b.h.x, b.h.z);
@@ -295,6 +306,7 @@ bool planRoute(const World& w, const VehicleSpec& vs, const V3& from, const V3& 
             if (!inStart(id) && (step > cap || -step > dropCap)) continue;
             double c = dist * surfFactor(nid) * (1 + 4 * grade * grade + 6 * cross * cross) * (g.track[nid] ? 1 : offTrack);
             if (g.obs[nid] > 0.05) c *= 1 + 2.0 * g.obs[nid] / cap;  // over rocks: rough, slow, and a risk
+            c *= 1 + 2.0 * g.nearTree[nid] / 255;
             const float nc = cost[id] + (float)c;
             if (nc < cost[nid]) {
                 cost[nid] = nc;
@@ -378,6 +390,8 @@ void buildBody(const Car& c, PilotBody& b) {
     const int nx = (int)std::ceil((c.spec->length + 2) / kX);
     std::vector<float> low(nx * kZ, 1e9f);
     double xmin = 1e9, xmax = -1e9, cgY = 0, M = 0;
+    b.half = 0;
+    for (const V3& p : c.restLocal) b.half = std::max(b.half, std::fabs(p.z));
     std::vector<char> hub(c.nodes.size(), 0);
     for (const Wheel& wh : c.wheels) hub[wh.inner] = hub[wh.outer] = 1;
     for (int i = 0; i < (int)c.nodes.size(); i++) {
@@ -421,7 +435,8 @@ struct Line {
     const char* failWhy = "";
     double cost = 0, time = 0;
     double maxStep = 0, maxDrop = 0, minMargin = 1e9, maxRoll = 0, maxPitch = 0;
-    int stepThing = -1, bellyThing = -1;
+    double minGap = 1e9;   // closest the body's outline comes to a tree or post
+    int stepThing = -1, bellyThing = -1, gapThing = -1;
     double vCmd = 1e9;
     int need = 0;
     double needDist = 1e9, needStep = 0;
@@ -473,8 +488,19 @@ double routeDistance(const std::vector<V3>& path, int from, const V3& p, int* at
     return bd;
 }
 
+// Trees and posts: the room it wants beside the body, and the least a line may leave. They're measured, not sampled: the
+// underbody's patches are 0.3 m apart and only every half meter, so a 14 cm post goes between them.
+constexpr double kTreeRoom = 0.9, kTreeGap = 0.3;
+
+// From the body's outline, sitting at Q heading f (l: its left), to the edge of a tree or post.
+double treeGap(const Thing& t, const PilotBody& b, const V3& Q, const V3& f, const V3& l) {
+    const V3 d(t.x - Q.x, 0, t.z - Q.z);
+    const double along = dot(d, f), across = std::fabs(dot(d, l));
+    return std::hypot(std::max({along - b.front, b.back - along, 0.0}), std::max(across - b.half, 0.0)) - t.r;
+}
+
 void tryLine(Line& L, Scene& sc, const Car& c, const Autopilot& ap, const Caps& caps, const V3& Q0, const V3& f0, double v, double H,
-             double kPrev) {
+             double kPrev, const std::vector<int>& trees) {
     const PilotBody& b = ap.body;
     const double ds = 0.25, R = b.R;
     const double kmax = std::tan(0.58) / b.wb;
@@ -487,6 +513,8 @@ void tryLine(Line& L, Scene& sc, const Car& c, const Autopilot& ap, const Caps& 
     int j = ap.idx;
     double devSum = 0;
     int devN = 0;
+    double gapFloor = kTreeGap;  // (already closer than that: it may not get closer still)
+    for (int k : trees) gapFloor = std::min(gapFloor, treeGap(sc.things()[k], b, Q0, f0, V3(f0.z, 0, -f0.x)) - 0.02);
     const int n = (int)(H / ds);
     for (int k = 0; k <= n; k++) {
         const double s = k * ds;
@@ -604,6 +632,12 @@ void tryLine(Line& L, Scene& sc, const Car& c, const Autopilot& ap, const Caps& 
                 if (m < -0.03 && fail(who, "belly")) break;
             }
             if (!L.ok) break;
+            for (int t : trees) {
+                const double gap = treeGap(sc.things()[t], b, Q, f, l);
+                if (gap < L.minGap) L.minGap = gap, L.gapThing = t;
+                if (gap < gapFloor && fail(t, "tree")) break;
+            }
+            if (!L.ok) break;
         }
         // How fast it can take this bit.
         double vl = 1e9;
@@ -645,6 +679,7 @@ void tryLine(Line& L, Scene& sc, const Car& c, const Autopilot& ap, const Caps& 
     L.cost = 1.0 * dEnd + 0.5 * (devN ? devSum / devN : 0) + 1.2 * psi + L.time;
     L.cost += 3 * std::pow(L.maxStep / std::max(0.05, caps.best), 2) + 2 * std::pow(L.maxRoll / rollMax, 2);
     if (L.minMargin < 0.1) L.cost += 6 * (0.1 - L.minMargin);
+    if (L.minGap < kTreeRoom) L.cost += 8 * std::pow(1 - std::max(0.0, L.minGap) / kTreeRoom, 2);
     if (L.needAir) L.cost += 15;   // stopping to air down
     else if (L.need > caps.cur) L.cost += (L.need == LEVEL_LOW || caps.cur == LEVEL_LOW) ? 5 : 1;  // stopping to shift
     L.cost += 4 * std::fabs((L.route ? 0 : L.k1) - kPrev) * b.wb;
@@ -707,7 +742,11 @@ void sense(Car& c, Autopilot& ap, const World& w, const std::vector<Car>* cars, 
             L.s1 = frac * H;
             lines.push_back(L);
         }
-    for (Line& L : lines) tryLine(L, sc, c, ap, caps, Q, f, v, H, kPrev);
+    CZ_THREAD_CACHE(std::vector<int>, trees);
+    trees.clear();
+    for (int k = 0; k < (int)sc.things().size(); k++)
+        if (sc.things()[k].kind == SEEN_TREE) trees.push_back(k);
+    for (Line& L : lines) tryLine(L, sc, c, ap, caps, Q, f, v, H, kPrev, trees);
     g_pt.lines+=nowMs()-T0;
     int best = 0;
     for (int k = 1; k < (int)lines.size(); k++)
@@ -758,7 +797,7 @@ void sense(Car& c, Autopilot& ap, const World& w, const std::vector<Car>* cars, 
         int verdict = VERDICT_PASSING;
         if (has(L.tire, k)) verdict = VERDICT_OVER;
         else if (has(L.belly, k)) verdict = VERDICT_STRADDLE;
-        else if (best != 0 && (has(straight.tire, k) || has(straight.belly, k) || straight.failThing == k))
+        else if (best != 0 && (has(straight.tire, k) || has(straight.belly, k) || straight.failThing == k || (straight.gapThing == k && straight.minGap < kTreeRoom)))
             verdict = sideOf(L, t.x, t.z, f) > 0 ? VERDICT_AROUND_LEFT : VERDICT_AROUND_RIGHT;
         if (ap.blocked && L.failThing == k) verdict = VERDICT_BLOCKING;
         double top = -1e9;
@@ -774,6 +813,9 @@ void sense(Car& c, Autopilot& ap, const World& w, const std::vector<Car>* cars, 
         const int who = !straight.ok ? straight.failThing : straight.maxStep > L.maxStep + 0.05 ? straight.stepThing : straight.bellyThing;
         const bool left = who >= 0 ? sideOf(L, sc.things()[who].x, sc.things()[who].z, f) > 0 : L.k1 > 0;
         std::snprintf(buf, sizeof buf, "%s AHEAD: GOING AROUND %s", fmtThing(sc, who).c_str(), left ? "LEFT" : "RIGHT");
+    } else if (best != 0 && straight.gapThing >= 0 && straight.minGap < std::min(kTreeRoom, L.minGap)) {
+        std::snprintf(buf, sizeof buf, "%s CLOSE: GOING AROUND %s", fmtThing(sc, straight.gapThing).c_str(),
+                      sideOf(L, sc.things()[straight.gapThing].x, sc.things()[straight.gapThing].z, f) > 0 ? "LEFT" : "RIGHT");
     } else if (L.maxStep > 0.08 && L.stepThing >= 0) {
         std::snprintf(buf, sizeof buf, "%s: %s", fmtThing(sc, L.stepThing).c_str(),
                       L.maxStep > 0.35 * b.R ? "CLIMBING IT" : "TIRE OVER IT");
