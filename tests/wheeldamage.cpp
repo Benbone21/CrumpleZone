@@ -53,8 +53,15 @@ std::vector<V3> pickupsOf(const Car& c, const Wheel& wh) {
     const V3 com = c.frame().com;
     for (int bi : wh.mounts) {
         if (bi < 0 || c.beams[bi].type == BEAM_SPRING) continue;
+        if (in(c.beams[bi].a) && in(c.beams[bi].b)) continue;  // (a live axle's tube and tie rod: both ends on the housing, neither on the body)
         const int far = in(c.beams[bi].a) ? c.beams[bi].b : c.beams[bi].a;
         out.push_back(baseRot(c).unrotate(c.nodes[far].p - com));
+    }
+    // (A live axle's corner has one link to the body: its coil's tower is the other thing to
+    // measure it against, or "against each other" has nothing to compare.)
+    if (out.size() < 2 && wh.spring >= 0) {
+        const Beam& s = c.beams[wh.spring];
+        out.push_back(baseRot(c).unrotate(c.nodes[in(s.a) ? s.b : s.a].p - com));
     }
     return out;
 }
