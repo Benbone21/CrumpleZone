@@ -36,6 +36,31 @@ Body body(int peer, double x, double z, double vx = 0, double vz = 0) {
 
 bool has(const std::string& s, const char* what) { return s.find(what) != std::string::npos; }
 
+// How rough the ground is for a truck (and one 6.5 m beside it) at a spot: the spread of heights sampled over 22 x 16 m round it, or 1e9 if
+// any of it has rock standing over the ground or water. Four points 6 m out called a rock shoulder "level" and the truck slipped off it.
+double roughness(const World& w, double x, double z) {
+    double lo = 1e9, hi = -1e9;
+    for (double a = -8; a <= 14; a += 2)
+        for (double b = -8; b <= 8; b += 2) {
+            const double h = w.height(x + a, z + b);
+            if (w.clearY(x + a, z + b) - h > 0.5 || w.waterLevel(x + a, z + b) >= h) return 1e9;
+            lo = std::min(lo, h), hi = std::max(hi, h);
+        }
+    return hi - lo;
+}
+
+// The flattest open patch within x in [xLo, xHi] and z0 +- zSpan (these hillsides are mostly slopes: the nearest level bit can be far).
+V3 flattestSpot(const World& w, double xLo, double xHi, double z0, double zSpan) {
+    V3 best(xLo, 0, z0);
+    double least = 1e18;
+    for (double x = xLo; x <= xHi; x += 10)
+        for (double z = std::max(z0 - zSpan, -w.halfSize() + 60); z <= std::min(z0 + zSpan, w.halfSize() - 60); z += 6) {
+            const double r = roughness(w, x, z);
+            if (r < least) least = r, best = V3(x, 0, z);
+        }
+    return best;
+}
+
 // A guest: its own machine, its own sim, its end of the rules.
 struct Player {
     NetSession net;
@@ -246,7 +271,10 @@ SCENARIO(netMpDistanceLimit, "net/mp-distance-limit", "A host and a guest on the
     };
     ctx.run(1.5, frameBoth);
     me.sim.cars[0].occupied = true;
-    ctx.sim.teleportCar(ctx.sim.player, -800, 0, 0);
+    // (The host parks at that x on the flattest ground along z, however far: a truck that slides or tumbles down a rock mountainside at
+    // 15 m/s squashes a node into the rock, and that isn't what's tested. The distances are the bigger of x and z, and x is always more.)
+    const V3 hostSpot = flattestSpot(ctx.sim.world, -800, -800, 0, 1400);
+    ctx.sim.teleportCar(ctx.sim.player, hostSpot.x, hostSpot.z, 0);
     const double hostX = ctx.sim.cars[ctx.sim.player].frame().com.x;
     ctx.run(0.5, frameBoth);
 
@@ -286,9 +314,11 @@ SCENARIO(netMpDistanceLimit, "net/mp-distance-limit", "A host and a guest on the
     // Past the limit and staying there, dented, and on a strap to a truck of the host's parked out there: a line that would stretch km
     // and tear whatever's on its end.
     me.sim.cars[0].damage = 0.25;
-    me.put(hostX + kLimit + 80, 0);
+    // (The flattest patch out there, not the nearest one along z: a truck on a slope here slides; farther out along x is still past the limit.)
+    const V3 away = flattestSpot(me.sim.world, hostX + kLimit + 80, hostX + kLimit + 230, 0, 300);
+    me.sim.teleportCar(me.sim.player, away.x, away.z, 0);
     const int stuck = (int)ctx.sim.cars.size();
-    ctx.add(p4Runner(), hostX + kLimit + 80 + 6.5, me.at().z, 0);  // (on the level patch put() found for the guest: it checks 6 m round it, and 9 m out could be a cliff edge)
+    ctx.add(p4Runner(), away.x + 6.5, away.z, 0);  // (on the same patch: it's sampled from 8 m behind to 14 m ahead of the guest, and 9 m out could be a cliff edge)
     ctx.run(1.0, frameBoth);
     int guestOnHost = -1;
     for (int i = 0; i < (int)ctx.sim.cars.size(); i++)
