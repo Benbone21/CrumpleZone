@@ -59,6 +59,7 @@ struct PilotBody {
     double R = 0.4, width = 0.3; // tire radius and tread width
     double wb = 2.5, trackF = 1.6, trackR = 1.6;
     double front = 3.5, back = -1;  // body's reach ahead of / behind the rear axle
+    double half = 1;             // body's reach to either side (mirrors and tires too)
     double rollMax = 0.5;        // lean it may take (rad): well short of tipping over
     struct Under {
         float x, z, c;           // from the rear axle center (x forward, z left), clearance (m)

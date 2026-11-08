@@ -327,19 +327,43 @@ bool pilotRun(Ctx& ctx, Car& c, const V3& goal, double kmh, double maxS, int rou
 }
 }  // namespace
 
-// (Flaky, docs/agent-hardware-optimization.md: the route passes close by a tree and two poles, and
-// whether the Bronco clips them is chaotic. A 1e-9 m/s nudge flips it; 3 of 12 such runs fail.)
 SCENARIO(backcountryPilotFar, "backcountry/autopilot-far", "Autopilot plans the Bronco's way from the trailhead to Far Side Camp, across the ford, and drives it") {
     ctx.sim.world = World(MAP_BACKCOUNTRY);
     const V3 s = ctx.sim.world.spawn;
     Car& c = ctx.add(bBronco(), s.x, s.z, ctx.sim.world.spawnYaw * 180 / M_PI);  // (facing off its spawn pad)
     ctx.focus(c);
     ctx.run(1.0);
-    double worst = 0;
+    if (const char* nudge = std::getenv("BC_NUDGE"))  // (m/s: how a run that passes is shown not to be luck)
+        for (Node& n : c.nodes) n.v.x += std::atof(nudge);
+    double worst = 0, nearest = 1e9, lastDmg = 0;
+    int tick = 0;
+    World::NearbySolids near;
+    ctx.onStep = [&] {
+        if (tick++ % 10) return;
+        const World& w = ctx.sim.world;
+        const V3 at = c.frame().com;
+        near.clear();
+        w.solidsNear(at.x - 6, at.z - 6, at.x + 6, at.z + 6, near);
+        double gap = 1e9;
+        int who = -1;
+        for (int i : near.poles)
+            for (const Node& n : c.nodes) {
+                const Pole& p = w.poles[i];
+                const double d = std::hypot(n.p.x - p.x, n.p.z - p.z) - p.r;
+                if (d < gap) gap = d, who = i;
+            }
+        nearest = std::min(nearest, gap);
+        if (std::getenv("BC_TRACE") && who >= 0 && (gap < 0.5 || c.damage > lastDmg + 0.002))
+            std::printf("POLE t %.1f pole %d (%.1f %.1f) r %.2f gap %.2f v %.1f dmg %.2f%% thought %s\n", ctx.t, who, w.poles[who].x, w.poles[who].z, w.poles[who].r, gap, len(c.frame().vel),
+                        c.damage * 100, c.pilot.thought.c_str());
+        lastDmg = c.damage;
+    };
     const bool ok = pilotRun(ctx, c, backcountryFeature("farside") + V3(0, 0, -12), 35, 600, PILOT_TRAILS, &worst);
+    ctx.onStep = nullptr;
     std::printf("route length %.0f m\n", (double)c.pilot.path.size() * 2.0);
     ctx.check("arrived", ok, c.pilot.status);
     ctx.metric("damage on the way", worst * 100, "%", 0, 3);
+    ctx.metric("closest the body came to a tree or pole", nearest, "m", 0.15, 100);
 }
 
 SCENARIO(backcountryCreekCivic, "backcountry/creek-civic", "A Civic can't get up the Creek Crawl: it stalls at one of the first ledges") {
