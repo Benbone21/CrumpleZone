@@ -835,9 +835,11 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     // Frame-mounted nodes (suspension pick-ups, rack ends, spring towers) come next:
     // they're bolted rigidly to the body and move with the chassis frame.
     // Their mass comes out of the body cell they're bolted to (it's part of the same steel).
+    // They collide (4 cm spheres) like the rest of the chassis, and none hangs below the
+    // truck's lowest line (frameFloor, below): steel under it would be what a rock meets first.
     std::set<int> bracketed;  // rail nodes something is welded to (that stretch is boxed in and gusseted)
     auto frameNode = [&](const V3& p, double kg) {
-        int n = addNode(p, 0, false);
+        int n = addNode(p, 0, true);
         if (ladderFrame) {
             // A bracket (or tower) welded to the nearest stretch of rail.
             kg = std::max(kg, 4.0);
@@ -886,6 +888,24 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
 
     const double R = vs.wheelRadius, hw = vs.width / 2;
     const double sizeK = R / 0.32;
+    // The lowest line of the vehicle as it's built: its floor (or a ladder frame's rails) and a
+    // solid axle's diff, what its ground clearance is measured under. The suspension's brackets
+    // on the frame sit at or above it. (A wishbone's arms scale with the tire, sizeK: on a big
+    // tire their inner pivots came out 6-25 cm under the floor, with no contact, and a nose-first
+    // landing on a rock ran them half a meter in. Now the whole linkage, both ball joints, the
+    // pivots, the steering arm and the spring, sits that much higher on the knuckle, as a drop
+    // spindle does on a lifted truck: the same arms at the same angles, so the camber curve and
+    // the travel stay as they were.)
+    double frameFloor = 1e9;
+    for (int n = 0; n < bodyNodes; n++) frameFloor = std::min(frameFloor, local[n].y);
+    for (int n : ladder) frameFloor = std::min(frameFloor, local[n].y);
+    if (!isProp)
+        for (size_t ax = 0; ax < axleI.size(); ax++)
+            if ((ax == 0 ? vs.frontSusp : vs.rearSusp) == SOLID_AXLE) frameFloor = std::min(frameFloor, R - kAxleDiffR + 0.04);
+    const double wishboneLift = frameFloor < 1e8 ? std::max(0.0, frameFloor - (R - 0.17 * sizeK - 0.01)) : 0.0;
+    // (A solid axle's lower links, level at ride height, at both ends: the frame's bracket and the
+    // housing's.)
+    const double linkLift = frameFloor < 1e8 ? std::max(0.0, frameFloor - (R - 0.12)) : 0.0;
     struct WheelPlan {
         double x, zc;
         int side;  // -1 left, +1 right
@@ -918,7 +938,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     auto wishbone = [&](double xw, int s, double zc, double ww, bool strut, bool frontAxle) {
         WishboneGeom g;
         const double az = std::fabs(zc);
-        const double yl = R - 0.17 * sizeK, yu = strut ? R + 0.40 * sizeK : R + 0.23 * sizeK;  // ball joint heights
+        const double yl = R - 0.17 * sizeK + wishboneLift, yu = (strut ? R + 0.40 * sizeK : R + 0.23 * sizeK) + wishboneLift;  // ball joint heights
         const double zl = az - 0.03, zu = strut ? az - 0.17 : az - 0.11;  // ball joints, just inboard of the wheel center
         const double zlp = zl - vs.armLower, zup = zu - vs.armUpper;  // inner pivots: lower arm 36 cm, upper 27 cm (long-travel cars: longer)
         g.lowerBJ = V3(xw, yl, s * zl);
@@ -947,18 +967,18 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         // through the inner pivot axes (seen from the front, at the steering arm's position
         // along the car, since the axes are tilted): then it swings with the arms and
         // bumps barely steer the wheel.
-        const double ya = R - 0.06 * sizeK, xa = xw - 0.14;
+        const double ya = R - 0.06 * sizeK + wishboneLift, xa = xw - 0.14;
         auto axisY = [&](const V3& f, const V3& r) { return f.y + (r.y - f.y) * (f.x - xa) / (f.x - r.x); };
         const double lowY = axisY(g.lf, g.lr), upY = axisY(g.uf, g.ur);
         const double fo = (ya - yl) / (yu - yl), fi = (ya - lowY) / (upY - lowY);
         g.arm = V3(xa, ya, s * (zl + fo * (zu - zl)));
         g.rack = V3(xa, ya, s * (zlp + fi * (zup - zlp)));
-        g.coil = strut ? g.upperBJ + norm(g.upperBJ - g.lowerBJ) * 0.06 : V3(xw, R + 0.46 * sizeK, s * (zl - 0.20));
+        g.coil = strut ? g.upperBJ + norm(g.upperBJ - g.lowerBJ) * 0.06 : V3(xw, R + 0.46 * sizeK + wishboneLift, s * (zl - 0.20));
         // The Jesko's low clamshell needs an inboard spring package. This is an
         // equivalent inclined coil (the real car uses pushrods and rockers); the
         // linkage Jacobian below still sets its wheel rate and damping correctly.
         if (vs.model == 1 && !strut)
-            g.coil = V3(xw - 0.12, R + 0.24 * sizeK, s * (zl - 0.40));
+            g.coil = V3(xw - 0.12, R + 0.24 * sizeK + wishboneLift, s * (zl - 0.40));
         // That rule is exact only for level pivot axes. Fine-tune the rack's height (the tie
         // rod's angle) against the actual linkage so the wheel doesn't steer as it moves.
         const V3 hubIn(xw, R, zc - s * ww / 2), hubOut(xw, R, zc + s * ww / 2);
@@ -1031,7 +1051,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     // brackets): a level link barely moves the axle fore and aft as the body rolls,
                     // so the axle doesn't steer itself (sloped up to the frame, the outside end swung
                     // back in a turn or a lopsided stop and the axle steered the truck further in).
-                    P.trail = frameNode(V3(xw + dir * vs.linkLength, R - 0.12, s * (az - 0.30)), 2.5);
+                    P.trail = frameNode(V3(xw + dir * vs.linkLength, R - 0.12 + linkLift, s * (az - 0.30)), 2.5);
                     P.coil = frameNode(V3(xw - dir * 0.06, R + (vs.coilTop > 0 ? vs.coilTop : 0.48 * sizeK), s * (az - 0.20)), 2.0);
                     // Jounce bumper on a bracket off the rail, straight over the tube's end
                     // (where the hub's inner node is: the stop lands on the tube itself).
@@ -1131,9 +1151,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         if (ladderFrame && vs.skidDrop > 0 && vs.transfer != XFER_NONE) {
             const double xs = tail.x - 0.15;
             for (double z : {-0.18, 0.0, 0.18}) {
-                const int n = frameNode(V3(xs, vs.layerY[0] - vs.skidDrop + 0.04, z), 4.0);
-                nodes[n].collide = true;
-                skidNodes.push_back(n);
+                skidNodes.push_back(frameNode(V3(xs, vs.layerY[0] - vs.skidDrop + 0.04, z), 4.0));
             }
         }
         if (vs.transverse)
@@ -1411,7 +1429,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 // 3D piece. (Its hubs are damped in toe against it: chassisForces.)
                 const double seatZ = steered && vs.leafFront ? std::min(az - 0.20, std::max(vs.railSpacing * 0.5, az - 0.40)) : az - 0.20;  // (under the leaf: see the pick-ups)
                 seat[sIdx] = addNode(V3(xw - dir * 0.06, R + vs.axleSeat, s * seatZ), am * 0.07, false);
-                lowMount[sIdx] = addNode(V3(xw + dir * 0.12, R - 0.12, s * (az - 0.30)), am * 0.07, false);
+                lowMount[sIdx] = addNode(V3(xw + dir * 0.12, R - 0.12 + (leafAxle ? 0.0 : linkLift), s * (az - 0.30)), am * 0.07, false);
                 wh.top = seat[sIdx];
                 wh.lower = lowMount[sIdx];
                 std::vector<int> mine;
@@ -2308,15 +2326,6 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         hasSpare = false;
     }
     restLocal = local;
-    // Contact for the frame-mounted nodes that don't collide (see bracketContact): no lower than
-    // the vehicle's lowest colliding node (a solid axle's diff, a skid plate, the floor: what its
-    // ground clearance is measured to), or at the node itself when it's higher than that.
-    bracketContact.clear();
-    double lowest = 1e9;
-    for (size_t n = 0; n < nodes.size(); n++)
-        if (nodes[n].collide) lowest = std::min(lowest, local[n].y);
-    for (int n = 0; n < frameNodes && lowest < 1e8; n++)
-        if (!nodes[n].collide) bracketContact.push_back({n, std::max(0.0, lowest - local[n].y)});
     wheelbase = 2.5;
     if (axleI.size() >= 2) wheelbase = xAt(axleI.front()) - xAt(axleI.back());
 

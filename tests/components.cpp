@@ -455,15 +455,13 @@ VEHICLE_SCENARIO(tireIntoFender, "components/tire-into-fender", "Coil-over torn 
 
 // ---- The frame's brackets on a rock ------------------------------------------------
 // Everything bolted rigidly to the chassis (body, rails, the suspension's brackets and towers)
-// is steel that stands on a rock. A wishbone's lower pivots hang 10-20 cm under the rails or
-// the floor, and they had no contact at all: a ledge or a rock that came up between the rails'
-// nodes ran them in until the 4Runner's were 0.4 m inside it (the Mac CI's mp-distance-limit).
-// They meet the ground at the chassis's underside over them (Car::bracketContact), so here no
-// node of the chassis may get deeper into the rock than it hangs below that, plus a few cm for
-// the contact spring's squash: dropped flat, nose first and nose first on one side onto a rock
-// ridge between the front tires, and flat onto two narrow rock posts right under the front
-// brackets that hang lowest.
-VEHICLE_SCENARIO(frameOnRock, "components/frame-on-rock", "Dropped onto a rock ridge between the front tires (flat, nose first, nose first on one side) and flat onto rock posts under the lowest front brackets: nothing of the chassis (rails, brackets, towers) sinks into the rock") {
+// is steel that stands on a rock. A wishbone's lower pivots used to hang 6-25 cm under the floor
+// or rails with no contact at all: a ledge or a rock that came up between the rails' nodes ran
+// them in until the 4Runner's were 0.4 m inside it (the Mac CI's mp-distance-limit). Dropped flat
+// onto a rock ridge between the front tires, and flat and nose first onto two narrow rock posts
+// right under the lowest front brackets, no node of the chassis may get more than a few cm (the
+// contact spring's squash) below the top of the rock.
+VEHICLE_SCENARIO(frameOnRock, "components/frame-on-rock", "Dropped onto a rock ridge between the front tires and onto rock posts under the lowest front brackets (flat, nose first): nothing of the chassis (rails, brackets, towers) sinks into the rock") {
     struct Drop {
         const char* tag;
         double h, pitchDeg;
@@ -474,17 +472,21 @@ VEHICLE_SCENARIO(frameOnRock, "components/frame-on-rock", "Dropped onto a rock r
         Car& c = ctx.add(spec, -100, -50, 0);
         ctx.focus(c);
         ctx.run(1.0, [&] { c.handbrake = 1; });
-        // How far each chassis node hangs below the colliding chassis round it (0: it collides itself).
-        std::vector<double> hang(c.frameNodes, 0.0);
-        for (const auto& bc : c.bracketContact) hang[bc.first] = bc.second;
-        // The posts go under the two lowest-hanging brackets ahead of the car's middle, one a side.
+        // The posts go under the lowest frame-mounted node ahead of the car's middle, one a side
+        // (not the body, a ladder's rails or a bumper: the brackets, towers and pads on them; and
+        // not one on the centerline, where one post would hold up the whole nose on one node's
+        // 4 cm sphere and its contact spring squashes ~15 cm under a drop, bracket or rail alike).
+        std::vector<char> structure(c.frameNodes, 0);
+        for (int i = 0; i < c.bodyNodes && i < c.frameNodes; i++) structure[i] = 1;
+        for (int n : c.ladder) if (n < c.frameNodes) structure[n] = 1;
+        for (int n : c.bumperNodes) if (n < c.frameNodes) structure[n] = 1;
         int under[2] = {-1, -1};
-        for (const auto& bc : c.bracketContact) {
-            const V3& l = c.restLocal[bc.first];
+        for (int i = 0; i < c.frameNodes; i++) {
+            const V3& l = c.restLocal[i];
             int& u = under[l.z > 0];
-            if (l.x > 0 && bc.second > 0.05 && (u < 0 || l.y < c.restLocal[u].y - 1e-9 || (std::fabs(l.y - c.restLocal[u].y) < 1e-9 && l.x > c.restLocal[u].x))) u = bc.first;
+            if (!structure[i] && l.x > 0 && std::fabs(l.z) > 0.05 && (u < 0 || l.y < c.restLocal[u].y - 1e-9 || (std::fabs(l.y - c.restLocal[u].y) < 1e-9 && l.x > c.restLocal[u].x))) u = i;
         }
-        if (d.posts && (under[0] < 0 || under[1] < 0)) {  // (nothing hangs below the chassis up front)
+        if (d.posts && (under[0] < 0 || under[1] < 0)) {  // (nothing mounted on the frame up front)
             ctx.sim.carRemoved((int)ctx.sim.cars.size() - 1);
             ctx.sim.cars.pop_back();
             continue;
@@ -517,10 +519,10 @@ VEHICLE_SCENARIO(frameOnRock, "components/frame-on-rock", "Dropped onto a rock r
             rock(at, V3(0.45, 0.2, gap - 0.1));
         ctx.sim.world.buildGrid();
         // How far the center of anything of the chassis gets below the top of the rock (or the
-        // ground) under it, past how far it hangs below the chassis. (Measured down from the top,
-        // not to the nearest face: a node 0.5 m down a post is a few cm from its side. Each node
-        // is a 4 cm sphere on a stiff spring: a hard landing on a few of them squashes them in
-        // several cm.)
+        // ground) under it: 0.3-0.6 m when the brackets had no contact. (Measured down from the
+        // top, not to the nearest face: a node 0.5 m down a post is a few cm from its side. Each
+        // node is a 4 cm sphere on a stiff spring: a hard landing on one or two squashes them in
+        // up to ~10 cm.)
         auto depth = [&](const V3& p) {
             double in = ctx.sim.world.height(p.x, p.z) - p.y;
             for (size_t bi = boxes0; bi < ctx.sim.world.boxes.size(); bi++) {
@@ -531,17 +533,15 @@ VEHICLE_SCENARIO(frameOnRock, "components/frame-on-rock", "Dropped onto a rock r
             }
             return in;
         };
-        double deepest = 0, worstIn = 0;
+        double deepest = 0;
         int worst = -1;
         ctx.run(2.5, [&] {
             for (int i = 0; i < c.frameNodes; i++) {
                 const double in = depth(c.nodes[i].p);
-                if (in - hang[i] > deepest) deepest = in - hang[i], worstIn = in, worst = i;
+                if (in > deepest) deepest = in, worst = i;
             }
         });
-        char what[96];
-        std::snprintf(what, sizeof(what), " (node %d, %.0f cm in, hanging %.0f cm)", worst, worstIn * 100, worst >= 0 ? hang[worst] * 100 : 0.0);
-        ctx.metric(std::string(d.tag) + ": deepest a chassis node got into the rock past its hang" + what, deepest * 100, "cm", 0, 9);
+        ctx.metric(std::string(d.tag) + ": deepest a chassis node got into the rock (node " + std::to_string(worst) + ")", deepest * 100, "cm", 0, 12);
         ctx.sim.world.boxes.resize(boxes0);
         ctx.sim.world.buildGrid();
         ctx.sim.carRemoved((int)ctx.sim.cars.size() - 1);

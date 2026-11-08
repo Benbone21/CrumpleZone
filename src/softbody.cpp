@@ -629,7 +629,11 @@ void Car::computeForces(double h, const World& w) {
     wheelStep(h, w);
     poleEdgeContacts(h, w);
 
-    auto ground = [&](Node& n, const Contact& ct) {
+    for (Node& n : nodes) {
+        n.scrape = 0;
+        if (!n.collide) continue;
+        Contact ct;
+        if (!w.contact(n.p, kNodeRadius, nullptr, 0, ct)) continue;
         // Damping terms are capped by node mass so light props stay stable.
         double vn = dot(n.v, ct.n);
         double Fn;
@@ -644,31 +648,13 @@ void Car::computeForces(double h, const World& w) {
         } else {
             Fn = kGroundK * ct.pen - std::min(kGroundC, 0.5 * n.m / h) * vn;
         }
-        if (Fn <= 0) return;
+        if (Fn <= 0) continue;
         V3 vt = n.v - ct.n * vn;
         double vtl = len(vt);
         V3 F = ct.n * Fn;
         if (vtl > 1e-6) F -= vt * (std::min(kGroundMu * Fn, std::min(kGroundCt, 0.8 * n.m / h) * vtl) / vtl);
         n.f += F;
         n.scrape = (float)vtl;
-    };
-    for (Node& n : nodes) {
-        n.scrape = 0;
-        if (!n.collide) continue;
-        Contact ct;
-        if (w.contact(n.p, kNodeRadius, nullptr, 0, ct)) ground(n, ct);
-    }
-    // The frame's brackets, tucked up to the vehicle's lowest line (see bracketContact). That's for
-    // a vehicle on its wheels (its clearance, up to a ~25 degree tilt); tipped past ~60 degrees (on
-    // its side, its nose, its roof) they collide as themselves.
-    if (!bracketContact.empty()) {
-        const V3 up = chassis.rot.rotate(V3(0, 1, 0));
-        const V3 tuck = up * smoothstep(0.5, 0.9, up.y);
-        for (const auto& bc : bracketContact) {
-            Node& n = nodes[bc.first];
-            Contact ct;
-            if (w.contact(n.p + tuck * bc.second, kNodeRadius, nullptr, 0, ct)) ground(n, ct);
-        }
     }
 }
 
