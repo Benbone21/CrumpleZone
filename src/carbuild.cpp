@@ -2308,6 +2308,15 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         hasSpare = false;
     }
     restLocal = local;
+    // Contact for the frame-mounted nodes that don't collide (see bracketContact): no lower than
+    // the vehicle's lowest colliding node (a solid axle's diff, a skid plate, the floor: what its
+    // ground clearance is measured to), or at the node itself when it's higher than that.
+    bracketContact.clear();
+    double lowest = 1e9;
+    for (size_t n = 0; n < nodes.size(); n++)
+        if (nodes[n].collide) lowest = std::min(lowest, local[n].y);
+    for (int n = 0; n < frameNodes && lowest < 1e8; n++)
+        if (!nodes[n].collide) bracketContact.push_back({n, std::max(0.0, lowest - local[n].y)});
     wheelbase = 2.5;
     if (axleI.size() >= 2) wheelbase = xAt(axleI.front()) - xAt(axleI.back());
 

@@ -453,6 +453,102 @@ VEHICLE_SCENARIO(tireIntoFender, "components/tire-into-fender", "Coil-over torn 
     ctx.check("stays upright", c.frame().up.y > 0.7);
 }
 
+// ---- The frame's brackets on a rock ------------------------------------------------
+// Everything bolted rigidly to the chassis (body, rails, the suspension's brackets and towers)
+// is steel that stands on a rock. A wishbone's lower pivots hang 10-20 cm under the rails or
+// the floor, and they had no contact at all: a ledge or a rock that came up between the rails'
+// nodes ran them in until the 4Runner's were 0.4 m inside it (the Mac CI's mp-distance-limit).
+// They meet the ground at the chassis's underside over them (Car::bracketContact), so here no
+// node of the chassis may get deeper into the rock than it hangs below that, plus a few cm for
+// the contact spring's squash: dropped flat, nose first and nose first on one side onto a rock
+// ridge between the front tires, and flat onto two narrow rock posts right under the front
+// brackets that hang lowest.
+VEHICLE_SCENARIO(frameOnRock, "components/frame-on-rock", "Dropped onto a rock ridge between the front tires (flat, nose first, nose first on one side) and flat onto rock posts under the lowest front brackets: nothing of the chassis (rails, brackets, towers) sinks into the rock") {
+    struct Drop {
+        const char* tag;
+        double h, pitchDeg;
+        bool posts;
+    };
+    for (const Drop& d : {Drop{"ridge, flat from 1 m", 1.0, 0, false}, Drop{"posts, flat from 0.5 m", 0.5, 0, true},
+                          Drop{"posts, nose first (10 deg) from 0.5 m", 0.5, 10, true}}) {
+        Car& c = ctx.add(spec, -100, -50, 0);
+        ctx.focus(c);
+        ctx.run(1.0, [&] { c.handbrake = 1; });
+        // How far each chassis node hangs below the colliding chassis round it (0: it collides itself).
+        std::vector<double> hang(c.frameNodes, 0.0);
+        for (const auto& bc : c.bracketContact) hang[bc.first] = bc.second;
+        // The posts go under the two lowest-hanging brackets ahead of the car's middle, one a side.
+        int under[2] = {-1, -1};
+        for (const auto& bc : c.bracketContact) {
+            const V3& l = c.restLocal[bc.first];
+            int& u = under[l.z > 0];
+            if (l.x > 0 && bc.second > 0.05 && (u < 0 || l.y < c.restLocal[u].y - 1e-9 || (std::fabs(l.y - c.restLocal[u].y) < 1e-9 && l.x > c.restLocal[u].x))) u = bc.first;
+        }
+        if (d.posts && (under[0] < 0 || under[1] < 0)) {  // (nothing hangs below the chassis up front)
+            ctx.sim.carRemoved((int)ctx.sim.cars.size() - 1);
+            ctx.sim.cars.pop_back();
+            continue;
+        }
+        Frame fr = c.frame();
+        double axleX = -1e9, gap = 1e9;
+        for (const Wheel& w : c.wheels) {
+            const V3 hub = (c.nodes[w.inner].p + c.nodes[w.outer].p) * 0.5 - fr.com;
+            if (!w.front) continue;
+            axleX = std::max(axleX, dot(hub, fr.fwd));
+            gap = std::min(gap, std::fabs(dot(hub, fr.left)) - w.width * 0.5);
+        }
+        const V3 at = fr.com + fr.fwd * (axleX + 0.25);
+        const double yaw = std::atan2(-fr.fwd.z, fr.fwd.x);
+        if (d.pitchDeg != 0) c.rotateRigid(fr.left, -d.pitchDeg * M_PI / 180);  // (nose down)
+        double low = 1e9;
+        for (const Node& n : c.nodes) low = std::min(low, n.p.y - ctx.sim.world.height(n.p.x, n.p.z));
+        for (Node& n : c.nodes) n.p.y += d.h - std::min(0.0, low);
+        V3 postAt[2];
+        for (int k = 0; k < 2; k++) postAt[k] = under[k] >= 0 ? c.nodes[under[k]].p : V3();
+        const size_t boxes0 = ctx.sim.world.boxes.size();
+        auto rock = [&](const V3& p, const V3& half) {
+            const double ground = ctx.sim.world.height(p.x, p.z);
+            ctx.sim.world.addBox(V3(p.x, ground + half.y, p.z), half, yaw, 0, 0, V3(0.5, 0.48, 0.45));
+            ctx.sim.world.boxes.back().rock = true;
+        };
+        if (d.posts)
+            for (const V3& p : postAt) rock(p, V3(0.08, 0.3, 0.08));
+        else
+            rock(at, V3(0.45, 0.2, gap - 0.1));
+        ctx.sim.world.buildGrid();
+        // How far the center of anything of the chassis gets below the top of the rock (or the
+        // ground) under it, past how far it hangs below the chassis. (Measured down from the top,
+        // not to the nearest face: a node 0.5 m down a post is a few cm from its side. Each node
+        // is a 4 cm sphere on a stiff spring: a hard landing on a few of them squashes them in
+        // several cm.)
+        auto depth = [&](const V3& p) {
+            double in = ctx.sim.world.height(p.x, p.z) - p.y;
+            for (size_t bi = boxes0; bi < ctx.sim.world.boxes.size(); bi++) {
+                const Box& b = ctx.sim.world.boxes[bi];
+                const V3 r = p - b.c;
+                if (std::fabs(dot(r, b.ax[0])) <= b.h.x && std::fabs(dot(r, b.ax[2])) <= b.h.z && std::fabs(r.y) <= b.h.y)
+                    in = std::max(in, b.c.y + b.h.y - p.y);
+            }
+            return in;
+        };
+        double deepest = 0, worstIn = 0;
+        int worst = -1;
+        ctx.run(2.5, [&] {
+            for (int i = 0; i < c.frameNodes; i++) {
+                const double in = depth(c.nodes[i].p);
+                if (in - hang[i] > deepest) deepest = in - hang[i], worstIn = in, worst = i;
+            }
+        });
+        char what[96];
+        std::snprintf(what, sizeof(what), " (node %d, %.0f cm in, hanging %.0f cm)", worst, worstIn * 100, worst >= 0 ? hang[worst] * 100 : 0.0);
+        ctx.metric(std::string(d.tag) + ": deepest a chassis node got into the rock past its hang" + what, deepest * 100, "cm", 0, 9);
+        ctx.sim.world.boxes.resize(boxes0);
+        ctx.sim.world.buildGrid();
+        ctx.sim.carRemoved((int)ctx.sim.cars.size() - 1);
+        ctx.sim.cars.pop_back();
+    }
+}
+
 // ---- A sway bar bent by a hard hit ----------------------------------------------------
 // The Civic dropped 2.5 m with its front-left tire on a 0.6 m rock: it lands twisted and a
 // bar is wrung past its elastic limit. Back on flat ground the bent bar holds one corner

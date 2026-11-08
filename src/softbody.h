@@ -422,6 +422,15 @@ public:
     std::vector<int> bodyMountBeams;
     std::vector<int> crossStations;  // the stations (ladder index / 8) a crossmember ties the rails at, front to back
     std::vector<int> skidNodes;      // the transfer case's skid plate: three frame nodes across the frame (empty without one)
+    // The frame-mounted nodes that don't collide as themselves (suspension pick-ups, rack ends, towers):
+    // each meets the ground and rocks at a point `lift` above it (the car's up): at the height of the
+    // vehicle's lowest colliding node (what its ground clearance is measured to) if it hangs below
+    // that. A wishbone's lower pivots hang 6-25 cm under it (the kinematics put them there; the real
+    // brackets tuck up into the frame, over a skid plate): as themselves they'd cut the clearance to
+    // half the published figures, and with no contact at all a rock ledge ran the 4Runner's 0.4 m in.
+    // Like this they clip no deeper than they hang below that line. (Only on its wheels: tipped well
+    // over, they collide as themselves; see Car::computeForces.)
+    std::vector<std::pair<int, double>> bracketContact;
     double mass = 0;
     double wheelbase = 2.5;
     double frontShare = 0.5;  // share of the weight on the front axle (at rest, from the build)
