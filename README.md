@@ -838,6 +838,9 @@ Poly Haven `leafy_grass`, `aerial_grass_rock` (grass), `coast_sand_01`, `aerial_
   pine_sapling_small, dead_tree_trunk, dead_tree_trunk_02, shrub_02/03/04, fern_02, grass_medium_02,
   tree_stump_01/02, dry_branches_medium_01; forrest_ground_01, brown_mud_leaves_01, brown_mud_03, brown_mud_dry,
   rocky_terrain_02, gravel_ground_01, sandy_gravel_02, snow_02, forest_leaves_04, rocky_trail).
+- The real Moab map (`assets/maps/moab/`): heights from the [USGS 3D Elevation Program](https://www.usgs.gov/3d-elevation-program)
+  (public domain); trails, roads, the river line and named places and obstacles © [OpenStreetMap](https://www.openstreetmap.org/copyright)
+  contributors, ODbL 1.0 (`assets/maps/moab/osm.txt`, derived by `tools/osm_extract.py`).
 - `src/third_party/stb_image.h`: Sean Barrett, public domain.
 - `src/third_party/cgltf.h`: Johannes Kuhlmann, MIT license.
 

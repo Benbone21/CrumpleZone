@@ -1,0 +1,122 @@
+# Moab's hand-authored part (included by terrain.txt): what OpenStreetMap's rules can't say. Docs: docs/plans/moab-trails.md.
+# OSM ids refer to osm.txt: (c) OpenStreetMap contributors, ODbL 1.0.
+
+place town | MOAB | 38.5733 -109.5498 | 90
+place camp | SAND FLATS | 38.5785 -109.5215
+place fuel | POTASH ROAD | 38.5915 -109.5937
+bridge US-191 BRIDGE | 5 | 38.6031 -109.5800  38.6054 -109.5800
+
+# The Colorado: OSM's river line (way 366960803) a point every ~900 m, entering at the north-east and leaving to the south.
+river COLORADO RIVER | 32 3.5 | 38.63222 -109.49247  38.62771 -109.50531  38.62333 -109.51590  38.61728 -109.52668  38.61019 -109.53650  38.61048 -109.54877  38.61190 -109.55903  38.60233 -109.56301  38.60393 -109.57320  38.60351 -109.58463  38.59612 -109.58960  38.58741 -109.58979  38.57775 -109.58161  38.56589 -109.58096  38.55636 -109.58680  38.54990 -109.59494  38.54003 -109.60100  38.53149 -109.60618  38.53005 -109.61790  38.53594 -109.62945  38.54421 -109.63291  38.55709 -109.63291  38.56942 -109.63421  38.57785 -109.63851  38.57267 -109.65258  38.56401 -109.65745  38.55654 -109.65292  38.54869 -109.64548  38.53964 -109.65365  38.53093 -109.65503  38.52167 -109.65163  38.51331 -109.65114  38.50692 -109.65827  38.49951 -109.65194
+
+# ---- The trails: OpenStreetMap's ways (osm.txt), chained in order -------------------------------------------------------------
+# Sand Flats Road (CR 82): from Mill Creek Drive up past the fee station (the eastbound one-way side) to the Fins N' Things trailhead.
+trail SAND FLATS ROAD | 0 0.14 | osm 10107867 364789549 364789550 364789548 677201341 996790125 to 38.5823 -109.5031
+# Hell's Revenge: in at the trailhead (the one-way entrance), round the fins to the Tip-Over junction, back past the Staircase to
+# the exit on Sand Flats Road. Its options are their own OSM ways (one-way where OSM says so); the main line is their bypass.
+trail HELL'S REVENGE | 3 0.6 | osm 1133332241 142208776 327508933 1451260012
+trail COLORADO RIVER OVERLOOK | 2 0.6 | osm 142208798
+trail HELL'S GATE | 3 0.9 | osm 929938773
+trail ESCALATOR | 3 0.9 | osm 935565490
+trail MICKEY'S HOT TUB | 3 0.9 | osm 935565491
+trail TIPOVER CHALLENGE | 3 0.9 | osm 935565492
+trail STAIRCASE | 3 0.7 | osm 312273508
+trail STAIRCASE BYPASS | 2 0.6 | osm 1060107136
+trail HELL'S ALTERNATE ROUTE | 2 0.6 | osm 935565488 935565489
+trail BABY LION'S BACK | 3 0.7 | osm 940187662
+# Lion's Back is private land and closed (docs/plans/moab-trails.md 2.19): no trail onto it, a sign at its top.
+# Fins N' Things: the daylight-only section east (one way) and the north section back west (one way). The loop's east end is past
+# box D's edge: the two are joined there by a short routed link inside the map.
+trail FINS N' THINGS | 2 0.55 | osm 142208771 142208801
+trail MOAB RIM | 3 0.6 | osm 1354343450 222345129
+# Poison Spider Mesa: the trailhead on Potash Road up the switchbacks and the sandy canyon to the mesa, where Golden Spike begins;
+# the loop on top as its own trail.
+trail POISON SPIDER MESA | 3 0.6 | osm 10107509 118780903 114136395
+trail POISON SPIDER LOOP | 3 0.6 | osm 326831337 141498248
+trail GOLDEN SPIKE | 3 0.6 | osm 141498239
+trail DOUBLE WHAMMY BYPASS | 3 0.6 | osm 1052763797
+# Gold Bar Rim: from the trailhead off US-191 up to the rim where Golden Spike comes in; Rusty Nail (RR4W 8) the other way up.
+trail GOLD BAR RIM | 3 0.6 | osm -337485302 1354307247 326830820
+trail RUSTY NAIL | 3 0.6 | osm 128009067
+# Cliffhanger: from Kane Creek Road across the creek, up Amasa Back to the shelf over Jackson Hole.
+trail CLIFFHANGER | 3 0.6 | osm 29435854 343090058 343090059 343090055 427670420 343074856 343074857
+# Metal Masher: only its end is in box D (Tailpipe Hill, Rock Chunker, Mirror Gulch, Misty's Thumb, Eagles Perch); the trailhead
+# and Widow Maker are west of it.
+trail METAL MASHER | 3 0.6 | osm 312627046 to 38.63685 -109.67214
+trail METAL MASHER CUTOFF | 3 0.6 | osm 982872546
+
+# ---- The named obstacles, at OSM's nodes (or, where OSM has none, a point on the OSM line: said so) -----------------------------
+# No source gives sizes (docs/plans/moab-trails.md 5): each is authored from what the research says of it, ledges at or under 0.65 m
+# (RR4W allows steps to 36 in, 0.91 m; in the game a set-up, aired-down Bronco clears 0.50 m every time and 0.65 m usually,
+# docs/terrain-generator-handoff.md 3.3) and pitches to 40 degrees (a set-up Bronco climbs 45). Grades are rise over run.
+# Hell's Revenge's start fin above the entrance station, drops both sides (research 2.1, order 1). No OSM node: on the line 110 m in.
+obstacle HELL'S REVENGE FIN | fin | 38.57627 -109.52330 | HELL'S REVENGE | climb 0.45 10 walls -1.6 width 3.0
+# Hell's Gate: optional steep notch climb near the north end; pushes the trail toward an 8 (research 2.1, order 6). A 39-degree pitch up
+# a notch (about 7 m high), two 22 in (0.55 m) ledges, the rock 2.5 m up either side, tipped a little. Bypass: the main trail (OSM's own one-way way).
+obstacle HELL'S GATE | notch | node 8623737727 | HELL'S GATE | climb 0.8 9 steps 2 0.55 walls 2.5 width 2.6 camber 8
+# The Escalator (RR4W "Escalator to Hell", 8): optional, extreme, a steep ledge climb. 40 degrees, about 8.5 m high, three 0.45 m ledges.
+obstacle ESCALATOR | climb | node 8669825398 | ESCALATOR | climb 0.85 10 steps 3 0.45 width 3.0
+# Mickey's Hot Tub: the one pothole open to vehicles, extreme caution (research 2.1, order 4). In and out of a 1.5 m bowl 10 m across.
+obstacle MICKEY'S HOT TUB | pothole | node 8669825415 | MICKEY'S HOT TUB | bowl 1.5 10 width 3.2
+# The Tip-Over Challenge: a crack across its middle lifts a tyre, off-camber at the top where you turn (research 2.1, order 9).
+# OSM's node is used; RR4W's KML waypoint 11 is 1.4 km away (38.5967, -109.5318): the research flags it, OSM's is on the OSM way.
+obstacle TIPOVER CHALLENGE | camber | node 8669825425 | TIPOVER CHALLENGE | climb 0.45 14 camber 20 crack 0.5 1.0 cross width 3.0
+# The Staircase: steep rock stairs, "a mini Hell's Gate" (research 2.1, order 8). Four 0.40 m steps up a 29-degree pitch.
+obstacle THE STAIRCASE | stairs | node 3181263994 | STAIRCASE | climb 0.55 10 steps 4 0.4 bypass STAIRCASE BYPASS
+# Baby Lion's Back: the short open fin in Sand Flats that replaces the closed Lion's Back (research 2.1, 2.19). A 31-degree fin.
+obstacle BABY LION'S BACK | fin | node 1833332004 | BABY LION'S BACK | climb 0.6 14 walls -1.2 width 2.8
+# Golden Spike (RR4W 7), in RR4W's order from the Poison Spider end (research 2.5):
+# Launching Pad: the steep uphill (33 degrees), over a crest.
+obstacle LAUNCHING PAD | climb | node 9509081699 | GOLDEN SPIKE | climb 0.65 8
+# Narrow Ravine (OSM only): a slot a truck's width with rock walls and boulders in it.
+obstacle NARROW RAVINE | notch | node 9509081702 | GOLDEN SPIKE | length 20 walls 2.2 width 2.0 boulders 3
+# Zuki Hill: a climb of three 0.4 m ledges.
+obstacle ZUKI HILL | climb | node 9675078727 | GOLDEN SPIKE | length 16 steps 3 0.4
+# Golden Crack: a crack along the line to keep a wheel out of, the rock tipped toward it, a ledge out.
+obstacle GOLDEN CRACK | crack | node 1548727123 | GOLDEN SPIKE | length 16 crack 0.9 1.0 camber 10 steps 1 0.4
+# The Golden Steps (OSM: Golden Staircase): four 0.45 m (18 in) steps up.
+obstacle GOLDEN STAIRCASE | stairs | node 3445676626 | GOLDEN SPIKE | length 14 steps 4 0.45
+# Double Whammy: two big ledges one after the other; OSM has its bypass.
+obstacle DOUBLE WHAMMY | ledges | node 9509081700 | GOLDEN SPIKE | length 10 steps 2 0.6 bypass DOUBLE WHAMMY BYPASS
+# Body Snatcher: a tight, tipped squeeze between rock with a ledge in it.
+obstacle BODY SNATCHER | squeeze | node 9509081704 | GOLDEN SPIKE | length 14 steps 1 0.55 camber 14 walls 1.4 width 2.4
+# Gold Bar Rim's Waterfall: the big ledge across Gold Bar Canyon that sets the trail's rating; many need help; no bypass (research 2.6).
+obstacle THE WATERFALL | ledges | node 3445676597 | GOLD BAR RIM | length 10 steps 2 0.55 boulders 2
+# Metal Masher's end (RR4W 7, onX 8; research 2.13). Tailpipe Hill: a 0.5 m ledge to drag a tailpipe on (OSM node only).
+obstacle TAILPIPE HILL | climb | node 3444773886 | METAL MASHER | length 10 steps 1 0.5
+# Rock Chunker: the old standard route, now a playground for big rigs; OSM's short way past it is the bypass.
+obstacle ROCK CHUNKER | boulders | node 433534657 | METAL MASHER | length 22 boulders 8 steps 2 0.6 walls 1.0 bypass METAL MASHER CUTOFF
+# Mirror Gulch: the start of the last 0.3 mi to the rim: ledges, shelves, a switchback.
+obstacle MIRROR GULCH | ledges | node 3444773924 | METAL MASHER | length 18 steps 3 0.45 camber 8
+# Moab Rim (RR4W 7; research 2.3). No OSM nodes: Devil's Crack and the Z Turn are put in its first mile where the OSM line is
+# steepest on the DEM, the dome climb on top at its steepest; approximate.
+# Devil's Crack: a tricky turn to keep a wheel out of a crack; here on the slab's 35% climb, the rock tipped toward the crack.
+obstacle DEVIL'S CRACK | crack | 38.56077 -109.58177 | MOAB RIM | length 14 crack 0.8 1.0 camber 8
+# The Z Turn: two turns over irregular, off-camber ledges.
+obstacle Z TURN | camber | 38.56639 -109.57354 | MOAB RIM | length 20 steps 2 0.4 camber 12
+# The optional slickrock dome on top, about 85% grade (research 2.3), 10 m high; a way round it on the side.
+obstacle MOAB RIM DOME | climb | 38.55152 -109.57345 | MOAB RIM | climb 0.85 12 bypass left
+# Poison Spider Mesa's Waterfall, at the head of the sandy canyon, then the ledges that set its rating (research 2.4). No OSM node:
+# where the OSM line climbs steepest out of the canyon, approximate.
+obstacle POISON SPIDER WATERFALL | ledges | 38.54387 -109.62043 | POISON SPIDER MESA | length 10 steps 2 0.5
+# Cliffhanger: the big ledge on a narrow shelf over Jackson Hole; the line changes with wheelbase; no bypass (research 2.7). No OSM
+# node: on the OSM line's last steep pitch above Jackson Hole, approximate.
+obstacle CLIFFHANGER | ledges | 38.53039 -109.63782 | CLIFFHANGER | length 8 steps 1 0.6 camber 10 width 2.8
+
+landmark LION'S BACK: CLOSED, PRIVATE LAND | node 8707699266
+landmark MISTY'S THUMB | node 3444773936
+landmark SHRIMP ROCK | node 702734049
+landmark COLORADO RIVER OVERLOOK | node 1556400347
+landmark EAGLES PERCH OVERLOOK | node 433534713
+landmark WHERE EAGLES DARE SUMMIT | node 8615313509
+
+# ---- The courses: the main runs at their real (RR4W) ratings, start and finish at their trailheads ---------------------------------
+course SAND FLATS ROAD | SAND FLATS ROAD | 1 | 4runner | 12 | FROM MILL CREEK DRIVE UP THE COUNTY ROAD PAST THE FEE STATION TO THE FINS N' THINGS TRAILHEAD: ANY STOCK TRUCK
+course HELL'S REVENGE | HELL'S REVENGE | 4 | bronco | 10.5 | RR4W 6. ROUND THE SLICKROCK FINS FROM THE SAND FLATS TRAILHEAD TO THE EXIT. HELL'S GATE, THE ESCALATOR, MICKEY'S HOT TUB AND THE TIP-OVER ARE OPTIONS OFF IT
+course FINS N' THINGS | FINS N' THINGS | 3 | bronco | 16 | RR4W 4. EAST OVER THE FINS ON THE DAYLIGHT-ONLY SECTION, BACK WEST ON THE NORTH SECTION. STEEP SLICKROCK
+course MOAB RIM | MOAB RIM | 5 | bronco | 9 | RR4W 7. FROM KANE CREEK ROAD UP THE TILTED SLAB: DEVIL'S CRACK, THE Z TURN, THEN ON TOWARD HIDDEN VALLEY. NO REPAIRS
+course POISON SPIDER MESA | POISON SPIDER MESA | 4 | bronco | 14 | RR4W 6. FROM THE POTASH ROAD TRAILHEAD UP THE SANDY CANYON AND THE WATERFALL TO THE MESA, WHERE GOLDEN SPIKE BEGINS
+course GOLDEN SPIKE | GOLDEN SPIKE | 5 | bronco | 11 | RR4W 7. FROM POISON SPIDER ACROSS TO GOLD BAR RIM: LAUNCHING PAD, ZUKI HILL, GOLDEN CRACK, THE GOLDEN STEPS, DOUBLE WHAMMY, BODY SNATCHER. NO REPAIRS
+course GOLD BAR RIM | GOLD BAR RIM | 4 | bronco | 15 | RR4W 6. FROM THE TRAILHEAD OFF US-191 UP ACROSS GOLD BAR CANYON AND THE WATERFALL TO THE RIM
+course CLIFFHANGER | CLIFFHANGER | 5 | bronco | 13 | RR4W 8. FROM KANE CREEK ROAD ACROSS THE CREEK AND UP AMASA BACK TO THE CLIFFHANGER LEDGE OVER JACKSON HOLE. NO REPAIRS
+course METAL MASHER | METAL MASHER | 5 | bronco | 10 | RR4W 7. ITS LAST MILES UNDER ARTH'S RIM: TAILPIPE HILL, ROCK CHUNKER, MIRROR GULCH, TO EAGLES PERCH. NO REPAIRS
