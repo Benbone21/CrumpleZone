@@ -48,7 +48,7 @@ SCEN     += tests/procworld.cpp tests/procreveal.cpp tests/procmodels.cpp tests/
 SCEN     += tests/hitches.cpp
 PHYS     += src/bgwork.cpp src/menu.cpp src/daylight.cpp
 PHYS     += src/realterrain.cpp src/realterrainplan.cpp src/realterrainbuild.cpp
-SCEN     += tests/realterrain.cpp
+SCEN     += tests/realterrain.cpp tests/moab.cpp
 PHYS     += src/bctrails.cpp
 PHYS     += src/freecam.cpp
 SCEN     += tests/freecam.cpp
@@ -288,6 +288,7 @@ windows: build/win/CrumpleZone/crumplezone.exe
 	if [ -d assets/audio ]; then cp -r assets/audio build/win/CrumpleZone/assets/; fi
 	if [ -d assets/menu ]; then cp -r assets/menu build/win/CrumpleZone/assets/; fi
 	if [ -d assets/procworld ]; then cp -r assets/procworld build/win/CrumpleZone/assets/; fi
+	if [ -d assets/maps ]; then cp -r assets/maps build/win/CrumpleZone/assets/; fi
 	if [ -f assets/props/props.txt ]; then cp -r assets/props build/win/CrumpleZone/assets/; fi
 	if [ -d assets/models ]; then cp -r assets/models build/win/CrumpleZone/assets/; fi
 	@cd build/win && rm -f CrumpleZone-windows.zip && if command -v zip >/dev/null 2>&1; then zip -qr CrumpleZone-windows.zip CrumpleZone; \
@@ -343,6 +344,7 @@ mac: build/mac/crumplezone
 	if [ -d assets/audio ]; then cp -R assets/audio $(MACAPP)/Contents/Resources/assets/; fi
 	if [ -d assets/menu ]; then cp -R assets/menu $(MACAPP)/Contents/Resources/assets/; fi
 	if [ -d assets/procworld ]; then cp -R assets/procworld $(MACAPP)/Contents/Resources/assets/; fi
+	if [ -d assets/maps ]; then cp -R assets/maps $(MACAPP)/Contents/Resources/assets/; fi
 	if [ -f assets/props/props.txt ]; then cp -R assets/props $(MACAPP)/Contents/Resources/assets/; fi
 	if [ -d assets/models ]; then cp -R assets/models $(MACAPP)/Contents/Resources/assets/; fi
 	cp -R $(MACSDL)/SDL2.framework $(MACAPP)/Contents/Frameworks/
@@ -403,6 +405,7 @@ deb: build/rel/crumplezone
 	if [ -d assets/audio ]; then cp -r assets/audio $(DEBROOT)/opt/crumplezone/assets/; fi
 	if [ -d assets/menu ]; then cp -r assets/menu $(DEBROOT)/opt/crumplezone/assets/; fi
 	if [ -d assets/procworld ]; then cp -r assets/procworld $(DEBROOT)/opt/crumplezone/assets/; fi
+	if [ -d assets/maps ]; then cp -r assets/maps $(DEBROOT)/opt/crumplezone/assets/; fi
 	if [ -f assets/props/props.txt ]; then cp -r assets/props $(DEBROOT)/opt/crumplezone/assets/; fi
 	if [ -d assets/models ]; then cp -r assets/models $(DEBROOT)/opt/crumplezone/assets/; fi
 	printf 'layout deb\n' > $(DEBROOT)/opt/crumplezone/cz-install.txt
@@ -424,6 +427,7 @@ linux-zip: build/rel/crumplezone
 	if [ -d assets/audio ]; then cp -r assets/audio $(LINROOT)/assets/; fi
 	if [ -d assets/menu ]; then cp -r assets/menu $(LINROOT)/assets/; fi
 	if [ -d assets/procworld ]; then cp -r assets/procworld $(LINROOT)/assets/; fi
+	if [ -d assets/maps ]; then cp -r assets/maps $(LINROOT)/assets/; fi
 	if [ -f assets/props/props.txt ]; then cp -r assets/props $(LINROOT)/assets/; fi
 	if [ -d assets/models ]; then cp -r assets/models $(LINROOT)/assets/; fi
 	install -m755 installer/linux-user-install.sh $(LINROOT)/install.sh
