@@ -276,7 +276,10 @@ std::string fileFor(int map) { return map == MAP_REAL ? std::string("world-real"
 }  // namespace
 
 bool cacheable(int map) {
-    return (map == MAP_FRONTIER || map == MAP_BACKCOUNTRY || map == MAP_MOUNTAIN || (map == MAP_REAL && realterrain::activeHash() != 0)) && !bypass && World::halfSizeOverride <= 0 &&
+    // (A real terrain bigger than the 8 km big map isn't kept: encoding a 12 km world (Moab, 144 M cells) holds a second copy of it
+    // while it's written, ~4 GB at the peak; it builds in under 10 s anyway.)
+    return (map == MAP_FRONTIER || map == MAP_BACKCOUNTRY || map == MAP_MOUNTAIN || (map == MAP_REAL && realterrain::activeHash() != 0 && realterrain::activeHalf() <= 4000)) &&
+           !bypass && World::halfSizeOverride <= 0 &&
            meshcache::enabled();
 }
 

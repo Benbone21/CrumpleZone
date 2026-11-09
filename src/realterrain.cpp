@@ -847,13 +847,87 @@ bool parseSpec(const std::string& text, const std::string& dir, Spec& s, std::st
         else if (key == "trees") s.trees = std::max(0.0, num(0));
         else if (key == "bushes") s.bushes = std::max(0.0, num(0));
         else if (key == "rocks") s.rocks = std::max(0.0, num(0));
+        else if (key == "rock_size") s.rockSize = clampd(num(0), 0.1, 3);
         else if (key == "ledges") s.ledgeStep = std::max(0.0, num(0)), s.ledgeStrength = a.size() > 1 ? clampd(num(1), 0, 1) : 0.8;
         else if (key == "river_area") s.riverArea = num(0);
         else if (key == "wash_area") s.washArea = num(0);
         else if (key == "lake_area") s.lakeArea = std::max(0.0, num(0));
         else if (key == "outposts") s.outposts = (int)num(0);
         else if (key == "seed") s.seed = (uint32_t)num(0);
-        else {
+        else if (key == "rim") s.rimWidth = clampd(num(0), 40, 400);
+        else if (key == "slickrock") {
+            if (!need(2)) return false;
+            s.slickLo = num(0), s.slickHi = num(1);
+        } else if (key == "backdrop") {
+            if (!need(1)) return false;
+            s.backdrop = a[0];
+            if (a.size() >= 3) s.backdropScale = num(1), s.backdropOffset = num(2);
+        } else if (key == "place" || key == "river" || key == "bridge" || key == "trail" || key == "course") {
+            // (Fields split by '|': names may have spaces.)
+            std::string rest = line.substr(line.find_first_not_of(" \t"));
+            rest = rest.substr(std::min(rest.size(), rest.find_first_of(" \t") == std::string::npos ? rest.size() : rest.find_first_of(" \t")));
+            std::vector<std::string> f;
+            for (size_t at = 0;;) {
+                const size_t bar = rest.find('|', at);
+                std::string part = rest.substr(at, bar == std::string::npos ? std::string::npos : bar - at);
+                const size_t b0 = part.find_first_not_of(" \t"), b1 = part.find_last_not_of(" \t");
+                f.push_back(b0 == std::string::npos ? std::string() : part.substr(b0, b1 - b0 + 1));
+                if (bar == std::string::npos) break;
+                at = bar + 1;
+            }
+            auto nums = [](const std::string& t) {
+                std::vector<double> v;
+                std::istringstream is(t);
+                for (std::string w; is >> w;) v.push_back(std::atof(w.c_str()));
+                return v;
+            };
+            auto lls = [&](const std::string& t, std::vector<LatLon>& out) {
+                const std::vector<double> v = nums(t);
+                for (size_t k = 0; k + 1 < v.size(); k += 2) out.push_back({v[k], v[k + 1]});
+                return v.size() >= 2 && v.size() % 2 == 0;
+            };
+            auto bad = [&](const char* what) { return fail(err, "line " + std::to_string(ln) + ": " + key + " " + what); };
+            if (key == "place") {
+                if (f.size() < 3) return bad("needs KIND | NAME | LAT LON");
+                SpecPlace pl;
+                const std::string k = lower(f[0]);
+                pl.town = k == "town";
+                pl.kind = pl.town ? PK_RANGER_STATION : k == "fuel" ? PK_FUEL_STOP : k == "camp" ? PK_OLD_CAMP : k == "cabin" ? PK_CABIN : k == "lookout" ? PK_LOOKOUT : -1;
+                if (pl.kind < 0) return bad("kind must be town, fuel, camp, cabin or lookout");
+                pl.name = upper(f[1]);
+                std::vector<LatLon> at;
+                if (!lls(f[2], at) || at.size() != 1) return bad("needs one LAT LON");
+                pl.at = at[0];
+                if (f.size() > 3) pl.yawDeg = std::atof(f[3].c_str());
+                s.places.push_back(pl);
+            } else if (key == "river") {
+                SpecRiver r;
+                std::vector<double> wd;
+                if (f.size() < 3 || (wd = nums(f[1])).size() < 2 || !lls(f[2], r.pts) || r.pts.size() < 2) return bad("needs NAME | HALF_WIDTH DEPTH | LAT LON LAT LON ...");
+                r.name = upper(f[0]), r.halfWidth = clampd(wd[0], 2, 200), r.depth = clampd(wd[1], 0.3, 12);
+                s.rivers.push_back(r);
+            } else if (key == "bridge") {
+                SpecBridge b;
+                std::vector<LatLon> e;
+                if (f.size() < 3 || !lls(f[2], e) || e.size() != 2) return bad("needs NAME | HALF_WIDTH | LAT LON LAT LON");
+                b.name = upper(f[0]), b.halfWidth = clampd(std::atof(f[1].c_str()), 2, 20), b.a = e[0], b.b = e[1];
+                s.bridges.push_back(b);
+            } else if (key == "trail") {
+                SpecTrail t;
+                std::vector<double> rg;
+                if (f.size() < 3 || (rg = nums(f[1])).size() < 2 || !lls(f[2], t.pts) || t.pts.size() < 2) return bad("needs NAME | RATING GRADE | LAT LON LAT LON ...");
+                t.name = upper(f[0]), t.rating = (int)clampd(rg[0], 0, 4), t.grade = clampd(rg[1], 0.04, 1.2);
+                s.trails.push_back(t);
+            } else {
+                if (f.size() < 6) return bad("needs NAME | TRAIL | DIFFICULTY | VEHICLE | HOURS | ABOUT");
+                SpecCourse c;
+                c.name = upper(f[0]), c.trail = upper(f[1]), c.difficulty = (int)clampd(std::atof(f[2].c_str()), 1, 5);
+                c.vehicle = lower(f[3]) == "any" ? "" : lower(f[3]), c.hours = clampd(std::atof(f[4].c_str()), 0, 24);
+                for (size_t k = 5; k < f.size(); k++) c.about += (k > 5 ? " | " : "") + f[k];
+                c.about = upper(c.about);
+                s.courses.push_back(c);
+            }
+        } else {
             if (err) *err = "line " + std::to_string(ln) + ": unknown key '" + key + "'";
             return false;
         }
@@ -863,6 +937,15 @@ bool parseSpec(const std::string& text, const std::string& dir, Spec& s, std::st
     if (s.washArea < 0) s.washArea = s.climate == CLIMATE_DESERT ? 0.25 : s.climate == CLIMATE_ALPINE ? 0.3 : 0.4;
     const bool abs = !s.source.empty() && (s.source[0] == '/' || s.source[0] == '\\' || (s.source.size() > 1 && s.source[1] == ':'));
     s.sourcePath = abs || dir.empty() ? s.source : dir + "/" + s.source;
+    if (!s.backdrop.empty()) {
+        const bool babs = s.backdrop[0] == '/' || s.backdrop[0] == '\\' || (s.backdrop.size() > 1 && s.backdrop[1] == ':');
+        s.backdropPath = babs || dir.empty() ? s.backdrop : dir + "/" + s.backdrop;
+    }
+    for (const SpecCourse& c : s.courses) {
+        bool found = false;
+        for (const SpecTrail& t : s.trails) found |= t.name == c.trail;
+        if (!found) return fail(err, "course " + c.name + ": no trail named " + c.trail);
+    }
     return true;
 }
 
@@ -1009,7 +1092,41 @@ std::shared_ptr<const Terrain> prepare(const Spec& spec, std::string* err) {
     t->half = half;
     const double mpp = std::max(mx, my);
     t->detailAmp = spec.detail >= 0 ? spec.detail : clampd(0.06 * mpp, 0.08, 1.0);
+    // The backdrop: the country round the map, read whole (it's coarse), in metres over the map's own base. Its middle is the
+    // map's (the same lat/lon); a pixel's size from its own latitude, as the map's is.
+    if (!spec.backdropPath.empty() && d.geo == Dem::GEO_DEGREES) {
+        Dem& b = t->backdrop;
+        std::string why;
+        if (!loadDem(spec.backdropPath, b, &why) || b.geo != Dem::GEO_DEGREES) {
+            std::printf("real terrain %s: no backdrop (%s)\n", spec.name.c_str(), why.empty() ? "not in degrees" : why.c_str());
+            b = Dem();
+        } else {
+            for (float& v : b.v) v = (float)((v * spec.backdropScale + spec.backdropOffset - lo) * spec.exaggeration);
+            const double lat0 = t->dem.y0 - (t->cy + 0.5) * t->dem.dy, lon0 = t->dem.x0 + (t->cx + 0.5) * t->dem.dx;  // (the map's middle)
+            t->bdMppX = b.dx * metresPerDegLon(lat0), t->bdMppY = b.dy * metresPerDegLat(lat0);
+            t->bdCx = (lon0 - b.x0) / b.dx - 0.5, t->bdCy = (b.y0 - lat0) / b.dy - 0.5;
+            t->bdReach = std::min(std::min(t->bdCx, b.w - 1 - t->bdCx) * t->bdMppX, std::min(t->bdCy, b.h - 1 - t->bdCy) * t->bdMppY);
+        }
+    }
     return t;
+}
+
+bool Terrain::toMap(const LatLon& ll, double& x, double& z) const {
+    if (dem.geo != Dem::GEO_DEGREES) return false;
+    const double px = (ll.lon - dem.x0) / dem.dx - 0.5, py = (dem.y0 - ll.lat) / dem.dy - 0.5;
+    x = (px - cx) * mppX, z = (cy - py) * mppY;
+    return true;
+}
+
+bool Terrain::backdropAt(double x, double z, double& y) const {
+    if (backdrop.v.empty()) return false;
+    const double px = bdCx + x / bdMppX, py = bdCy - z / bdMppY;
+    if (px < 0 || py < 0 || px > backdrop.w - 1 || py > backdrop.h - 1) return false;
+    const int ix = std::min(backdrop.w - 2, (int)px), iy = std::min(backdrop.h - 2, (int)py);
+    const double tx = px - ix, ty = py - iy;
+    const double a = backdrop.at(ix, iy), b = backdrop.at(ix + 1, iy), c = backdrop.at(ix, iy + 1), e = backdrop.at(ix + 1, iy + 1);
+    y = (a + (b - a) * tx) + ((c + (e - c) * tx) - (a + (b - a) * tx)) * ty;
+    return true;
 }
 
 double Terrain::demAt(double x, double z) const {
@@ -1036,8 +1153,9 @@ double Terrain::landAt(double x, double z) const {
     return demAt(x, z) + a * (fbmNoise(x * 0.09 + 5.0, z * 0.09 + 1.0, 2) - 0.5) + 0.5 * a * (valueNoise(x * 0.31, z * 0.27) - 0.5);
 }
 double Terrain::rimAt(double x, double z) const {
-    const double ex = std::max(0.0, std::fabs(x) - (half - 130)), ez = std::max(0.0, std::fabs(z) - (half - 130));
-    const double d = std::sqrt(ex * ex + ez * ez);
+    const double rim = spec.rimWidth;
+    const double ex = std::max(0.0, std::fabs(x) - (half - rim)), ez = std::max(0.0, std::fabs(z) - (half - rim));
+    const double d = std::sqrt(ex * ex + ez * ez) * (130.0 / rim);  // (a narrower rim rises as high, sooner)
     return 0.0045 * d * d + 0.02 * d;
 }
 double Terrain::heightAt(double x, double z) const { return landAt(x, z) + rimAt(x, z); }
@@ -1056,7 +1174,7 @@ thread_local std::vector<std::string> tlRoots;
 std::vector<std::string> searchRoots() {
     if (tlSet) return tlRoots;
     std::vector<std::string> out;
-    for (const char* rel : {"maps", "data/real"}) {
+    for (const char* rel : {"maps", "assets/maps", "data/real"}) {  // (assets/maps: the maps the game ships, Moab)
         const std::string d = findAssetDir(rel);
         if (!d.empty()) out.push_back(d);
     }
@@ -1171,6 +1289,11 @@ const std::vector<MapPlace>& places() {
     static const std::vector<MapPlace> none;
     std::shared_ptr<const Terrain> t = active();
     return t ? t->plan().places : none;
+}
+const std::vector<PlanCourse>& courses() {
+    static const std::vector<PlanCourse> none;
+    std::shared_ptr<const Terrain> t = active();
+    return t && !t->spec.courses.empty() ? t->plan().courses : none;
 }
 
 }  // namespace realterrain

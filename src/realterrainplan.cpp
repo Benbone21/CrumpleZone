@@ -139,6 +139,103 @@ const Terrain::Plan& Terrain::plan() const {
             for (int j = 0; j < n; j++) p.h[(size_t)i * n + j] = (float)demAt(X(i), X(j));
         const std::vector<float>& H = p.h;
         const double seaY = spec.seaLevel > -1e8 ? mapHeight(spec.seaLevel) : -1e9;
+        auto cellAt = [&](const LatLon& ll, int& id) {
+            double x, z;
+            if (!toMap(ll, x, z)) return false;
+            id = p.cellOf(x) * n + p.cellOf(z);
+            return true;
+        };
+
+        // ---- The sidecar's big rivers (SpecRiver): each leg between its points along the lowest ground (the DEM's own water
+        // surface is the lowest thing in a valley), a corridor of its half-width either side; and the bridges over them.
+        std::vector<uint8_t> big(N, 0), deck(N, 0);
+        std::vector<float> HA = H;  // (the land as the roads see it: over a bridge, its deck)
+        for (const SpecBridge& sb : spec.bridges) {
+            PlanBridge b;
+            b.name = sb.name, b.halfWidth = sb.halfWidth;
+            double ax, az, bx, bz;
+            if (!toMap(sb.a, ax, az) || !toMap(sb.b, bx, bz)) continue;
+            auto bank = [&](double x, double z) {  // (the bank's height there: the highest of the land a few cells round)
+                const int ci = p.cellOf(x), cj = p.cellOf(z);
+                double hi = -1e9;
+                for (int a = -1; a <= 1; a++)
+                    for (int c = -1; c <= 1; c++) hi = std::max(hi, (double)H[(size_t)std::min(n - 1, std::max(0, ci + a)) * n + std::min(n - 1, std::max(0, cj + c))]);
+                return hi;
+            };
+            b.a = V3(ax, bank(ax, az), az), b.b = V3(bx, bank(bx, bz), bz);
+            const double L = std::sqrt((bx - ax) * (bx - ax) + (bz - az) * (bz - az));
+            for (double u = 0; u <= L; u += cs * 0.5)
+                for (double v = -b.halfWidth; v <= b.halfWidth; v += cs * 0.5) {
+                    const double x = ax + (bx - ax) * u / L - (bz - az) / L * v, z = az + (bz - az) * u / L + (bx - ax) / L * v;
+                    const int id = p.cellOf(x) * n + p.cellOf(z);
+                    deck[id] = 1, HA[id] = (float)(b.a.y + (b.b.y - b.a.y) * u / L);
+                }
+            p.bridges.push_back(b);
+        }
+        for (const SpecRiver& sr : spec.rivers) {
+            std::vector<int> way;
+            for (const LatLon& ll : sr.pts) {
+                int id;
+                if (!cellAt(ll, id)) continue;
+                // (onto the lowest cell within 150 m: the water)
+                const int ci = id / n, cj = id % n, r = (int)std::ceil(150 / cs);
+                int best = id;
+                for (int a = -r; a <= r; a++)
+                    for (int c = -r; c <= r; c++) {
+                        const int ni = ci + a, nj = cj + c;
+                        if (ni < 0 || nj < 0 || ni >= n || nj >= n || (a * a + c * c) * cs * cs > 150.0 * 150) continue;
+                        if (H[(size_t)ni * n + nj] < H[best]) best = ni * n + nj;
+                    }
+                way.push_back(best);
+            }
+            PlanRiver r;
+            r.name = sr.name, r.halfWidth = sr.halfWidth, r.depth = sr.depth;
+            for (size_t w = 0; w + 1 < way.size(); w++) {
+                // Dijkstra from one to the next, a step dearer the higher it is over the lower end's water.
+                const double ref = std::min(H[way[w]], H[way[w + 1]]);
+                std::vector<double> g(N, 1e30);
+                std::vector<int> came(N, -1);
+                MinQ q;
+                uint32_t seq = 0;
+                g[way[w]] = 0, q.push({0, seq++, way[w]});
+                while (!q.empty()) {
+                    const QItem c = q.top();
+                    q.pop();
+                    if (c.key > g[c.id]) continue;
+                    if (c.id == way[w + 1]) break;
+                    for (int k = 0; k < 8; k++) {
+                        const int ni = c.id / n + kDI[k], nj = c.id % n + kDJ[k];
+                        if (ni < 0 || nj < 0 || ni >= n || nj >= n) continue;
+                        const int nb = ni * n + nj;
+                        const double L = k < 4 ? cs : cs * kSqrt2, up = std::max(0.0, (double)H[nb] - ref);
+                        const double ng = g[c.id] + L * (1 + 3 * up + 0.5 * up * up);
+                        if (ng < g[nb]) g[nb] = ng, came[nb] = c.id, q.push({ng, seq++, nb});
+                    }
+                }
+                std::vector<int> leg;
+                for (int c = way[w + 1]; c >= 0 && c != way[w]; c = came[c]) leg.push_back(c);
+                leg.push_back(way[w]);
+                std::reverse(leg.begin(), leg.end());
+                for (size_t k = r.pts.empty() ? 0 : 1; k < leg.size(); k++) {
+                    r.pts.push_back(V3(X(leg[k] / n), H[leg[k]], X(leg[k] % n)));
+                    r.area.push_back(1e4f);
+                }
+            }
+            if (r.pts.size() < 3) continue;
+            // Its corridor: the cells within its half-width (and a cell) of the line; under a bridge's deck, passable.
+            const int rr = (int)std::ceil((sr.halfWidth + cs) / cs);
+            for (size_t k = 0; k < r.pts.size(); k++) {
+                const int ci = p.cellOf(r.pts[k].x), cj = p.cellOf(r.pts[k].z);
+                for (int a = -rr; a <= rr; a++)
+                    for (int c = -rr; c <= rr; c++) {
+                        const int ni = ci + a, nj = cj + c;
+                        if (ni < 0 || nj < 0 || ni >= n || nj >= n || (a * a + c * c) * cs * cs > (sr.halfWidth + cs) * (sr.halfWidth + cs)) continue;
+                        big[(size_t)ni * n + nj] = 1;
+                    }
+            }
+            p.rivers.push_back(std::move(r));
+        }
+        const size_t bigRivers = p.rivers.size();
 
         // ---- Drainage: a priority flood from the map's edge (and the sea) inward. Each cell drains to the one it was reached
         // from, so every hollow spills out over its lowest rim, and the flats drain toward their outlets.
@@ -185,7 +282,7 @@ const Terrain::Plan& Terrain::plan() const {
         {
             std::vector<uint8_t> seen(N, 0);
             for (size_t s = 0; s < N; s++) {
-                if (seen[s] || filled[s] - H[s] < 0.25f || p.lake[s] != -1) continue;
+                if (seen[s] || filled[s] - H[s] < 0.25f || p.lake[s] != -1 || big[s]) continue;
                 std::vector<int> comp = {(int)s}, stack = {(int)s};
                 seen[s] = 1;
                 const float lvl = filled[s];
@@ -196,7 +293,7 @@ const Terrain::Plan& Terrain::plan() const {
                         const int ni = c / n + kDI[k], nj = c % n + kDJ[k];
                         if (ni < 0 || nj < 0 || ni >= n || nj >= n) continue;
                         const size_t nb = (size_t)ni * n + nj;
-                        if (seen[nb] || filled[nb] - H[nb] < 0.25f || std::fabs(filled[nb] - lvl) > 1e-3f) continue;
+                        if (seen[nb] || filled[nb] - H[nb] < 0.25f || std::fabs(filled[nb] - lvl) > 1e-3f || big[nb]) continue;
                         seen[nb] = 1, comp.push_back((int)nb), stack.push_back((int)nb);
                     }
                 }
@@ -212,10 +309,11 @@ const Terrain::Plan& Terrain::plan() const {
         // ---- Rivers and washes: the drainage lines, traced down from their heads.
         const double washM2 = spec.washArea * 1e6, wetM2 = spec.riverArea * 1e6;
         std::vector<uint8_t> channel(N, 0), hasChild(N, 0), visited(N, 0);
-        for (size_t i = 0; i < N; i++) channel[i] = acc[i] >= washM2 && p.lake[i] == -1;
+        for (size_t i = 0; i < N; i++) channel[i] = acc[i] >= washM2 && p.lake[i] == -1 && !big[i];
         for (size_t i = 0; i < N; i++)
             if (channel[i] && parent[i] >= 0 && channel[parent[i]]) hasChild[parent[i]] = 1;
         p.wet.assign(N, 0), p.wash.assign(N, 0);
+        for (size_t i = 0; i < N; i++) p.wet[i] = big[i] && !deck[i];
         for (size_t s = 0; s < N; s++) {
             if (!channel[s] || hasChild[s]) continue;
             std::vector<int> cells;
@@ -283,7 +381,8 @@ const Terrain::Plan& Terrain::plan() const {
                                  0.3 * roll((uint32_t)id, spec.seed);
             cands.push_back({id, score});
         }
-        const int nOut = spec.outposts >= 0 ? spec.outposts : std::min(9, std::max(2, (int)(area / 5 + 1.5)));
+        // (A sidecar's own places take the outposts' turn: with them, none are picked unless `outposts` asks.)
+        const int nOut = spec.outposts >= 0 ? spec.outposts : !spec.places.empty() ? 0 : std::min(9, std::max(2, (int)(area / 5 + 1.5)));
         const double spacing = std::max(300.0, 0.6 * 2 * half / std::sqrt((double)std::max(1, nOut)));
         std::vector<int> chosen;
         if (!cands.empty() && nOut > 0) {
@@ -354,6 +453,26 @@ const Terrain::Plan& Terrain::plan() const {
             p.padY.push_back(pad > 0 ? padHeight(id, pad) : (double)H[id]);
         };
         const unsigned camp = SVC_TOW | SVC_SAVE;
+        // The sidecar's places first (its town, the start, first of all), where they're given; then the ones picked.
+        std::vector<const SpecPlace*> authored;
+        for (const SpecPlace& sp : spec.places)
+            if (sp.town) authored.push_back(&sp);
+        for (const SpecPlace& sp : spec.places)
+            if (!sp.town && sp.kind != PK_LOOKOUT) authored.push_back(&sp);
+        for (const SpecPlace* sp : authored) {
+            int id;
+            if (!cellAt(sp->at, id)) continue;
+            const std::string pid = "RT." + sp->name;
+            const size_t at = p.places.size();
+            if (sp->town)
+                place(id, PK_RANGER_STATION, pid, sp->name, 60, 26, SVC_REPAIR | SVC_SHOP | SVC_FUEL | SVC_JOBS | SVC_GARAGE | SVC_DEALER | SVC_TOW | SVC_SAVE);
+            else if (sp->kind == PK_FUEL_STOP) place(id, PK_FUEL_STOP, pid, sp->name, 35, 11, SVC_FUEL | SVC_PARTS | SVC_TOW);
+            else if (sp->kind == PK_CABIN) place(id, PK_CABIN, pid, sp->name, 35, 9, camp | SVC_PARTS);
+            else place(id, PK_OLD_CAMP, pid, sp->name, 35, 10, camp | SVC_REPAIR);
+            double x, z;
+            toMap(sp->at, x, z);
+            p.places[at].p = V3(x, 0, z), p.places[at].yaw = sp->yawDeg * M_PI / 180;
+        }
         for (size_t k = 0; k < chosen.size(); k++) {
             const int id = chosen[k];
             const std::string dw = dirWord(X(id / n), X(id % n), half);
@@ -374,12 +493,13 @@ const Terrain::Plan& Terrain::plan() const {
                 if (edgeOK(id, 200) && H[id] >= hi[id] && H[id] - lo[id] >= 20 && p.lake[id] == -1) c.push_back(id);
             std::stable_sort(c.begin(), c.end(), [&](int a, int b) { return H[a] > H[b]; });
             const int nTop = std::min(8, std::max(1, (int)(area / 4 + 1)));
+            const double apart = std::max(400.0, half / 6);  // (a big map's tops spread over it, not all on its highest ridge)
             for (int id : c) {
                 if ((int)tops.size() >= nTop) break;
                 bool ok = true;
                 for (int o : tops) {
                     const double dx = X(id / n) - X(o / n), dz = X(id % n) - X(o % n);
-                    if (dx * dx + dz * dz < 400.0 * 400.0) ok = false;
+                    if (dx * dx + dz * dz < apart * apart) ok = false;
                 }
                 for (int o : chosen) {
                     const double dx = X(id / n) - X(o / n), dz = X(id % n) - X(o % n);
@@ -390,7 +510,8 @@ const Terrain::Plan& Terrain::plan() const {
         }
 
         // ---- Roads and trails: A* over the coarse cells, a step no steeper than the grade, the steep and the water dear.
-        std::vector<uint8_t> network(N, 0);
+        std::vector<uint8_t> network(N, 0), named(N, 0);
+        bool preferNet = true;  // (roads keep to the network where it goes their way; a named trail keeps to its own line)
         auto astar = [&](int from, int to, double maxGrade, std::vector<int>& path) {
             // (to < 0: to any cell already on the network)
             std::vector<double> g(N, 1e30);
@@ -423,17 +544,19 @@ const Terrain::Plan& Terrain::plan() const {
                     const int ni = ci + kMI[k], nj = cj + kMJ[k];
                     if (ni < 0 || nj < 0 || ni >= n || nj >= n) continue;
                     const int nb = ni * n + nj;
-                    if (p.lake[nb] != -1 || (!edgeOK(nb, 160) && nb != to)) continue;
+                    auto shut = [&](int id) { return p.lake[id] != -1 || (big[id] && !deck[id]); };  // (a big river: only over its bridge)
+                    if (shut(nb) || (!edgeOK(nb, 160) && nb != to)) continue;
                     if (k >= 8) {  // (the two cells it passes between: no lake)
                         const int ai = ci + kMI[k] / 2, aj = cj + kMJ[k] / 2, bi = ci + (kMI[k] - kMI[k] / 2), bj = cj + (kMJ[k] - kMJ[k] / 2);
-                        if (p.lake[ai * n + aj] != -1 || p.lake[bi * n + bj] != -1) continue;
+                        if (shut(ai * n + aj) || shut(bi * n + bj)) continue;
                     }
-                    const double L = k < 4 ? cs : k < 8 ? cs * kSqrt2 : cs * kSqrt5, gr = std::fabs((double)H[nb] - H[c.id]) / L;
+                    if (k >= 4 && (deck[nb] != deck[c.id] || (k >= 8 && deck[nb]))) continue;  // (onto and along a deck straight, not cutting a corner off it)
+                    const double L = k < 4 ? cs : k < 8 ? cs * kSqrt2 : cs * kSqrt5, gr = std::fabs((double)HA[nb] - HA[c.id]) / L;
                     if (gr > maxGrade) continue;
                     double cost = L * (1 + 6 * (gr / maxGrade) * (gr / maxGrade));
                     if (p.wet[nb]) cost += 120;
                     else if (p.wash[nb]) cost += 6;
-                    if (network[nb]) cost *= 0.35;
+                    if (network[nb] && preferNet) cost *= 0.35;
                     const double ng = g[c.id] + cost;
                     if (ng < g[nb]) g[nb] = ng, came[nb] = c.id, q.push({ng + heur(nb), seq++, nb});
                 }
@@ -444,12 +567,130 @@ const Terrain::Plan& Terrain::plan() const {
             std::reverse(path.begin(), path.end());
             return true;
         };
+        // A named trail's leg: A* over (cell, heading) in a window round the leg, so the line never doubles back on itself: a turn
+        // dearer the sharper it is, none sharper than ~95 degrees (a switchback is two of them a cell or two apart, wide enough for
+        // a truck once smoothed). `dir` in: the heading it arrives on (-1 any); out: the one it leaves on.
+        double cosT[16][16];
+        for (int a = 0; a < 16; a++)
+            for (int b = 0; b < 16; b++)
+                cosT[a][b] = (kMI[a] * kMI[b] + kMJ[a] * kMJ[b]) / std::sqrt((double)(kMI[a] * kMI[a] + kMJ[a] * kMJ[a]) * (kMI[b] * kMI[b] + kMJ[b] * kMJ[b]));
+        auto astarTurns = [&](int from, int to, double maxGrade, int& dir, std::vector<int>& path) {
+            const int pad = 90;
+            const int i0 = std::max(0, std::min(from / n, to / n) - pad), i1 = std::min(n - 1, std::max(from / n, to / n) + pad);
+            const int j0 = std::max(0, std::min(from % n, to % n) - pad), j1 = std::min(n - 1, std::max(from % n, to % n) + pad);
+            const int ww = j1 - j0 + 1, M = (i1 - i0 + 1) * ww;
+            auto local = [&](int id) { return (id / n - i0) * ww + (id % n - j0); };
+            std::vector<double> g((size_t)M * 16, 1e30);
+            std::vector<int> came((size_t)M * 16, -1);
+            MinQ q;
+            uint32_t seq = 0;
+            const double tx = X(to / n), tz = X(to % n);
+            auto heur = [&](int id) { return 0.35 * std::sqrt((X(id / n) - tx) * (X(id / n) - tx) + (X(id % n) - tz) * (X(id % n) - tz)); };
+            for (int d = 0; d < 16; d++)
+                if (dir < 0 || cosT[dir][d] > 0.65) g[(size_t)local(from) * 16 + d] = 0, q.push({heur(from), seq++, local(from) * 16 + d});
+            int goal = -1;
+            while (!q.empty()) {
+                const QItem c = q.top();
+                q.pop();
+                const int ls = c.id / 16, d = c.id % 16, ci = ls / ww + i0, cj = ls % ww + j0, id = ci * n + cj;
+                if (c.key > g[c.id] + heur(id) + 1e-9) continue;
+                if (id == to) {
+                    goal = c.id;
+                    break;
+                }
+                for (int k = 0; k < 16; k++) {
+                    if (cosT[d][k] < 0.6 && !(id == from && dir < 0)) continue;  // (no turn sharper than ~53 degrees a step: a hairpin takes four or more)
+                    const int ni = ci + kMI[k], nj = cj + kMJ[k];
+                    if (ni < i0 || nj < j0 || ni > i1 || nj > j1) continue;
+                    const int nb = ni * n + nj;
+                    auto shut = [&](int x) { return p.lake[x] != -1 || (big[x] && !deck[x]); };
+                    if (shut(nb) || (!edgeOK(nb, 160) && nb != to)) continue;
+                    if (k >= 8) {
+                        const int ai = ci + kMI[k] / 2, aj = cj + kMJ[k] / 2, bi = ci + (kMI[k] - kMI[k] / 2), bj = cj + (kMJ[k] - kMJ[k] / 2);
+                        if (shut(ai * n + aj) || shut(bi * n + bj)) continue;
+                    }
+                    const double L = k < 4 ? cs : k < 8 ? cs * kSqrt2 : cs * kSqrt5, gr = std::fabs((double)HA[nb] - HA[id]) / L;
+                    if (gr > maxGrade) continue;
+                    // (and dear along a cliff's edge or across a steep side slope: the steepest way down from the cell, past the grade)
+                    double fall = 0;
+                    for (int e = 0; e < 8; e++) {
+                        const int ei = std::min(n - 1, std::max(0, ni + kDI[e])), ej = std::min(n - 1, std::max(0, nj + kDJ[e]));
+                        fall = std::max(fall, std::fabs((double)H[nb] - H[(size_t)ei * n + ej]) / (e < 4 ? cs : cs * kSqrt2));
+                    }
+                    double cost = L * (1 + 6 * (gr / maxGrade) * (gr / maxGrade) + 8 * std::max(0.0, fall - maxGrade)) + (id == from && dir < 0 ? 0 : 30 * (1 - cosT[d][k]));
+                    if (p.wet[nb]) cost += 120;
+                    else if (p.wash[nb]) cost += 6;
+                    const size_t ns = (size_t)local(nb) * 16 + k;
+                    const double ng = g[c.id] + cost;
+                    if (ng < g[ns]) g[ns] = ng, came[ns] = c.id, q.push({ng + heur(nb), seq++, (int)ns});
+                }
+            }
+            path.clear();
+            if (goal < 0) return false;
+            dir = goal % 16;
+            for (int c = goal; c >= 0; c = came[c]) {
+                const int ls = c / 16, id = (ls / ww + i0) * n + (ls % ww + j0);
+                if (path.empty() || path.back() != id) path.push_back(id);
+            }
+            std::reverse(path.begin(), path.end());
+            return true;
+        };
         auto addTrail = [&](const std::vector<int>& path, int from, int to, bool road, double grade) {
             PlanTrail t;
             t.from = from, t.to = to, t.road = road, t.maxGrade = grade;
-            for (int c : path) t.pts.push_back(V3(X(c / n), H[c], X(c % n))), network[c] = 1;
+            for (int c : path) t.pts.push_back(V3(X(c / n), HA[c], X(c % n))), network[c] = 1;
             p.trails.push_back(std::move(t));
         };
+        // (Laid first: the roads between the outposts then keep to them where they go their way.)
+        std::vector<int> starts;
+        // The sidecar's named trails: through its points in order, each leg the cheapest way no steeper than its grade (a little
+        // steeper where there's no such way), and a spur from its start to the network when it isn't on it.
+        for (const SpecTrail& st : spec.trails) {
+            std::vector<int> way;
+            for (const LatLon& ll : st.pts) {
+                int id;
+                if (!cellAt(ll, id)) continue;
+                // (off water and the rim: onto the nearest dry cell inside)
+                const int ci = id / n, cj = id % n;
+                int best = -1;
+                double bd = 1e30;
+                for (int a = -6; a <= 6; a++)
+                    for (int c = -6; c <= 6; c++) {
+                        const int ni = std::min(n - 1, std::max(0, ci + a)), nj = std::min(n - 1, std::max(0, cj + c)), nb = ni * n + nj;
+                        if (p.lake[nb] != -1 || (big[nb] && !deck[nb]) || !edgeOK(nb, 160)) continue;
+                        const double d = a * a + c * c;
+                        if (d < bd) bd = d, best = nb;
+                    }
+                if (best >= 0 && (way.empty() || way.back() != best)) way.push_back(best);
+            }
+            if (way.size() < 2) {
+                std::printf("real terrain %s: trail %s has no points on the map\n", spec.name.c_str(), st.name.c_str());
+                continue;
+            }
+            std::vector<int> all, leg;
+            bool ok = true;
+            double used = st.grade;
+            preferNet = false;
+            int dir = -1;
+            for (size_t w = 0; w + 1 < way.size() && ok; w++) {
+                bool got = false;
+                for (double gr = st.grade; !got && gr <= st.grade * 1.6 + 1e-9; gr += st.grade * 0.2) {
+                    int d = dir;
+                    if ((got = astarTurns(way[w], way[w + 1], gr, d, leg))) used = std::max(used, gr), dir = d;
+                }
+                if (!got) {
+                    std::printf("real terrain %s: trail %s: no way from point %d to %d\n", spec.name.c_str(), st.name.c_str(), (int)w + 1, (int)w + 2);
+                    ok = false;
+                    break;
+                }
+                all.insert(all.end(), leg.begin() + (all.empty() ? 0 : 1), leg.end());
+            }
+            preferNet = true;
+            if (!ok) continue;
+            addTrail(all, -1, -1, false, used);
+            p.trails.back().name = st.name, p.trails.back().rating = st.rating;
+            starts.push_back(all[0]);
+        }
         // The outposts joined by the shortest tree of straight lines (Prim's, from the ranger station).
         {
             std::vector<uint8_t> in(nOutposts, 0);
@@ -469,6 +710,43 @@ const Terrain::Plan& Terrain::plan() const {
                 std::vector<int> path;
                 if (astar(ca, cb, 0.12, path)) addTrail(path, ba, bb, true, 0.12);
                 else if (astar(ca, cb, 0.25, path)) addTrail(path, ba, bb, false, 0.25);
+            }
+        }
+        // A spur onto the network from each named trail's start, where it's off it.
+        for (const PlanTrail& t : p.trails)
+            if (t.rating >= 0)
+                for (const V3& q : t.pts) named[p.cellOf(q.x) * n + p.cellOf(q.z)] = 1;
+        for (int st0 : starts) {
+            bool onNet = false;
+            for (int a = -3; a <= 3 && !onNet; a++)
+                for (int c = -3; c <= 3 && !onNet; c++) {
+                    const int ni = st0 / n + a, nj = st0 % n + c;
+                    if (ni >= 0 && nj >= 0 && ni < n && nj < n && network[ni * n + nj] && !named[ni * n + nj]) onNet = true;
+                }
+            std::vector<int> spur;
+            if (!onNet && nOutposts > 0) {
+                std::vector<uint8_t> keepNet = network;  // (onto a road, not back onto a named trail)
+                for (size_t i = 0; i < N; i++) network[i] = network[i] && !named[i];
+                const bool got = astar(st0, -1, 0.25, spur);
+                network = keepNet;
+                if (got) {
+                    std::reverse(spur.begin(), spur.end());
+                    addTrail(spur, -1, -1, false, 0.25);
+                }
+            }
+        }
+        // The sidecar's lookouts: a trail up from the network.
+        for (const SpecPlace& sp : spec.places) {
+            int id;
+            if (sp.kind != PK_LOOKOUT || !cellAt(sp.at, id)) continue;
+            std::vector<int> path;
+            place(id, PK_LOOKOUT, "RT." + sp.name, sp.name, 40, 6, 0);
+            double x, z;
+            toMap(sp.at, x, z);
+            p.places.back().p = V3(x, 0, z), p.places.back().yaw = sp.yawDeg * M_PI / 180;
+            if (!p.trails.empty() && astar(id, -1, 0.30, path)) {
+                std::reverse(path.begin(), path.end());
+                addTrail(path, -1, (int)p.places.size() - 1, false, 0.30);
             }
         }
         // The tops: a trail up (<= 30%) from the network makes one a lookout; one with no way up is a summit to find on foot.
@@ -527,6 +805,24 @@ const Terrain::Plan& Terrain::plan() const {
                 at.push_back(q);
             }
         }
+        // The sidecar's courses: each along its trail's line, as it will be laid (smoothed, a metre apart).
+        for (const SpecCourse& sc : spec.courses) {
+            PlanCourse c;
+            c.spec = sc;
+            for (size_t k = 0; k < p.trails.size(); k++)
+                if (p.trails[k].name == sc.trail) c.trail = (int)k;
+            if (c.trail < 0) continue;
+            c.line = smoothLine(p.trails[c.trail].pts, 1.0);
+            for (size_t k = 0; k < c.line.size(); k++) {
+                c.line[k].y = demAt(c.line[k].x, c.line[k].z);
+                if (k == 0) continue;
+                c.length += std::sqrt((c.line[k].x - c.line[k - 1].x) * (c.line[k].x - c.line[k - 1].x) + (c.line[k].z - c.line[k - 1].z) * (c.line[k].z - c.line[k - 1].z));
+                const double dy = c.line[k].y - c.line[k - 1].y;
+                (dy > 0 ? c.climb : c.drop) += std::fabs(dy);
+            }
+            p.courses.push_back(std::move(c));
+        }
+        (void)bigRivers;
         plan_ = std::move(P);
     });
     return *plan_;

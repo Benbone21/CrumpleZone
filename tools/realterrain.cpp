@@ -7,6 +7,9 @@
 //        what's on it, how long) and draws it from above; --out writes the map's folder for maps/: the cropped DEM (dem.tif,
 //        float32, LZW) and its terrain.txt, so the game needn't carry the whole source tile.
 //   build/realterrain synth cone|valley|mesa DIR   writes a synthetic DEM and its terrain.txt (for trying the importer)
+//   build/realterrain grid SIDECAR OUT.f32 [STEP]  the land every STEP m as raw float32 (to look at with other tools)
+//   build/realterrain pack FILE LAT LON SIZE K OUT a coarse int16 copy round a point (K x K pixels averaged): a map's backdrop
+//   (make ... --int16 SCALE OFFSET: the cropped DEM as int16 with its vertical_scale and vertical_offset, about half the size)
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -33,7 +36,9 @@ int usage() {
                  "usage: realterrain info FILE\n"
                  "       realterrain sample FILE LAT LON [LAT LON ...]\n"
                  "       realterrain make SIDECAR|DIR [--out DIR] [--preview FILE.ppm] [--no-world] [--scans]\n"
-                 "       realterrain synth cone|valley|mesa DIR\n");
+                 "       realterrain synth cone|valley|mesa DIR\n"
+                 "       realterrain grid SIDECAR|DIR OUT.f32 [STEP]\n"
+                 "       realterrain pack FILE LAT LON SIZE_M K OUT.tif\n");
     return 2;
 }
 
@@ -119,7 +124,7 @@ void preview(const World& w, const rt::Terrain& t, const std::string& path) {
                 const double depth = clampd((wl - w.height(x, z)) / 2.0, 0, 1);
                 r = 0.15 + 0.1 * (1 - depth), g = 0.35 + 0.15 * (1 - depth), b = 0.6 + 0.1 * (1 - depth);
             }
-            if (w.roadAt(x, z).near && (w.cellPaint(id) == PAINT_TRAIL || w.cellPaint(id) == PAINT_GRAVEL)) r = 0.95, g = 0.88, b = 0.6;
+            if (wl < -1e8 && w.roadAt(x, z).near && (w.cellPaint(id) == PAINT_TRAIL || w.cellPaint(id) == PAINT_GRAVEL)) r = 0.95, g = 0.88, b = 0.6;
             unsigned char* p = &img[((size_t)py * W + px) * 3];
             p[0] = (unsigned char)clampd(r * 255, 0, 255), p[1] = (unsigned char)clampd(g * 255, 0, 255), p[2] = (unsigned char)clampd(b * 255, 0, 255);
         }
@@ -135,6 +140,17 @@ void preview(const World& w, const rt::Terrain& t, const std::string& path) {
     };
     for (const Tree& tr : w.trees) dot2(tr.base.x, tr.base.z, 0, 30, 70, 30);
     for (const MapPlace& pl : t.plan().places) dot2(pl.p.x, pl.p.z, 3, pl.kind == PK_RANGER_STATION ? 255 : 220, 40, pl.kind == PK_LOOKOUT || pl.kind == PK_SUMMIT ? 200 : 40);
+    // The sidecar's own: its big rivers' lines (blue), named trails (magenta), each course's start (green) and finish (white).
+    for (const rt::PlanRiver& r : t.plan().rivers)
+        if (!r.name.empty())
+            for (const V3& q : r.pts) dot2(q.x, q.z, 0, 40, 90, 255);
+    for (const rt::PlanTrail& tr : t.plan().trails)
+        if (tr.rating >= 0)
+            for (const V3& q : rt::smoothLine(tr.pts, 4.0)) dot2(q.x, q.z, 1, 230, 30, 230);
+    for (const rt::PlanCourse& c : t.plan().courses)
+        if (!c.line.empty()) dot2(c.line.front().x, c.line.front().z, 4, 40, 230, 40), dot2(c.line.back().x, c.line.back().z, 4, 255, 255, 255);
+    for (const rt::PlanBridge& b : t.plan().bridges)
+        for (int k = 0; k <= 20; k++) dot2(b.a.x + (b.b.x - b.a.x) * k / 20, b.a.z + (b.b.z - b.a.z) * k / 20, 2, 255, 255, 0);
     std::ofstream f(path, std::ios::binary);
     f << "P6\n" << W << " " << W << "\n255\n";
     f.write((const char*)img.data(), (std::streamsize)img.size());
@@ -143,9 +159,11 @@ void preview(const World& w, const rt::Terrain& t, const std::string& path) {
 int make(int argc, char** argv) {
     std::string path, out, prev;
     bool world = true, scans = false;
+    double i16Scale = 0, i16Offset = 0;  // --int16 SCALE OFFSET: the cropped DEM as int16 (round((v - OFFSET) / SCALE)), a third the size
     for (int i = 0; i < argc; i++) {
         const std::string a = argv[i];
         if (a == "--out" && i + 1 < argc) out = argv[++i];
+        else if (a == "--int16" && i + 2 < argc) i16Scale = std::atof(argv[i + 1]), i16Offset = std::atof(argv[i + 2]), i += 2;
         else if (a == "--preview" && i + 1 < argc) prev = argv[++i];
         else if (a == "--no-world") world = false;
         else if (a == "--scans") scans = true;
@@ -174,9 +192,12 @@ int make(int argc, char** argv) {
     for (const auto& tr : p.trails) {
         double L = 0;
         for (size_t k = 1; k < tr.pts.size(); k++) L += std::hypot(tr.pts[k].x - tr.pts[k - 1].x, tr.pts[k].z - tr.pts[k - 1].z);
-        std::printf("    %s %.1f km (<= %.0f%%) %s -> %s\n", tr.road ? "road " : "trail", L / 1000, tr.maxGrade * 100,
+        std::printf("    %s %.1f km (<= %.0f%%) %s%s%s -> %s\n", tr.road ? "road " : "trail", L / 1000, tr.maxGrade * 100, tr.name.c_str(), tr.name.empty() ? "" : ": ",
                     tr.from >= 0 ? p.places[tr.from].name.c_str() : "(the network)", tr.to >= 0 ? p.places[tr.to].name.c_str() : "(the network)");
     }
+    for (const auto& c : p.courses)
+        std::printf("    course %-20s %.2f km, %.0f m up, %.0f m down, difficulty %d (%s), start (%.0f, %.0f)\n", c.spec.name.c_str(), c.length / 1000, c.climb, c.drop,
+                    c.spec.difficulty, c.spec.vehicle.empty() ? "any" : c.spec.vehicle.c_str(), c.line.empty() ? 0.0 : c.line[0].x, c.line.empty() ? 0.0 : c.line[0].z);
     std::printf("  prepared in %.2f s\n", std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
     if (!out.empty()) {
         namespace fs = std::filesystem;
@@ -186,6 +207,10 @@ int make(int argc, char** argv) {
         if (!rt::loadDem(s.sourcePath, raw, &err, t->window)) return std::fprintf(stderr, "%s\n", err.c_str()), 1;
         rt::TiffOptions o;
         o.compression = 5, o.predictor = 3, o.tiled = true, o.tile = 256;
+        if (i16Scale > 0) {
+            for (float& v : raw.v) v = (float)std::floor((v - i16Offset) / i16Scale + 0.5);
+            o.int16 = true, o.predictor = 2;
+        }
         if (!rt::writeGeoTiff(out + "/dem.tif", raw, o)) return std::fprintf(stderr, "can't write %s/dem.tif\n", out.c_str()), 1;
         std::istringstream in(s.text);
         std::string line, text;
@@ -197,6 +222,12 @@ int make(int argc, char** argv) {
             for (char& c : key) c = (char)std::tolower((unsigned char)c);
             if (key == "source" || key == "file" || key == "dem") line = "source dem.tif";
             if (key == "crop" || key == "crop_px") line = "# " + line + "  (cropped already)";
+            if (i16Scale > 0 && (key == "vertical_scale" || key == "vertical_offset")) line = "# " + line + "  (in the int16 file's own)";
+            if (i16Scale > 0 && (key == "source" || key == "file" || key == "dem")) {
+                char b[96];
+                std::snprintf(b, sizeof b, "\nvertical_scale %.6g\nvertical_offset %.6g", i16Scale, i16Offset);
+                line += b;
+            }
             named |= key == "name";
             text += line + "\n";
         }
@@ -213,7 +244,7 @@ int make(int argc, char** argv) {
     std::printf("  world: %d x %d cells, %zu trees, %zu rocks, %zu bushes, %zu rivers, %zu stations; built in %.2f s; land hash %016llx\n", w.gridSize(), w.gridSize(),
                 w.trees.size(), w.rocks.size(), w.bushes.size(), w.rivers.size(), w.stations.size(),
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count(), (unsigned long long)w.landHash());
-    std::printf("  start (%.0f, %.0f)\n", w.spawn.x, w.spawn.z);
+    std::printf("  start (%.0f, %.0f); %zu boxes (buildings, bridge decks)\n", w.spawn.x, w.spawn.z, w.boxes.size());
     loadprof::report("real");
     if (!prev.empty()) {
         preview(w, *t, prev);
@@ -275,6 +306,52 @@ int synth(const std::string& kind, const std::string& dir) {
 }
 }  // namespace
 
+// The land (before anything is laid on it) every STEP m over the map, as raw float32: [x from the west][z from the south]. For
+// looking at a real map with other tools (routes, slopes).
+int grid(const std::string& path, const std::string& out, double step) {
+    rt::Spec s;
+    std::string err;
+    if (!rt::loadSpec(path, s, &err)) return std::fprintf(stderr, "%s\n", err.c_str()), 1;
+    auto t = rt::prepare(s, &err);
+    if (!t) return std::fprintf(stderr, "%s\n", err.c_str()), 1;
+    const int n = (int)std::floor(2 * t->half / step) + 1;
+    std::vector<float> v((size_t)n * n);
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++) v[(size_t)i * n + j] = (float)t->demAt(-t->half + i * step, -t->half + j * step);
+    std::ofstream(out, std::ios::binary).write((const char*)v.data(), (std::streamsize)(v.size() * 4));
+    std::printf("%d x %d, %.1f m apart from (%.0f, %.0f); base %.2f m\n", n, n, step, -t->half, -t->half, t->base);
+    return 0;
+}
+
+// A coarse copy of a DEM round a point, for a map's backdrop: SIZE m square about LAT LON, each K x K pixels averaged, int16
+// whole metres (ints, LZW, horizontal predictor), still in degrees.
+int pack(const std::string& src, double lat, double lon, double size, int k, const std::string& out) {
+    rt::Dem head;
+    std::string err;
+    if (!rt::demHeader(src, head, &err) || head.geo != rt::Dem::GEO_DEGREES) return std::fprintf(stderr, "%s\n", err.empty() ? "not in degrees" : err.c_str()), 1;
+    const double mx = head.dx * rt::metresPerDegLon(lat), my = head.dy * rt::metresPerDegLat(lat);
+    const double cx = (lon - head.x0) / head.dx - 0.5, cy = (head.y0 - lat) / head.dy - 0.5;
+    const int rx = (int)std::ceil(0.5 * size / mx / k) * k, ry = (int)std::ceil(0.5 * size / my / k) * k;
+    rt::Window win{std::max(0, (int)cx - rx), std::max(0, (int)cy - ry), std::min(head.w, (int)cx + rx), std::min(head.h, (int)cy + ry)};
+    rt::Dem d;
+    if (!rt::loadDem(src, d, &err, win)) return std::fprintf(stderr, "%s\n", err.c_str()), 1;
+    rt::Dem o;
+    o.w = d.w / k, o.h = d.h / k, o.geo = d.geo, o.x0 = d.x0, o.y0 = d.y0, o.dx = d.dx * k, o.dy = d.dy * k;
+    o.v.resize((size_t)o.w * o.h);
+    for (int y = 0; y < o.h; y++)
+        for (int x = 0; x < o.w; x++) {
+            double sum = 0;
+            for (int a = 0; a < k; a++)
+                for (int b = 0; b < k; b++) sum += d.at(x * k + b, y * k + a);
+            o.v[(size_t)y * o.w + x] = (float)std::floor(sum / (k * k) + 0.5);
+        }
+    rt::TiffOptions opt;
+    opt.compression = 5, opt.predictor = 2, opt.tiled = true, opt.tile = 256, opt.int16 = true;
+    if (!rt::writeGeoTiff(out, o, opt)) return std::fprintf(stderr, "can't write %s\n", out.c_str()), 1;
+    std::printf("wrote %s: %d x %d, %.0f x %.0f m pixels, %.1f x %.1f km\n", out.c_str(), o.w, o.h, mx * k, my * k, o.w * mx * k / 1000, o.h * my * k / 1000);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     if (argc < 3) return usage();
     const std::string cmd = argv[1];
@@ -282,5 +359,7 @@ int main(int argc, char** argv) {
     if (cmd == "sample") return sample(argv[2], argc - 3, argv + 3);
     if (cmd == "make") return make(argc - 2, argv + 2);
     if (cmd == "synth" && argc >= 4) return synth(argv[2], argv[3]);
+    if (cmd == "grid" && argc >= 4) return grid(argv[2], argv[3], argc >= 5 ? std::atof(argv[4]) : 12);
+    if (cmd == "pack" && argc >= 8) return pack(argv[2], std::atof(argv[3]), std::atof(argv[4]), std::atof(argv[5]), std::max(1, std::atoi(argv[6])), argv[7]);
     return usage();
 }

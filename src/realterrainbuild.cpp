@@ -203,6 +203,7 @@ void World::buildReal() {
             const double s = std::sqrt(area[k] / (pr.wet ? sp.riverArea : sp.washArea));
             hw[k] = pr.wet ? std::min(12.0, 2.5 + 1.2 * s) : std::min(6.0, 1.5 + 0.8 * s);
             dep[k] = pr.wet ? std::min(1.3, 0.45 + 0.2 * s) : 0.3;
+            if (pr.halfWidth > 0) hw[k] = pr.halfWidth, dep[k] = pr.depth;  // (a sidecar's big river: as wide and deep as it says)
         }
         for (int k = 0; k < m; k++) {
             const V3 a = pts[std::max(0, k - 1)], b = pts[std::min(m - 1, k + 1)];
@@ -220,7 +221,7 @@ void World::buildReal() {
         }
         for (int k = 1; k < m; k++) lvl[k] = std::min(lvl[k], lvl[k - 1] - 0.001);
         River rec;
-        rec.name = pr.wet ? sp.name + " RIVER " + std::to_string(r + 1) : "";
+        rec.name = !pr.name.empty() ? pr.name : pr.wet ? sp.name + " RIVER " + std::to_string(r + 1) : "";
         for (int s = 0; s + 1 < m; s++) {
             const V3 &a = pts[s], &b = pts[s + 1];
             const double dx = b.x - a.x, dz = b.z - a.z, L = std::sqrt(dx * dx + dz * dz);
@@ -272,6 +273,48 @@ void World::buildReal() {
         }
     }
 
+    // ---- Bridges (a sidecar's): a deck from bank to bank at the banks' height, on piers; the roads are laid onto it below ---------
+    struct Deck {
+        V3 a, b;  // its ends (y: the deck's top)
+        double hw;
+    };
+    std::vector<Deck> decks;
+    for (const realterrain::PlanBridge& pb : P.bridges) {
+        Deck d{V3(pb.a.x, height(pb.a.x, pb.a.z), pb.a.z), V3(pb.b.x, height(pb.b.x, pb.b.z), pb.b.z), pb.halfWidth};
+        const double dx = d.b.x - d.a.x, dz = d.b.z - d.a.z, L = std::sqrt(dx * dx + dz * dz);
+        if (L < 4) continue;
+        const double yaw = std::atan2(-dz, dx);
+        const V3 grey(0.62, 0.6, 0.57), dark(0.45, 0.44, 0.42);
+        const int segs = std::max(1, (int)std::ceil(L / 12));
+        for (int k = 0; k < segs; k++) {
+            const double u0 = (double)k / segs, u1 = (double)(k + 1) / segs, um = 0.5 * (u0 + u1);
+            const V3 c = d.a + (d.b - d.a) * um;
+            const double pitch = std::atan2(d.b.y - d.a.y, L);
+            addBox(V3(c.x, c.y - 0.45, c.z), V3(0.5 * L / segs + 0.05, 0.45, d.hw), yaw, pitch, 0, grey);
+            for (int side = -1; side <= 1; side += 2) {  // (the rails)
+                const V3 r = c + V3(-dz / L, 0, dx / L) * (side * (d.hw - 0.2));
+                addBox(V3(r.x, c.y + 0.45, r.z), V3(0.5 * L / segs, 0.45, 0.18), yaw, pitch, 0, dark);
+            }
+            if (k > 0 && k % 3 == 0) {  // (a pier every 36 m, down to the bed)
+                const V3 q = d.a + (d.b - d.a) * u0;
+                const double bed = height(q.x, q.z);
+                if (q.y - 1 > bed) addBox(V3(q.x, 0.5 * (q.y - 0.9 + bed - 1), q.z), V3(1.2, 0.5 * (q.y - 0.9 - bed + 1), d.hw * 0.7), yaw, 0, 0, dark);
+            }
+        }
+        decks.push_back(d);
+    }
+    // The deck's top over (x, z) (false: not over a deck, `margin` m in from its ends and sides).
+    auto deckAt = [&](double x, double z, double margin, double& y) {
+        for (const Deck& d : decks) {
+            const double dx = d.b.x - d.a.x, dz = d.b.z - d.a.z, L2 = dx * dx + dz * dz, L = std::sqrt(L2);
+            const double u = ((x - d.a.x) * dx + (z - d.a.z) * dz) / L2, v = std::fabs((dx * (z - d.a.z) - dz * (x - d.a.x)) / L);
+            if (u * L < margin || (1 - u) * L < margin || v > d.hw - margin) continue;
+            y = d.a.y + (d.b.y - d.a.y) * u;
+            return true;
+        }
+        return false;
+    };
+
     // ---- The places' pads ----------------------------------------------------------------------------------------------------
     steps.next("real.pads");
     auto levelDisc = [&](const V3& c, double r, double y, double blend) {
@@ -321,16 +364,27 @@ void World::buildReal() {
         }
     };
     for (const realterrain::PlanTrail& tr : P.trails) {
-        const std::vector<V3> pts = realterrain::smoothLine(tr.pts, 1.0);
+        std::vector<V3> pts = realterrain::smoothLine(tr.pts, 1.0);
+        // (Onto a bridge: along its middle. The plan's cells a deck crosses are 12 m; its line can be off the deck by half a cell.)
+        for (V3& q : pts)
+            for (const Deck& d : decks) {
+                const double dx = d.b.x - d.a.x, dz = d.b.z - d.a.z, L2 = dx * dx + dz * dz, L = std::sqrt(L2);
+                const double u = ((q.x - d.a.x) * dx + (q.z - d.a.z) * dz) / L2, v = (dx * (q.z - d.a.z) - dz * (q.x - d.a.x)) / L;
+                if (u < -12 / L || u > 1 + 12 / L || std::fabs(v) > d.hw + 9) continue;
+                const double pull = smoothstep(-12 / L, 0, u) * (1 - smoothstep(1, 1 + 12 / L, u));  // (eased on over 12 m)
+                q.x -= -dz / L * v * pull, q.z -= dx / L * v * pull;
+            }
         const int m = (int)pts.size();
         if (m < 2) continue;
         std::vector<double> raw(m), y(m);
         std::vector<uint8_t> pinned(m, 0);
         for (int k = 0; k < m; k++) raw[k] = height(pts[k].x, pts[k].z);
+        // (A named hard trail follows the rock's own steps closer: its profile averaged over +-3 m, not +-10.)
+        const int avg = tr.rating >= 3 ? 3 : tr.rating == 2 ? 6 : 10;
         for (int k = 0; k < m; k++) {
             double s = 0;
             int c = 0;
-            for (int q = std::max(0, k - 10); q <= std::min(m - 1, k + 10); q++) s += raw[q], c++;
+            for (int q = std::max(0, k - avg); q <= std::min(m - 1, k + avg); q++) s += raw[q], c++;
             y[k] = s / c;
         }
         // Pinned: the ends on their pads (or the ground where a spur leaves the network), and under the water where it fords.
@@ -344,6 +398,11 @@ void World::buildReal() {
         y[m - 1] = padOf(tr.to, e) ? e : raw[m - 1], pinned[m - 1] = 1;
         std::vector<V3> fordAt;
         for (int k = 1; k + 1 < m; k++) {
+            double dy;
+            if (deckAt(pts[k].x, pts[k].z, -1.0, dy)) {  // (over a bridge: on its deck)
+                y[k] = dy, pinned[k] = 1;
+                continue;
+            }
             const double wl = waterLevel(pts[k].x, pts[k].z);
             if (wl > -1e8) y[k] = wl - 0.35, pinned[k] = 1, fordAt.push_back(pts[k]);
         }
@@ -361,13 +420,19 @@ void World::buildReal() {
                         y[k] = clampd(y[k], y[prev] - tr.maxGrade * run, y[prev] + tr.maxGrade * run);
                     }
                 }
-        const double halfW = tr.road ? 3.2 : 2.2, blend = tr.road ? 7 : 5;
+        // A named hard trail is a little wider (it runs over open rock, not a cut track), and on the slickrock isn't painted a dirt
+        // track: the ground under it stays bare rock (cairns mark the way instead, below).
+        const bool bare = tr.rating >= 2;
+        const double halfW = tr.road ? 3.2 : bare ? 3.0 : 2.2, blend = tr.road ? 7 : bare ? 6 : 5;
+        const double keepRough = 0;
         scanNear(pts, halfW + blend, [&](int id, double d, double k, double lat) {
             const double ex = d - halfW;
             if (edge[id] < ex) return;
+            double under;
+            if (!decks.empty() && deckAt(X(id / hN), X(id % hN), -1.5, under) && waterY[id] > -1e8f) return;  // (the river under a deck stays)
             const int i0 = (int)clampd(std::floor(k), 0, m - 2);
             const double ty = y[i0] + (y[i0 + 1] - y[i0]) * clampd(k - i0, 0, 1);
-            const double w = ex < 1.0 ? 1.0 : smoothstep(blend, 1.0, ex);
+            const double w = (ex < 1.0 ? 1.0 : smoothstep(blend, 1.0, ex)) * (1 - keepRough);
             const bool wet = waterY[id] > -1e8f;
             double nh = hgrid[id] + (ty - hgrid[id]) * w;
             if (wet) nh = std::min(nh, (double)waterY[id] - 0.3);
@@ -378,10 +443,27 @@ void World::buildReal() {
                 roadNear[id] = 1;
                 if (wet) surf[id] = SURF_GRAVEL, paint[id] = PAINT_GRAVEL, flowX[id] = flowX[id] * 0.5f, flowZ[id] = flowZ[id] * 0.5f;
                 else if (tr.road) surf[id] = SURF_GRAVEL, paint[id] = PAINT_GRAVEL;
-                else surf[id] = SURF_DIRT, paint[id] = PAINT_TRAIL;
+                else if (!bare) surf[id] = SURF_DIRT, paint[id] = PAINT_TRAIL;
             }
             if (ex < 3) keep[id] = 1;
         });
+    }
+    // The named trails on the M map, and cairns along the bare-rock ones every 50 m (each side of the tread, by turns).
+    for (const realterrain::PlanTrail& tr : P.trails) {
+        if (tr.rating < 0) continue;
+        MarkedTrail mt;
+        mt.name = tr.name, mt.rating = tr.rating;
+        const std::vector<V3> line = realterrain::smoothLine(tr.pts, 8.0);
+        for (const V3& q : line) mt.pts.push_back(V3(q.x, height(q.x, q.z), q.z));
+        trails.push_back(mt);
+        if (tr.rating < 2) continue;
+        for (size_t k = 6; k + 1 < line.size(); k += 6) {
+            const V3 d = norm(V3(line[k + 1].x - line[k - 1].x, 0, line[k + 1].z - line[k - 1].z));
+            const double side = (k / 6) % 2 ? 3.4 : -3.4;
+            const V3 q(line[k].x - d.z * side, 0, line[k].z + d.x * side);
+            if (waterLevel(q.x, q.z) > -1e8) continue;
+            fixtures.push_back({PROP_CAIRN, V3(q.x, height(q.x, q.z), q.z), V3(), 0.5});
+        }
     }
     // The river spots at a crossing: fords.
     for (const std::vector<V3>& f : fords)
@@ -405,7 +487,19 @@ void World::buildReal() {
                 const double n1 = fbmNoise(x * 0.011 + 3.0, z * 0.011 - 2.0, 3);
                 switch (climate) {
                     case realterrain::CLIMATE_DESERT:
-                        if (s > 0.5 || (s > 0.2 && n1 > 0.55) || (sp.ledgeStep > 0 && s > 0.25)) surf[id] = SURF_ROCK, paint[id] = PAINT_REDROCK;
+                        if (e > sp.slickLo && e < sp.slickHi) {
+                            // Slickrock country: bare sandstone over all but the flats and the hollows, which hold red sand. (ROCK: a
+                            // sticky tire on dry sandstone, hardly any rolling loss: what slickrock is to drive on.)
+                            double around = 0;
+                            for (int q = 0; q < 4; q++) {
+                                const int a = std::min(hN - 1, std::max(0, i + (q == 0 ? 6 : q == 1 ? -6 : 0))), b = std::min(hN - 1, std::max(0, j + (q == 2 ? 6 : q == 3 ? -6 : 0)));
+                                around += 0.25 * g[a * hN + b];
+                            }
+                            const double hollow = around - g[id];  // (> 0: lower than round it)
+                            if (s > 0.14 || (s > 0.05 && hollow < 0.1 && n1 > 0.3) || (hollow < -0.25 && n1 > 0.2)) surf[id] = SURF_ROCK, paint[id] = PAINT_REDROCK;
+                            else if (hollow > 0.05 || n1 < 0.38) surf[id] = SURF_SAND, paint[id] = PAINT_SAND;
+                            else surf[id] = SURF_DIRT, paint[id] = PAINT_DESERT;
+                        } else if (s > 0.5 || (s > 0.2 && n1 > 0.55) || (sp.ledgeStep > 0 && s > 0.25)) surf[id] = SURF_ROCK, paint[id] = PAINT_REDROCK;
                         else if (s < 0.08 && n1 < 0.32) surf[id] = SURF_SAND, paint[id] = PAINT_SAND;
                         else surf[id] = SURF_DIRT, paint[id] = PAINT_DESERT;
                         break;
@@ -462,6 +556,36 @@ void World::buildReal() {
         const double yw = pl.yaw;
         switch (pl.kind) {
             case PK_RANGER_STATION:
+                for (const realterrain::SpecPlace& sp2 : sp.places)
+                    if (sp2.town && sp2.name == pl.name) {
+                        // A town (a sidecar's): low blocks along its main street, which runs the way the town faces, either side
+                        // of it from 60 m to 330 m out: a motel, stores, a gas station, houses. None on a road, the water or a slope.
+                        const V3 fw(std::cos(yw), 0, -std::sin(yw)), lf(std::sin(yw), 0, std::cos(yw));
+                        int made = 0;
+                        for (int k = 0; k < 28; k++) {
+                            const double along = (k / 2 % 2 ? -1 : 1) * (60 + 22 * (k / 4)), off = (k % 2 ? 1 : -1) * (16 + 4 * cellRoll(k, 1, 7, sp.seed));
+                            const double big = cellRoll(k, 2, 7, sp.seed);
+                            const V3 hs(5 + 9 * big, 2.2 + 2.5 * cellRoll(k, 3, 7, sp.seed), 4 + 5 * big);
+                            const V3 c = Pp + fw * along + lf * (off + (off > 0 ? hs.z : -hs.z));
+                            bool ok = true;
+                            double lo = 1e9, hi = -1e9;
+                            for (int a = -1; a <= 1 && ok; a++)
+                                for (int b = -1; b <= 1 && ok; b++) {
+                                    const V3 q = c + fw * (a * (hs.x + 3)) + lf * (b * (hs.z + 3));
+                                    const double h = height(q.x, q.z);
+                                    lo = std::min(lo, h), hi = std::max(hi, h);
+                                    if (roadAt(q.x, q.z).near || waterLevel(q.x, q.z) > -1e8 || std::fabs(q.x) > half - 200 || std::fabs(q.z) > half - 200) ok = false;
+                                }
+                            if (!ok || hi - lo > 2.5) continue;
+                            const float t = (float)cellRoll(k, 4, 7, sp.seed);
+                            const V3 col(0.72 + 0.12 * t, 0.62 + 0.08 * t, 0.5 + 0.06 * t);
+                            addBox(V3(c.x, lo + hs.y - 0.3, c.z), V3(hs.x, hs.y + 0.3, hs.z), yw, 0, 0, col);
+                            for (int i2 = cellI(c.x - 20); i2 <= cellI(c.x + 20); i2++)
+                                for (int j2 = cellI(c.z - 20); j2 <= cellI(c.z + 20); j2++) keep[i2 * hN + j2] = 1;
+                            made++;
+                        }
+                        (void)made;
+                    }
                 addStation(Pp, yw, pl.name.c_str());
                 build("ranger_station", rel(Pp, yw, 0, 16), yw + M_PI / 2, V3(5.2, 1.8, 3.4));
                 build("fuel_pump", rel(Pp, yw, 7, -14), yw - M_PI / 2, V3(3.0, 0.6, 1.8), {}, 1);
@@ -566,7 +690,7 @@ void World::buildReal() {
                     const double s = slopeAt(x, z);
                     if (s > 1.0) continue;
                     const double u = cellRoll(ci, cj, 4002 + 4 * q, seed), v = cellRoll(ci, cj, 4003 + 4 * q, seed);
-                    const double big = climate == realterrain::CLIMATE_DESERT ? 2.2 : 1.6;
+                    const double big = (climate == realterrain::CLIMATE_DESERT ? 2.2 : 1.6) * sp.rockSize;
                     const double rr = 0.45 + u * u * big * (0.6 + s), flat = 0.5 + 0.4 * v;
                     addRock(x, z, V3(rr, rr * flat, rr * (0.75 + 0.3 * v)), rr * flat * (0.5 + 0.5 * u), hmix((uint32_t)(ci * 7919 + cj * 104729 + q) ^ seed),
                             (float)(0.85 + 0.3 * v));

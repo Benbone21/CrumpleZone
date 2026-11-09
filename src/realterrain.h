@@ -93,6 +93,46 @@ double metresPerDegLon(double lat);
 
 // ---- How to make a map of one --------------------------------------------------------------------------------------------
 enum Climate { CLIMATE_TEMPERATE, CLIMATE_DESERT, CLIMATE_ALPINE };
+// A point given in the sidecar as latitude and longitude (degrees).
+struct LatLon {
+    double lat = 0, lon = 0;
+};
+// What a sidecar authors on top of the DEM: the real map's named places, its big river and the bridge over it, its named trails
+// and the courses driven along them (docs/real-terrain.md "Authored places, rivers, trails and courses"). Their names are as
+// written, upper case; "|" separates a line's fields.
+//   place KIND | NAME | LAT LON [| YAW]            KIND: town (the start: repair, shop, fuel and the rest), fuel, camp, cabin, lookout
+//   river NAME | HALF_WIDTH DEPTH | LAT LON ...    a big river, its line found along the valley floor between the points (unfordable when deep)
+//   bridge NAME | HALF_WIDTH | LAT LON LAT LON     a deck from bank to bank, with a road onto each end
+//   trail NAME | RATING GRADE | LAT LON ...        a marked trail through the points, routed over the land no steeper than GRADE
+//   course NAME | TRAIL | DIFFICULTY | VEHICLE | HOURS | ABOUT   a sprint along a trail (VEHICLE: an id such as bronco, or any)
+struct SpecPlace {
+    int kind = 0;  // PlaceKind (PK_RANGER_STATION for a town)
+    bool town = false;
+    std::string name;
+    LatLon at;
+    double yawDeg = 90;  // which way it faces (0 east, 90 north)
+};
+struct SpecRiver {
+    std::string name;
+    double halfWidth = 40, depth = 3;
+    std::vector<LatLon> pts;
+};
+struct SpecBridge {
+    std::string name;
+    double halfWidth = 5;
+    LatLon a, b;
+};
+struct SpecTrail {
+    std::string name;
+    int rating = 1;          // 0 green, 1 blue, 2 black, 3 red (World::MarkedTrail)
+    double grade = 0.3;      // the steepest a step of its route may be
+    std::vector<LatLon> pts;
+};
+struct SpecCourse {
+    std::string name, trail, about, vehicle;  // vehicle: a VehicleSpec id ("" any)
+    int difficulty = 3;                       // 1 easy .. 5 extreme
+    double hours = 12;
+};
 struct Spec {
     std::string name = "REAL";    // shown as "REAL: NAME"
     std::string dir;              // the sidecar's folder (relative paths are from it)
@@ -115,6 +155,7 @@ struct Spec {
     double snowLine = 1e9;        // real elevation (m) above which it's snow
     double treeLine = 1e9;        // and above which no trees grow
     double trees = 1, bushes = 1, rocks = 1;  // scatter densities (x the climate's own)
+    double rockSize = 1;          // the scattered rocks' size (x the climate's own; the big scanned ones are cut into pieces, dear in memory)
     double ledgeStep = 0;         // ledges on the rock: the step's height (m; 0 none) ...
     double ledgeStrength = 0.8;   // ...how far toward a stair (0..1)
     double riverArea = -1;        // km2 of land draining to a point before it's a river with water (-1: the climate's)
@@ -123,6 +164,17 @@ struct Spec {
     int outposts = -1;            // how many outposts (-1: by the map's area)
     uint32_t seed = 1;
     uint64_t hash = 0;            // the DEM file's bytes and the sidecar's text
+    // Moab and the like (all optional):
+    double rimWidth = 130;        // the rim that keeps you on the map: how far in from its edge it starts (m)
+    double slickLo = 1e9, slickHi = -1e9;  // real elevations between which bare sandstone (slickrock) covers all but the flats and hollows
+    std::string backdrop;         // a coarse DEM of the country round the map, for the horizon (as given) ...
+    std::string backdropPath;     // ...and resolved
+    double backdropScale = 1, backdropOffset = 0;  // its file units -> metres (`backdrop FILE [SCALE OFFSET]`: its own, not the DEM's)
+    std::vector<SpecPlace> places;
+    std::vector<SpecRiver> rivers;
+    std::vector<SpecBridge> bridges;
+    std::vector<SpecTrail> trails;
+    std::vector<SpecCourse> courses;
 };
 bool parseSpec(const std::string& text, const std::string& dir, Spec& out, std::string* err = nullptr);
 // A sidecar file, or a folder holding terrain.txt (or one *.terrain.txt): parsed, its DEM found and hashed.
@@ -134,12 +186,30 @@ struct PlanRiver {
     std::vector<V3> pts;        // downstream, on the coarse grid's cells (y: the land there)
     std::vector<float> area;    // km2 drained at each
     bool wet = true;            // false: a dry wash
+    // A sidecar's big river (SpecRiver): its name, width and depth as given, its water at the DEM's own surface along it.
+    std::string name;
+    double halfWidth = 0, depth = 0;  // (0: by the area drained)
 };
 struct PlanTrail {
     std::vector<V3> pts;        // from `from` to `to`, a coarse cell apart
     int from = -1, to = -1;     // indices into places (to -1: onto another trail)
     bool road = true;           // a road (<= 12%) or a trail (<= 30%)
     double maxGrade = 0.12;
+    // A sidecar's named trail (SpecTrail): its name and rating; its line goes through the points given (pts is a cell apart).
+    std::string name;
+    int rating = -1;
+};
+struct PlanBridge {
+    std::string name;
+    V3 a, b;                    // its ends on the banks (y: the deck there)
+    double halfWidth = 5;
+};
+// A sidecar's course (SpecCourse), worked out on its trail: where it starts and the gates along it.
+struct PlanCourse {
+    SpecCourse spec;
+    int trail = -1;             // index into the plan's trails
+    std::vector<V3> line;       // the trail's line, smoothed, a metre or two apart (y: the land there before it's laid)
+    double length = 0, climb = 0, drop = 0;  // m along it; m up and down along it (the land before it's laid)
 };
 struct PlanLake {
     double level = 0;           // its water (map height)
@@ -163,6 +233,14 @@ struct Terrain {
     double heightAt(double x, double z) const;
     double rimAt(double x, double z) const;
     double realElevation(double y) const { return base + y / (spec.exaggeration > 0 ? spec.exaggeration : 1); }
+    // Where a latitude and longitude is on the map (x east, z north, m from the middle); false: the file isn't in degrees.
+    bool toMap(const LatLon& ll, double& x, double& z) const;
+    // The backdrop (Spec::backdrop): the country round the map out to its edge, coarse, in metres like `dem` (over `base`). Its
+    // land at (x, z) on the map's frame (false: no backdrop, or off it).
+    Dem backdrop;
+    double bdCx = 0, bdCy = 0, bdMppX = 0, bdMppY = 0;  // the map's middle on it (pixel, centre convention) and its pixels' size
+    double bdReach = 0;         // how far it reaches from the middle, the nearer way (m)
+    bool backdropAt(double x, double z, double& y) const;
     double mapHeight(double real) const { return (real - base) * spec.exaggeration; }
     // The plan (made once, the first time it's asked for).
     struct Plan {
@@ -178,6 +256,8 @@ struct Terrain {
         std::vector<MapPlace> places;
         std::vector<double> padY;       // each place's pad height (its ground, levelled)
         std::vector<uint8_t> wet, wash; // the coarse cells a river's water, or a dry wash, runs through
+        std::vector<PlanBridge> bridges;
+        std::vector<PlanCourse> courses;
         double cx(int i) const;
         int cellOf(double v) const;
     };
@@ -204,6 +284,8 @@ std::string activeName();  // "MOAB" ("" none)
 double activeHalf();       // its half-size (600 with none)
 const char* displayName(); // "REAL: MOAB" (stable pointer)
 const std::vector<MapPlace>& places();  // the active one's (empty with none)
+// The active one's courses (empty with none): what the level list makes its sprints from (level.cpp realCourseLevels).
+const std::vector<PlanCourse>& courses();
 // Tests: on this thread, this terrain is the active one (and discover() looks only in `roots`), whatever the game's is.
 struct ScopedTerrain {
     explicit ScopedTerrain(std::shared_ptr<const Terrain> t, std::vector<std::string> roots = {});
