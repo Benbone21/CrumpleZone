@@ -104,6 +104,13 @@ struct LatLon {
 //   river NAME | HALF_WIDTH DEPTH | LAT LON ...    a big river, its line found along the valley floor between the points (unfordable when deep)
 //   bridge NAME | HALF_WIDTH | LAT LON LAT LON     a deck from bank to bank, with a road onto each end
 //   trail NAME | RATING GRADE | LAT LON ...        a marked trail through the points, routed over the land no steeper than GRADE
+//   trail NAME | RATING GRADE | osm WAY ... [from LAT LON] [to LAT LON]   ...or along OpenStreetMap ways (the `osm FILE`'s)
+//   obstacle NAME | KIND | node ID | TRAIL | KEY VALUE ...   a named obstacle built on a trail (SpecObstacle)
+//   landmark NAME | node ID                        a point named over the land
+//   osm FILE                                       OpenStreetMap ways and points (tools/osm_extract.py)
+//   osm_rules 1                                    ...and its tracks, attractions, trailheads and viewpoints made trails, obstacles
+//                                                  and landmarks by rules (Spec::osmRules)
+//   include FILE                                   another file's lines here (a map's hand-authored part)
 //   course NAME | TRAIL | DIFFICULTY | VEHICLE | HOURS | ABOUT   a sprint along a trail (VEHICLE: an id such as bronco, or any)
 struct SpecPlace {
     int kind = 0;  // PlaceKind (PK_RANGER_STATION for a town)
@@ -127,6 +134,56 @@ struct SpecTrail {
     int rating = 1;          // 0 green, 1 blue, 2 black, 3 red (World::MarkedTrail)
     double grade = 0.3;      // the steepest a step of its route may be
     std::vector<LatLon> pts;
+    // Its line from OpenStreetMap (`trail NAME | RATING GRADE | osm WAY WAY ...`): those ways of the sidecar's `osm` file chained in
+    // order (the first as OSM draws it, or reversed when its id is negative; each after turned to carry on from the last), and followed
+    // as they are (not routed; a gap between two of them, or where the
+    // line leaves the map and comes back, is routed). `from LAT LON` / `to LAT LON` after the ways cut it to the points nearest those.
+    std::vector<int64_t> osmWays;
+    bool hasFrom = false, hasTo = false;
+    LatLon from, to;
+};
+// One of the sidecar's OpenStreetMap ways or points (its `osm FILE`: tools/moab_osm.py's output). Data (c) OpenStreetMap contributors.
+struct OsmWay {
+    int64_t id = 0;
+    std::string name, tags;  // (tags as "key=value ...")
+    std::vector<LatLon> pts;
+};
+struct OsmNode {
+    int64_t id = 0;
+    std::string name, tags;
+    LatLon at;
+};
+// A named obstacle built on a trail (`obstacle NAME | KIND | node ID (or LAT LON) | TRAIL | KEY VALUE ...`): the land under the trail
+// reshaped where it passes the point and scanned rocks laid on it (realterrainbuild.cpp). Each key is optional:
+//   climb G L      a pitch of grade G (rise over run; < 0 down) L m long through the point (0: none)
+//   steps N R      N ledges R m high (rocks laid along each lip), spread over the pitch (or over `length`)
+//   length L       how much of the trail it takes (m; default: the pitch, or 6 m a step)
+//   width W        the tread's half-width through it (m, default 3.2)
+//   walls H        the rock either side raised H m: a notch or a ravine (rocks lining it); < 0: lowered, a fin
+//   camber D       the tread tipped D degrees (> 0: the left side up)
+//   crack D W      a crack D m deep and W m wide along the tread (on one wheel track) ...
+//   cross          ...or across it, diagonally (a tire drops in)
+//   bowl D R       a pothole D m deep and R m across the line (in and out over its lips)
+//   boulders N     N big scanned boulders in and beside the line to pick through
+//   bypass left|right|TRAIL   a way round it: authored on that side (laid as a trail), or a trail of the sidecar's (an OSM bypass)
+// What each is based on is said in a comment beside it in the sidecar.
+struct SpecObstacle {
+    std::string name, kind, trail, bypass;
+    int64_t node = 0;  // the OSM node it's at (0: `at` given)
+    LatLon at;
+    double climbGrade = 0, climbLen = 0, length = 0, width = 3.2, walls = 0, camber = 0;
+    int steps = 0;
+    double rise = 0;
+    double crackDepth = 0, crackWidth = 0;
+    bool crackAcross = false;
+    double bowlDepth = 0, bowlSize = 0;
+    int boulders = 0;
+};
+// A point named over the land (`landmark NAME | node ID (or LAT LON)`): a tag shown near it, a cairn at it (a closed trail's sign).
+struct SpecLandmark {
+    std::string name;
+    int64_t node = 0;
+    LatLon at;
 };
 struct SpecCourse {
     std::string name, trail, about, vehicle;  // vehicle: a VehicleSpec id ("" any)
@@ -148,7 +205,7 @@ struct Spec {
     Window cropPx;
     bool hasBounds = false, hasCentre = false;
     double south = 0, west = 0, north = 0, east = 0, centreLat = 0, centreLon = 0;
-    double size = 0;              // the map's side (m); 0: as much of the crop as fits, up to 12 km
+    double size = 0;              // the map's side (m); 0: as much of the crop as fits, up to ~17 km
     double smooth = 1;            // passes of a light 3x3 smoothing on the DEM's pixels (0 none)
     double detail = -1;           // fine bumps added (m); -1: by the DEM's pixel size (30 m data more than 1 m lidar)
     int climate = CLIMATE_TEMPERATE;
@@ -175,6 +232,20 @@ struct Spec {
     std::vector<SpecBridge> bridges;
     std::vector<SpecTrail> trails;
     std::vector<SpecCourse> courses;
+    std::vector<SpecObstacle> obstacles;
+    std::vector<SpecLandmark> landmarks;
+    // `osm FILE`: OpenStreetMap ways and points the trails, obstacles and landmarks name by id (its text is part of the hash).
+    std::string osm, osmPath, osmText;
+    std::string includeText;      // (the `include` files' text: part of the hash)
+    // `osm_rules 1`: besides the trails, obstacles and landmarks the sidecar names, the osm file's own by rules (realterrainplan.cpp,
+    // docs/real-terrain.md): every 4x4 track (highway=track with 4wd_only=yes, or a named one) not already on a trail is a trail rated
+    // by its tracktype and smoothness; every tourism=attraction on one is an obstacle (a pair of ledges) under its OSM name; the
+    // trailheads and viewpoints are landmarks. What the sidecar authors by name or id wins. Any box's OSM data, no hand work.
+    bool osmRules = false;
+    std::vector<OsmWay> osmWays;
+    std::vector<OsmNode> osmNodes;
+    const OsmWay* osmWay(int64_t id) const;
+    const OsmNode* osmNode(int64_t id) const;
 };
 bool parseSpec(const std::string& text, const std::string& dir, Spec& out, std::string* err = nullptr);
 // A sidecar file, or a folder holding terrain.txt (or one *.terrain.txt): parsed, its DEM found and hashed.
@@ -198,11 +269,22 @@ struct PlanTrail {
     // A sidecar's named trail (SpecTrail): its name and rating; its line goes through the points given (pts is a cell apart).
     std::string name;
     int rating = -1;
+    bool bypass = false;        // an obstacle's way round (PlanObstacle::bypass): laid as its trail is, bare on the rock
+    bool osm = false;           // its line is OpenStreetMap's (SpecTrail::osmWays)
 };
 struct PlanBridge {
     std::string name;
     V3 a, b;                    // its ends on the banks (y: the deck there)
     double halfWidth = 5;
+};
+// A sidecar's obstacle (SpecObstacle), worked out on its trail.
+struct PlanObstacle {
+    SpecObstacle spec;
+    int trail = -1;             // index into the plan's trails
+    V3 at;                      // where it is (the point given), on the trail's line (y: the land before it's laid)
+    double along = 0;           // m along the trail's smoothed line (smoothLine(pts, 1)) to it
+    double from = 0, to = 0;    // the stretch of that line it takes (m along)
+    int bypass = -1;            // its way round: a trail of the plan's (-1 none)
 };
 // A sidecar's course (SpecCourse), worked out on its trail: where it starts and the gates along it.
 struct PlanCourse {
@@ -210,6 +292,10 @@ struct PlanCourse {
     int trail = -1;             // index into the plan's trails
     std::vector<V3> line;       // the trail's line, smoothed, a metre or two apart (y: the land there before it's laid)
     double length = 0, climb = 0, drop = 0;  // m along it; m up and down along it (the land before it's laid)
+    // The obstacles on it with a way round (m along `line`): no gate is put on them, so the way round is a way through.
+    std::vector<std::pair<double, double>> optional;
+    // The line with each of those taken by its way round (for a check that it can be driven; a metre or two apart).
+    std::vector<V3> easiest;
 };
 struct PlanLake {
     double level = 0;           // its water (map height)
@@ -258,6 +344,12 @@ struct Terrain {
         std::vector<uint8_t> wet, wash; // the coarse cells a river's water, or a dry wash, runs through
         std::vector<PlanBridge> bridges;
         std::vector<PlanCourse> courses;
+        std::vector<PlanObstacle> obstacles;
+        struct Landmark {
+            std::string name;
+            V3 at;
+        };
+        std::vector<Landmark> landmarks;
         double cx(int i) const;
         int cellOf(double v) const;
     };

@@ -794,7 +794,26 @@ double metresPerDegLon(double lat) { return 111412.84 * cosDeg(lat) - 93.5 * cos
 bool parseSpec(const std::string& text, const std::string& dir, Spec& s, std::string* err) {
     s = Spec();
     s.dir = dir, s.text = text;
-    std::istringstream in(text);
+    // `include FILE`: another file's lines read in its place (a map's hand-authored trails, obstacles and courses kept apart from the
+    // settings and rules that would make any box; its text is part of the hash).
+    std::string all;
+    {
+        std::istringstream pre(text);
+        for (std::string l; std::getline(pre, l);) {
+            std::istringstream ls(l.substr(0, l.find('#')));
+            std::string k, f;
+            if ((ls >> k) && lower(k) == "include" && (ls >> f)) {
+                const bool fabs_ = f[0] == '/' || f[0] == '\\' || (f.size() > 1 && f[1] == ':');
+                std::ifstream inc(fabs_ || dir.empty() ? f : dir + "/" + f);
+                if (!inc) return fail(err, "can't read the included file " + f);
+                std::stringstream ss;
+                ss << inc.rdbuf();
+                s.includeText += ss.str();
+                all += ss.str() + "\n";
+            } else all += l + "\n";
+        }
+    }
+    std::istringstream in(all);
     std::string line;
     int ln = 0;
     while (std::getline(in, line)) {
@@ -862,7 +881,12 @@ bool parseSpec(const std::string& text, const std::string& dir, Spec& s, std::st
             if (!need(1)) return false;
             s.backdrop = a[0];
             if (a.size() >= 3) s.backdropScale = num(1), s.backdropOffset = num(2);
-        } else if (key == "place" || key == "river" || key == "bridge" || key == "trail" || key == "course") {
+        } else if (key == "osm") {
+            if (!need(1)) return false;
+            s.osm = a[0];
+        } else if (key == "osm_rules") {
+            s.osmRules = a.empty() || num(0) != 0;
+        } else if (key == "place" || key == "river" || key == "bridge" || key == "trail" || key == "course" || key == "obstacle" || key == "landmark") {
             // (Fields split by '|': names may have spaces.)
             std::string rest = line.substr(line.find_first_not_of(" \t"));
             rest = rest.substr(std::min(rest.size(), rest.find_first_of(" \t") == std::string::npos ? rest.size() : rest.find_first_of(" \t")));
@@ -915,9 +939,68 @@ bool parseSpec(const std::string& text, const std::string& dir, Spec& s, std::st
             } else if (key == "trail") {
                 SpecTrail t;
                 std::vector<double> rg;
-                if (f.size() < 3 || (rg = nums(f[1])).size() < 2 || !lls(f[2], t.pts) || t.pts.size() < 2) return bad("needs NAME | RATING GRADE | LAT LON LAT LON ...");
+                if (f.size() < 3 || (rg = nums(f[1])).size() < 2) return bad("needs NAME | RATING GRADE | LAT LON LAT LON ... (or osm WAY ...)");
+                std::istringstream ws(f[2]);
+                std::string w0;
+                ws >> w0;
+                if (lower(w0) == "osm") {  // (OpenStreetMap ways, then optionally where to cut it)
+                    for (std::string w; ws >> w;) {
+                        const std::string lw = lower(w);
+                        if (lw == "from" || lw == "to") {
+                            LatLon& ll = lw == "from" ? t.from : t.to;
+                            if (!(ws >> ll.lat >> ll.lon)) return bad("from/to needs LAT LON");
+                            (lw == "from" ? t.hasFrom : t.hasTo) = true;
+                        } else t.osmWays.push_back(std::atoll(w.c_str()));
+                    }
+                    if (t.osmWays.empty()) return bad("osm needs one or more way ids");
+                } else if (!lls(f[2], t.pts) || t.pts.size() < 2) return bad("needs NAME | RATING GRADE | LAT LON LAT LON ...");
                 t.name = upper(f[0]), t.rating = (int)clampd(rg[0], 0, 4), t.grade = clampd(rg[1], 0.04, 1.2);
                 s.trails.push_back(t);
+            } else if (key == "obstacle" || key == "landmark") {
+                // (where: "node ID" of the osm file, or "LAT LON")
+                auto where = [&](const std::string& t, int64_t& node, LatLon& at) {
+                    std::istringstream is(t);
+                    std::string w;
+                    is >> w;
+                    if (lower(w) == "node") return (bool)(is >> node) && node > 0;
+                    std::vector<LatLon> v;
+                    return lls(t, v) && v.size() == 1 && (at = v[0], true);
+                };
+                if (key == "landmark") {
+                    SpecLandmark m;
+                    if (f.size() < 2 || !where(f[1], m.node, m.at)) return bad("needs NAME | node ID (or LAT LON)");
+                    m.name = upper(f[0]);
+                    s.landmarks.push_back(m);
+                    continue;
+                }
+                SpecObstacle o;
+                if (f.size() < 4 || !where(f[2], o.node, o.at)) return bad("needs NAME | KIND | node ID (or LAT LON) | TRAIL | KEY VALUE ...");
+                o.name = upper(f[0]), o.kind = lower(f[1]), o.trail = upper(f[3]);
+                std::istringstream ks(f.size() > 4 ? f[4] : "");
+                for (std::string k; ks >> k;) {
+                    k = lower(k);
+                    auto d = [&] {
+                        double v = 0;
+                        ks >> v;
+                        return v;
+                    };
+                    if (k == "climb") o.climbGrade = clampd(d(), -1.5, 1.5), o.climbLen = clampd(d(), 0, 120);
+                    else if (k == "steps") o.steps = (int)clampd(d(), 0, 12), o.rise = clampd(d(), 0, 1.2);
+                    else if (k == "length") o.length = clampd(d(), 0, 200);
+                    else if (k == "width") o.width = clampd(d(), 1.4, 8);
+                    else if (k == "walls") o.walls = clampd(d(), -8, 8);
+                    else if (k == "camber") o.camber = clampd(d(), -35, 35);
+                    else if (k == "crack") o.crackDepth = clampd(d(), 0, 2), o.crackWidth = clampd(d(), 0.2, 2);
+                    else if (k == "cross") o.crackAcross = true;
+                    else if (k == "bowl") o.bowlDepth = clampd(d(), 0, 4), o.bowlSize = clampd(d(), 2, 30);
+                    else if (k == "boulders") o.boulders = (int)clampd(d(), 0, 40);
+                    else if (k == "bypass") {
+                        std::string rest, w;
+                        while (ks >> w) rest += (rest.empty() ? "" : " ") + w;  // (the rest of the field: a trail's name may have spaces)
+                        o.bypass = lower(rest) == "left" || lower(rest) == "right" ? lower(rest) : upper(rest);
+                    } else return bad(("unknown key " + k).c_str());
+                }
+                s.obstacles.push_back(o);
             } else {
                 if (f.size() < 6) return bad("needs NAME | TRAIL | DIFFICULTY | VEHICLE | HOURS | ABOUT");
                 SpecCourse c;
@@ -946,7 +1029,64 @@ bool parseSpec(const std::string& text, const std::string& dir, Spec& s, std::st
         for (const SpecTrail& t : s.trails) found |= t.name == c.trail;
         if (!found) return fail(err, "course " + c.name + ": no trail named " + c.trail);
     }
+    for (const SpecObstacle& o : s.obstacles) {
+        bool found = false, by = o.bypass.empty() || o.bypass == "left" || o.bypass == "right";
+        for (const SpecTrail& t : s.trails) found |= t.name == o.trail, by |= t.name == o.bypass;
+        if (!found) return fail(err, "obstacle " + o.name + ": no trail named " + o.trail);
+        if (!by) return fail(err, "obstacle " + o.name + ": no trail named " + o.bypass + " for its bypass");
+    }
+    // The OpenStreetMap file: its ways and points, then every id the trails, obstacles and landmarks name found in it.
+    if (!s.osm.empty()) {
+        const bool oabs = s.osm[0] == '/' || s.osm[0] == '\\' || (s.osm.size() > 1 && s.osm[1] == ':');
+        s.osmPath = oabs || dir.empty() ? s.osm : dir + "/" + s.osm;
+        std::ifstream of(s.osmPath);
+        if (!of) return fail(err, "can't read the osm file " + s.osmPath);
+        std::stringstream ss;
+        ss << of.rdbuf();
+        s.osmText = ss.str();
+        std::istringstream oin(s.osmText);
+        for (std::string l; std::getline(oin, l);) {
+            if (l.empty() || l[0] == '#') continue;
+            std::vector<std::string> f;
+            for (size_t at = 0;;) {
+                const size_t bar = l.find('|', at);
+                std::string part = l.substr(at, bar == std::string::npos ? std::string::npos : bar - at);
+                const size_t b0 = part.find_first_not_of(" \t"), b1 = part.find_last_not_of(" \t");
+                f.push_back(b0 == std::string::npos ? std::string() : part.substr(b0, b1 - b0 + 1));
+                if (bar == std::string::npos) break;
+                at = bar + 1;
+            }
+            if (f.size() < 4) continue;
+            std::istringstream hs(f[0]);
+            std::string kind;
+            int64_t id = 0;
+            hs >> kind >> id;
+            std::vector<LatLon> pts;
+            std::istringstream ps(f[3]);
+            for (LatLon ll; ps >> ll.lat >> ll.lon;) pts.push_back(ll);
+            if (kind == "way" && pts.size() >= 2) s.osmWays.push_back({id, upper(f[1]), f[2], pts});
+            else if (kind == "node" && pts.size() == 1) s.osmNodes.push_back({id, upper(f[1]), f[2], pts[0]});
+        }
+    }
+    for (const SpecTrail& t : s.trails)
+        for (int64_t w : t.osmWays)
+            if (!s.osmWay(w < 0 ? -w : w)) return fail(err, "trail " + t.name + ": no way " + std::to_string(w) + " in the osm file");
+    for (const SpecObstacle& o : s.obstacles)
+        if (o.node && !s.osmNode(o.node)) return fail(err, "obstacle " + o.name + ": no node " + std::to_string(o.node) + " in the osm file");
+    for (const SpecLandmark& m : s.landmarks)
+        if (m.node && !s.osmNode(m.node)) return fail(err, "landmark " + m.name + ": no node " + std::to_string(m.node) + " in the osm file");
     return true;
+}
+
+const OsmWay* Spec::osmWay(int64_t id) const {
+    for (const OsmWay& w : osmWays)
+        if (w.id == id) return &w;
+    return nullptr;
+}
+const OsmNode* Spec::osmNode(int64_t id) const {
+    for (const OsmNode& n : osmNodes)
+        if (n.id == id) return &n;
+    return nullptr;
 }
 
 uint64_t hashFile(const std::string& path, bool* ok) {
@@ -1006,6 +1146,8 @@ bool loadSpec(const std::string& path, Spec& out, std::string* err) {
     if (!ok) return fail(err, "can't read the DEM " + out.sourcePath);
     uint64_t h = fh;
     for (char c : out.text) h = (h ^ (uint8_t)c) * 1099511628211ull;
+    for (char c : out.osmText) h = (h ^ (uint8_t)c) * 1099511628211ull;  // (its OpenStreetMap file too)
+    for (char c : out.includeText) h = (h ^ (uint8_t)c) * 1099511628211ull;  // (and what it includes)
     out.hash = h ? h : 1;
     return true;
 }
@@ -1086,9 +1228,9 @@ std::shared_ptr<const Terrain> prepare(const Spec& spec, std::string* err) {
                 d.v[(size_t)y * d.w + x] = (float)(0.25 * A(y - 1) + 0.5 * A(y) + 0.25 * A(y + 1));
             }
     }
-    // The map's size: as asked, else as much as the crop holds round its middle; whole metres, 150 m to 6144 m a half.
+    // The map's size: as asked, else as much as the crop holds round its middle; whole metres, 150 m to 8448 m a half.
     double half = spec.size > 0 ? 0.5 * spec.size : std::min(std::min(t->cx, d.w - 1 - t->cx) * mx, std::min(t->cy, d.h - 1 - t->cy) * my) - 2 * std::max(mx, my);
-    half = std::floor(clampd(half, 150, 6144));  // (12 km at most: 150 M cells, about twice the 8 km big map's memory)
+    half = std::floor(clampd(half, 150, 8448));  // (about 17 km at most: 285 M cells, Moab's 16.5 km (docs/real-terrain.md, memory))
     t->half = half;
     const double mpp = std::max(mx, my);
     t->detailAmp = spec.detail >= 0 ? spec.detail : clampd(0.06 * mpp, 0.08, 1.0);
