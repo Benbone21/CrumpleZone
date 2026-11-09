@@ -86,7 +86,7 @@ def patch_box(lat, lon, r):
 
 
 def grid_key(title):
-    m = re.search(r"x\d+y\d+", title)
+    m = re.search(r"x\d+y\d+|n\d+w\d+", title)
     return m.group(0) if m else None
 
 
@@ -246,10 +246,8 @@ def main():
                     if intersects(it["boundingBox"], bx):
                         seen[it["downloadURL"]] = it
             items = list(seen.values())
-            if ds != "laz" and a.dem_policy == "newest" and ds == "dem1m":
+            if ds in ("dem1m", "dem10m") and a.dem_policy == "newest":
                 items = newest_per_cell(items, [p for p in a.prefer.split(",") if p], a.min_bytes)
-            if ds == "dem10m":  # current tiles only (skip 'historical' vintages)
-                items = [i for i in items if "/historical/" not in i["downloadURL"]]
             for it in items:
                 u = it["downloadURL"]
                 jobs.append((f"{ds}/{os.path.basename(u)}", u, it.get("sizeInBytes") or 0,
