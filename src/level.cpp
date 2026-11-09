@@ -12,6 +12,8 @@
 
 #include "modelkit.h"
 #include "platform.h"
+#include "realterrain.h"
+#include "vehicles.h"
 #include "sections.h"
 #include "spawnpad.h"
 #include "world.h"
@@ -873,8 +875,50 @@ std::vector<std::string> filesIn(const std::string& dir, const std::string& ext 
 
 std::vector<std::string> listLevelFiles(const std::string& dir, const std::string& ext) { return filesIn(dir, ext); }
 
+std::vector<Level> realCourseLevels() {
+    std::vector<Level> out;
+    if (!realterrain::available()) return out;
+    for (const realterrain::PlanCourse& c : realterrain::courses()) {
+        const std::vector<V3>& L = c.line;
+        if (L.size() < 20) continue;
+        Level lv;
+        lv.name = c.spec.name;
+        char head[160];
+        std::snprintf(head, sizeof head, "DIFFICULTY %d OF 5. %.1f KM, %d M UP. ", c.spec.difficulty, c.length / 1000, (int)std::lround(c.climb));
+        lv.about = head + c.spec.about;
+        lv.map = MAP_REAL, lv.mode = LEVEL_SPRINT, lv.timeOfDay = c.spec.hours;
+        for (int v = 0; v < (int)vehicleCatalog().size(); v++)
+            if (!c.spec.vehicle.empty() && c.spec.vehicle == vehicleCatalog()[v].id) lv.vehicle = v;
+        lv.resets = c.spec.difficulty < 5;
+        lv.maxDamage = c.spec.difficulty >= 4 ? 60 : 0;
+        auto yawAt = [&](size_t k) {
+            const V3 a = L[k > 3 ? k - 3 : 0], b = L[std::min(L.size() - 1, k + 3)];
+            return std::atan2(-(b.z - a.z), b.x - a.x);
+        };
+        lv.hasStart = true, lv.start = L[2], lv.startYaw = yawAt(2);
+        double along = 0, next = 250;
+        for (size_t k = 1; k < L.size(); k++) {
+            along += std::hypot(L[k].x - L[k - 1].x, L[k].z - L[k - 1].z);
+            if ((along >= next && c.length - along > 120) || k + 1 == L.size()) {
+                Gate g;
+                g.p = L[k], g.yaw = yawAt(k), g.width = c.spec.difficulty >= 3 ? 16 : 20;
+                lv.gates.push_back(g);
+                next = along + 250;
+            }
+        }
+        // Medals by the pace each difficulty allows (gold: 45 km/h on the graded road down to 9 up the Moab Rim's slabs).
+        const double kmh[6] = {45, 45, 25, 14, 12, 9};
+        const double gold = c.length / (kmh[std::min(5, std::max(1, c.spec.difficulty))] / 3.6);
+        lv.medals[0] = std::round(gold), lv.medals[1] = std::round(gold * 1.4), lv.medals[2] = std::round(gold * 2.2);
+        lv.builtin = true, lv.author = "CRUMPLE ZONE";
+        out.push_back(lv);
+    }
+    return out;
+}
+
 std::vector<Level> listLevels() {
     std::vector<Level> out = builtinLevels();
+    for (Level& lv : realCourseLevels()) out.push_back(std::move(lv));
     for (const std::string& dir : levelFolders())
         for (const std::string& path : filesIn(dir)) {
             Level lv;

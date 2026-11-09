@@ -177,6 +177,10 @@ std::string userLevelFolder();
 std::vector<std::string> listLevelFiles(const std::string& dir, const std::string& ext);
 // The game's levels, then every .czl in the folders.
 std::vector<Level> listLevels();
+// The active real terrain's courses (realterrain.h: a sidecar's `course` lines, Moab's) as sprints on MAP_REAL: the start on its
+// trail's first metre, a gate every ~250 m along it and the last at its end; its difficulty, length and climb in the about line.
+// Empty with no real terrain, or one without courses. listLevels() has them after the built-in ones.
+std::vector<Level> realCourseLevels();
 const std::vector<Level>& builtinLevels();
 // The game's own level of obstacle section `gen` (SectionType), as builtinLevels() has it, and the world it's played on: one world
 // built, not the dozen builtinLevels() builds (sectionfile.h builtinSectionFor). `out.section.on` false: no such section.
