@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include "render.h"
+#include "realterrain.h"
 #include "procrules.h"
 #include "procworld.h"
 #include "loadprof.h"
@@ -74,6 +75,7 @@ uniform float uTime, uClouds;
 uniform vec2 uNoiseOff;
 #define NP (vPos + vec3(uNoiseOff.x, 0.0, uNoiseOff.y))
 uniform float uFogFar;  // (a short draw distance: the fog closes in to hide where the world stops; 0 off)
+uniform float uFogThin;  // the haze's density as a share of the usual (0: the usual): a real terrain's backdrop, seen 40 km off
 uniform float uFogFrom;  // (...from this share of it: 0.45 for a draw distance; the endless procedural world's far haze starts later)
 uniform float uHazeFloor;  // (1: the sky under the horizon is the horizon's haze, not the dark ground: an endless world's land fades into it)
 // Time of day (daylight.h). uSun is the key light that shades and casts the shadows: the
@@ -318,7 +320,7 @@ vec3 applyFog(vec3 col, vec3 pos){
   vec3 d = pos - uCam;
   float dist = length(d), b = 0.0065;
   float k = abs(d.y) > 0.5 ? (1.0 - exp(-b * d.y)) / (b * d.y) : 1.0;
-  float fog = 1.0 - exp(-0.0007 * exp(-b * max(uCam.y, 0.0)) * dist * k);
+  float fog = 1.0 - exp(-0.0007 * (uFogThin > 0.0 ? uFogThin : 1.0) * exp(-b * max(uCam.y, 0.0)) * dist * k);
   vec3 dir = d / max(dist, 1e-3);
   vec3 fc = skyColor(vec3(dir.x, max(dir.y, 0.02) * 0.3, dir.z), 0);
   col = mix(col, fc, fog);
@@ -3070,9 +3072,24 @@ namespace {
 // What the scenery looks like: the physics terrain, with crags carved into the rim
 // mountains (too steep to drive, so the physics keeps them smooth), and beyond the map a
 // range of mountains to the horizon.
+// A real terrain with a backdrop (realterrain.h): past the map, the real country round it, coarse; from the map's edge (its rim)
+// down onto the backdrop over the first 600 m.
+const realterrain::Terrain* realBackdrop(const World& world) {
+    if (world.map != MAP_REAL) return nullptr;
+    const std::shared_ptr<const realterrain::Terrain> t = realterrain::active();
+    return t && !t->backdrop.v.empty() && std::fabs(t->half - world.halfSize()) < 0.5 ? t.get() : nullptr;  // (kept alive by realterrain)
+}
 double sceneryHeight(const World& world, double x, double z) {
     if (world.map == MAP_PROCEDURAL) return proc::farHeight(world, x, z);  // (past its window: more of the same land, coarse)
     const double half = world.halfSize();
+    if (const realterrain::Terrain* rt = realBackdrop(world)) {
+        const double cx = clampd(x, -half, half), cz = clampd(z, -half, half);
+        const double h = world.height(cx, cz);
+        const double d = std::max(std::fabs(x) - half, std::fabs(z) - half);
+        double b;
+        if (d <= 0 || !rt->backdropAt(x, z, b)) return h;
+        return h + (b - h) * smoothstep(0, 600, d);
+    }
     if (world.wrapPeriod > 0 && std::fabs(z) < half - 80) {
         // The freeway: the valley and the road run on beyond the map, a period at a time.
         const double P = world.wrapPeriod;
@@ -3134,6 +3151,10 @@ void Renderer::setWorld(const World& world) {
     waitStreaming();
     anchorNoise(world);
     mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;  // (the wilds are painted as the freeway's meadows are: land and paints, no pad or road)
+    {
+        const realterrain::Terrain* rt = realBackdrop(world);  // (a real terrain's backdrop reaches to the horizon: see it)
+        realFar_ = rt ? (float)std::min(40000.0, rt->bdReach) : 0.0f;
+    }
     updateLook(world);
     { LOADPROF("terrain.build+upload"); buildTerrain(world); }
     treeSig_ = scenerySig_ = bushSig_ = 0;  // (a new world: everything is built afresh)
@@ -4618,7 +4639,11 @@ bool Renderer::stepWorld(const World& world) {
 void Renderer::buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx, FarForestGrid* farForest) {
     // (The procedural world: its ranges seen far off, 6 km past its window, a little coarser.)
     const bool endless = world.map == MAP_PROCEDURAL;
-    const double spacing = endless ? 32.0 : 24.0, half = world.halfSize(), reach = half + (endless ? 6000.0 : 3000.0);
+    // (A real terrain with a backdrop: its real country out to the backdrop's edge, up to 40 km, every 100 m.)
+    const realterrain::Terrain* real = realBackdrop(world);
+    const double half = world.halfSize();
+    const double spacing = endless ? 32.0 : real ? 100.0 : 24.0;
+    const double reach = real ? half + spacing * std::floor(std::max(3000.0, std::min(40000.0, real->bdReach) - half) / spacing) : half + (endless ? 6000.0 : 3000.0);
     const int n = (int)(2 * reach / spacing) + 1;
     const unsigned base = (unsigned)verts.size();
     verts.resize(base + (size_t)n * n);
@@ -6149,7 +6174,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     // window and its far backdrop, render.cpp buildBackdrop), so the far plane and a haze that closes in toward it hide where it stops:
     // from up high there's no square of land with an edge, only land fading into the haze.)
     const bool endless = mapId == MAP_PROCEDURAL;
-    farZ_ = settings.drawDistance > 0 ? std::max(150.0f, settings.drawDistance) : endless ? kEndlessFar : 6000.0f;
+    farZ_ = settings.drawDistance > 0 ? std::max(150.0f, settings.drawDistance) : endless ? kEndlessFar : realFar_ > 0 ? realFar_ : 6000.0f;
     M4 proj = perspective(view.fovy, (float)view.width / std::max(1, view.height), 0.05f, farZ_);
     M4 vp = proj * lookAt(view.eye, view.target, view.up);
     // Wheels past where a mud tire's lug (2.4 cm proud) is under half a pixel draw their far copies.
@@ -6252,7 +6277,8 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Uniform1f(uniformLocation(prog, "uTime"), view.time);
         Uniform1f(uniformLocation(prog, "uClouds"), fadeClouds_);
         Uniform2f(uniformLocation(prog, "uNoiseOff"), noiseOff_[0], noiseOff_[1]);
-        Uniform1f(uniformLocation(prog, "uFogFar"), settings.drawDistance > 0 || endless ? farZ_ : 0.0f);
+        Uniform1f(uniformLocation(prog, "uFogFar"), settings.drawDistance > 0 || endless || realFar_ > 0 ? farZ_ : 0.0f);
+        Uniform1f(uniformLocation(prog, "uFogThin"), realFar_ > 0 ? 0.18f : 0.0f);  // (desert air: the La Sals clear from Moab, 40 km off)
         Uniform1f(uniformLocation(prog, "uFogFrom"), settings.drawDistance > 0 ? 0.45f : 0.72f);
         Uniform1f(uniformLocation(prog, "uHazeFloor"), endless ? 1.0f : 0.0f);
         const Daylight& d = daylight;
@@ -6332,7 +6358,11 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     else if (mapId == MAP_FRONTIER) Uniform2f(uniformLocation(progLit, "uRockSnow"), 125.0f, 400.0f);  // (its snow is painted on)
     else if (mapId == MAP_BACKCOUNTRY) Uniform2f(uniformLocation(progLit, "uRockSnow"), 105.0f, 400.0f);  // (its snow is painted on)
     else if (mapId == MAP_PROCEDURAL) Uniform2f(uniformLocation(progLit, "uRockSnow"), (float)proc::rules().alpine.treeLine, (float)proc::rules().alpine.snowDust);  // (bare rock high in its ranges; its snow is painted on)
-    else Uniform2f(uniformLocation(progLit, "uRockSnow"), 60.0f, 240.0f);
+    else if (const realterrain::Terrain* rt = mapId == MAP_REAL ? realterrain::active().get() : nullptr) {
+        // (A real terrain: bare rock over its tree line, snow over its snow line: its sidecar's, in real metres. Kept alive by realterrain.)
+        const float rock = (float)clampd(rt->mapHeight(std::min(rt->spec.treeLine, rt->spec.snowLine - 200)), 60, 9000);
+        Uniform2f(uniformLocation(progLit, "uRockSnow"), rock, (float)clampd(rt->mapHeight(rt->spec.snowLine), rock + 20, 20000));
+    } else Uniform2f(uniformLocation(progLit, "uRockSnow"), 60.0f, 240.0f);
     passMark(FP_OPAQUE);
     UseProgram(progLit);
     drawBatches(boxVao, boxBatches, vp, false);

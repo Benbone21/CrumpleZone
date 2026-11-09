@@ -470,6 +470,7 @@ private:
     float fadeAO_ = -1, fadeBloom_ = -1, fadeClouds_ = -1;
     double fadeClock_ = 0;
     float farZ_ = 6000;  // this frame's far plane (a draw distance brings it in)
+    float realFar_ = 0;  // a real terrain with a backdrop: how far its far plane reaches (0: none)
     int gpuMarkFrame_ = 0;
     void uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);
     static void binBatches(std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);  // (into 64 m bins; any thread)
