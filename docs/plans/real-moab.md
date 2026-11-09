@@ -1,4 +1,4 @@
-# Real Moab map: plan (not built yet)
+# Real Moab map: plan (built on wip/moab, 2026-11-08: see "What was built" at the end)
 
 Owner, 2026-10-25: "let's do Moab. Don't build it yet, just make the plan and download the maps for it."
 
@@ -105,3 +105,26 @@ Owner to choose A or B before the build.
 - Area A (12 km, canyon country) or B (16 km, reaching toward the La Sal mountains)?
 - Trail routes: hand-traced (default) or OpenStreetMap (more accurate; needs attribution)?
 - Real trail names (Hell's Revenge, etc.), or Moab-inspired made-up names?
+
+## What was built (wip/moab, 2026-11-08)
+
+Owner: "take that Moab data ... and make an actual map and courses from it". Option A (the recommendation): the owner hadn't
+picked, and B is the `centre`/`size` lines plus a new crop (everything authored is in lat/lon).
+
+- **Data:** `assets/maps/moab/` (2.7 MB, shipped in every package): `dem.tif` (the 12 km crop, int16 decimetres, LZW: 1.8 MB),
+  `backdrop.tif` (the 1 arc-second tile round it, 80 km, ~80 m pixels, int16 metres: 0.9 MB), `terrain.txt`. The raw tiles stay
+  in `data/real/moab/source/` (not committed). Credit: USGS 3D Elevation Program.
+- **The map:** REAL: MOAB on the map list (single player and hosting). Heights at scale 1.0; slickrock (bare ROCK) between
+  1290 and 1750 m except flats and hollows, red sand in those; the Colorado River (32 m half-width, 3.5 m deep, unfordable) traced
+  along the DEM's own water from the NE edge past the bridge, the Matheson flats and the Portal to the SW edge; the US-191 bridge
+  (deck on piers); MOAB (the start: repair, shop, fuel, jobs, garage, dealer) with low blocks along its main street; SAND FLATS
+  camp; POTASH ROAD fuel on the north-west bank; the 30 m backdrop to ~39 km (the La Sals, the Book Cliffs).
+- **Courses** (sprints on the level list): SAND FLATS ROAD (1), HELL'S REVENGE (4), FINS N' THINGS (3), MOAB RIM (5), POISON SPIDER
+  MESA (4). Routes are through hand-picked points at the real places, then A* over the real ground within each trail's grade.
+- **Where it differs from the plan:** no separate slickrock surface (ROCK already grips like it); no set pieces (Hell's Gate,
+  the Golden Stairs...) yet; the named trails' routes are approximate (hand-picked points + the DEM, not traced from a topo map);
+  Fins N' Things is its west end only (the rest is east of box A); the Moab Rim and Potash Road have no shelf road along the river
+  at 10 m (the canyon there is all river and cliff in the DEM), so the Rim course starts on the flats at the Portal and Poison
+  Spider on the north-west bank upstream of it.
+- **Memory:** the tool (code-made rocks) peaks at 1.45 GB; the game at ~2.6 GB (the 12 km grid, the renderer, ~10 k scanned rocks).
+  A 12 km real map isn't put in the world cache (encoding it doubled the peak to over 4 GB); it builds in ~10 s.

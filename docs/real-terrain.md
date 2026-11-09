@@ -135,6 +135,40 @@ build/realterrain make  path/moab.terrain.txt --out maps/moab --preview moab.ppm
    - Rocks gather on the steep.
    - Nothing grows on roads, pads or water.
 
+## Authored places, rivers, trails and courses
+
+A sidecar can put a real map's own named things on top of what's generated. Fields are split by `|`, so names may have spaces:
+
+```
+place town | MOAB | 38.5733 -109.5498 | 90          # town (the start: repair, shop, fuel...), fuel, camp, cabin, lookout; yaw in degrees
+river COLORADO RIVER | 32 3.5 | LAT LON LAT LON ...  # half-width and depth (m); the line is found along the lowest ground between the points
+bridge US-191 BRIDGE | 5 | LAT LON LAT LON          # a deck from bank to bank on piers; the roads are laid onto it
+trail HELL'S REVENGE | 3 0.45 | LAT LON LAT LON ... # rating (0 green .. 3 red) and the steepest grade; routed through the points
+course HELL'S REVENGE | HELL'S REVENGE | 4 | bronco | 10.5 | ABOUT TEXT   # trail, difficulty 1-5, vehicle id (or any), hour
+backdrop backdrop.tif [SCALE OFFSET]                # a coarse DEM of the country round the map: the horizon (not driven on)
+slickrock 1290 1750                                  # real elevations between which bare sandstone covers all but the flats and hollows
+rim 130                                              # how wide the rim that keeps you on the map is (m)
+```
+
+- With `place` lines, no outposts are picked unless `outposts` asks; the town is first, and is the start.
+- A big river can't be forded: roads and trails only cross it over a bridge.
+- A named trail's route is an A* over (cell, heading): no turn sharper than ~53 degrees a step, so a switchback is wide enough for
+  a truck; steep side slopes and cliff edges are dear. Each leg may go up to 1.6x its grade where there's no other way.
+- Named trails rated 2 and up are laid wider (3 m each side), follow the rock's own steps more closely along the line, stay bare
+  rock (not painted as a dirt track), and are marked with cairns. All named trails are on the M map.
+- Each `course` is a sprint level on MAP_REAL (`realCourseLevels`, in the level list after the built-in ones): the start on the
+  trail's first metres, a gate every ~250 m, medals by length and difficulty. Difficulty 5 has no repairs.
+
+### Shipping a real map
+`build/realterrain make SIDECAR --out DIR --int16 0.1 1000` writes the crop as int16 decimetres (LZW, horizontal predictor) and
+adds the `vertical_scale` and `vertical_offset` lines: a third of the float32 crop's size, and 10 cm steps are well under the
+DEM's own accuracy. `build/realterrain pack TILE LAT LON SIZE K OUT.tif` makes a backdrop (K x K pixels averaged, whole metres).
+The game ships its maps in `assets/maps/` (copied into every package); `maps/` and `data/real/` are still searched for others.
+
+**Moab** (`assets/maps/moab/`, `docs/plans/real-moab.md`): option A, 12 x 12 km round 38.565 N, 109.555 W, 2.7 MB in all
+(dem.tif 1.8 MB, backdrop.tif 0.9 MB). Option B (16 km, 4 km east) is the `centre` and `size` lines and a new crop from the source
+tile: the trails, places and courses are in lat/lon and stay put. The tests are `tests/moab.cpp`.
+
 ## Determinism, the cache and multiplayer
 
 - **Same land everywhere.** Everything that decides the land is plain arithmetic: `+ − × ÷ √ floor`, value noise, and a series `cosDeg` for the lat/lon scale. No platform libm is involved, so the same file builds the same land hash on every platform.
@@ -152,5 +186,5 @@ build/realterrain make  path/moab.terrain.txt --out maps/moab --preview moab.ppm
 - **Mosaics.** One DEM file per map. A crop across tiles needs the tiles merged first.
 - **Drainage on dead-flat land.** It can make straight runs (D8 on flats). Real DEMs rarely show it; synthetic flats do.
 - **Real roads.** Real road and trail alignments (USGS topo, or OSM with attribution) and named set pieces are authored on top. See `docs/plans/real-moab.md`.
-- **No slickrock surface yet.** The `ledges` pass brings back the steps. A grippy sandstone surface is still to come (`docs/plans/real-moab.md`).
-- **Multiple real maps.** Only the active one is listed (the first in `maps/`, or `--real`).
+- **Slickrock is ROCK.** The `slickrock` band paints bare sandstone (grip 1.0, rolling 0.012: what slickrock is to drive on). A surface of its own with a tire-wear cost is still to come.
+- **Multiple real maps.** Only the active one is listed (the first found in `maps/`, `assets/maps/` or `data/real/`, or `--real`).
