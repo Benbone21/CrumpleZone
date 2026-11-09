@@ -451,18 +451,31 @@ MovingCrash movingCrash(Ctx& ctx, double oneWay, CrashKind kind, double offset =
     return r;
 }
 
-double median(std::vector<double> v) {
-    std::sort(v.begin(), v.end());
-    return v.empty() ? 0 : v[v.size() / 2];
+double meanOf(const std::vector<double>& v) {
+    double s = 0;
+    for (double x : v) s += x;
+    return v.empty() ? 0 : s / v.size();
+}
+// (A set of crashes' damage in a note: mean, then the least and the most, in %.)
+std::string damageSpread(const std::vector<double>& v) {
+    char b[64];
+    std::snprintf(b, sizeof b, "%.1f%% (%.1f to %.1f)", meanOf(v) * 100, *std::min_element(v.begin(), v.end()) * 100, *std::max_element(v.begin(), v.end()) * 100);
+    return b;
 }
 
 // Both machines must see the same crash: each sees the hit, at the same moment, and each
 // owner's truck gets the kick and the damage it gets with both on one machine. (Damage from one
-// crash swings by half or more with a few centimetres of line, so it's taken over five.)
+// crash swings by half or more with a few centimetres of line, so it's taken over twenty: five
+// lines across the truck, each also 1, 2 and 3 mm over.)
 void movingCrashes(Ctx& ctx, CrashKind kind) {
-    char buf[512];
-    const double offsets[] = {-0.4, -0.2, 0.0, 0.2, 0.4};
-    const double nOff = 5;
+    char buf[640];
+    // (The worsts below, of the hits' timing and of the copies' gaps, are still taken over the five lines themselves, as before:
+    // the worst of twenty would be another, stricter measure.)
+    std::vector<double> offsets;
+    std::vector<bool> onLine;
+    for (double line : {-0.4, -0.2, 0.0, 0.2, 0.4})
+        for (double mm : {0.0, 0.001, 0.002, 0.003}) offsets.push_back(line + mm), onLine.push_back(mm == 0.0);
+    const double nOff = (double)offsets.size();
     struct Line {
         double oneWay, jitter, loss;
     };
@@ -475,9 +488,8 @@ void movingCrashes(Ctx& ctx, CrashKind kind) {
         one.kickA += k.kickA / nOff, one.kickB += k.kickB / nOff, one.dmgA += k.dmgA / nOff, one.dmgB += k.dmgB / nOff;
         oneA.push_back(k.dmgA), oneB.push_back(k.dmgB);
     }
-    const double oneMedA = median(oneA), oneMedB = median(oneB);
-    std::snprintf(buf, sizeof buf, "%s, one machine: kick A %.2f B %.2f m/s, damage A %.1f%% B %.1f%% (mean of 5 lines; median %.1f%% %.1f%%)", what.c_str(), one.kickA, one.kickB,
-                  one.dmgA * 100, one.dmgB * 100, oneMedA * 100, oneMedB * 100);
+    std::snprintf(buf, sizeof buf, "%s, one machine: kick A %.2f B %.2f m/s, damage A %s B %s (mean of %d crashes, least to most)", what.c_str(), one.kickA, one.kickB,
+                  damageSpread(oneA).c_str(), damageSpread(oneB).c_str(), (int)offsets.size());
     ctx.note(buf);
     {  // (as it was: the others shown where they were a view delay ago)
         const MovingCrash r = movingCrash(ctx, 0.075, kind, 0, 0.01, 0.02, false);
@@ -488,36 +500,42 @@ void movingCrashes(Ctx& ctx, CrashKind kind) {
     for (const Line& line : lines) {
         MovingCrash m;
         bool both = true, finite = true;
-        double gap = 0, poseMax = 0;
+        double gap = 0, poseMax = 0, gapAll = 0, snapAll = 0;
         std::vector<double> dA, dB;
-        for (double off : offsets) {
-            const MovingCrash k = movingCrash(ctx, line.oneWay, kind, off, line.jitter, line.loss);
+        for (size_t i = 0; i < offsets.size(); i++) {
+            const MovingCrash k = movingCrash(ctx, line.oneWay, kind, offsets[i], line.jitter, line.loss);
             dA.push_back(k.dmgA), dB.push_back(k.dmgB);
             both &= k.sawA && k.sawB;
             finite &= k.finite;
-            if (k.sawA && k.sawB) gap = std::max(gap, std::fabs(k.tA - k.tB));
             m.kickA += k.kickA / nOff, m.kickB += k.kickB / nOff, m.dmgA += k.dmgA / nOff, m.dmgB += k.dmgB / nOff;
-            m.poseErr += k.poseErr / nOff, m.snapBack = std::max(m.snapBack, k.snapBack), m.missAtHit = std::max(m.missAtHit, k.missAtHit);
+            m.poseErr += k.poseErr / nOff;
+            if (k.sawA && k.sawB) gapAll = std::max(gapAll, std::fabs(k.tA - k.tB));
+            snapAll = std::max(snapAll, k.snapBack);
+            if (!onLine[i]) continue;
+            if (k.sawA && k.sawB) gap = std::max(gap, std::fabs(k.tA - k.tB));
+            m.snapBack = std::max(m.snapBack, k.snapBack), m.missAtHit = std::max(m.missAtHit, k.missAtHit);
             poseMax = std::max(poseMax, k.poseErrMax);
             m.delay = k.delay;
         }
-        const double medA = median(dA), medB = median(dB);
         char lineName[64];
         std::snprintf(lineName, sizeof lineName, "%d ms each way%s", (int)std::lround(line.oneWay * 1000), line.loss > 0.05 ? " (jitter 30 ms, 10% lost)" : "");
         const std::string name = what + ", " + lineName;
         std::snprintf(buf, sizeof buf,
-                      "%s: view delay %.0f ms; hit on both machines %s, %.0f ms apart (worst); kick A %.2f B %.2f m/s; damage A %.1f%% B %.1f%% (median %.1f%% %.1f%%); "
-                      "copies off their owners' trucks %.2f m mean, %.2f worst; at the hit %.2f m; from 0.5 s after %.2f m",
-                      name.c_str(), m.delay * 1000, both ? "yes" : "NO", gap * 1000, m.kickA, m.kickB, m.dmgA * 100, m.dmgB * 100, medA * 100, medB * 100, m.poseErr, poseMax,
-                      m.missAtHit, m.snapBack);
+                      "%s: view delay %.0f ms; hit on both machines %s, %.0f ms apart (worst of 5 lines; of 20 %.0f); kick A %.2f B %.2f m/s; damage A %s B %s; "
+                      "copies off their owners' trucks %.2f m mean, %.2f worst (5 lines); at the hit %.2f m; from 0.5 s after %.2f m (of 20 %.2f)",
+                      name.c_str(), m.delay * 1000, both ? "yes" : "NO", gap * 1000, gapAll * 1000, m.kickA, m.kickB, damageSpread(dA).c_str(), damageSpread(dB).c_str(), m.poseErr, poseMax,
+                      m.missAtHit, m.snapBack, snapAll);
         ctx.note(buf);
         ctx.check(name + ": both machines see the hit", both);
         ctx.metric(name + ": the two machines' hits apart (worst)", gap * 1000, "ms", 0, 60);
         ctx.metric(name + ": A's kick / on one machine", m.kickA / std::max(one.kickA, 1e-6), "", 0.75, 1.33);
         ctx.metric(name + ": B's kick / on one machine", m.kickB / std::max(one.kickB, 1e-6), "", 0.75, 1.33);
-        // (The median: a crash's damage comes in two kinds, the nose folding up neatly or not, 2 % or 6 %, whichever by
-        // a few millimetres, so one of five going the other way moves the mean by half.)
-        ctx.metric(name + ": A's damage / on one machine (median of 5 lines)", medA / std::max(oneMedA, 1e-6), "", 0.6, 1.6);
+        // (The mean of twenty: a crash's damage comes in two kinds, the nose folding up neatly or not, about 3.5 % or 7 % for B,
+        // whichever by a millimetre or so. It was the median of five lines (to 0.4.16), which only said whether three of the five
+        // folded the bad way: shifting all five by 1 to 5 mm swung B's at 75 ms from 0.44 to 0.94 on Linux, failing 4 shifts of 8 on
+        // main and 6 of 8 on 0.4.15, and each platform's rounding is such a shift (the Mac failed at 0.55 where Linux had 0.88).
+        // Pooled over 40 crashes it was 0.79 on both versions. Twenty per side, with the mean, is what the 0.6 means now.)
+        ctx.metric(name + ": A's damage / on one machine (mean of 20 crashes)", m.dmgA / std::max(one.dmgA, 1e-6), "", 0.6, 1.6);
         // (B braking in the last 0.3 s: A's machine hears of it a line later, so its copy of B comes in a little fast
         // and the push after goes a little differently; on a slow (150 ms or more each way) or lossy line B's own truck comes out somewhat less hurt:
         // 0.56 to 0.61 measured, and the damage depends on each platform's own floating-point rounding, so 0.6 was a coin toss there.
@@ -525,7 +543,7 @@ void movingCrashes(Ctx& ctx, CrashKind kind) {
         // Windows alike, and 0.45 to 0.47 over 9 or 11 lines as over 5, so the truck's new build, not the sampling; the floor there is 0.4.)
         const bool slowLine = line.oneWay >= 0.15 || line.loss > 0.05;
         const double loB = kind == REAR_BRAKE && slowLine ? (line.loss > 0.05 ? 0.5 : 0.4) : 0.6;
-        ctx.metric(name + ": B's damage / on one machine (median of 5 lines)", medB / std::max(oneMedB, 1e-6), "", loB, 1.6);
+        ctx.metric(name + ": B's damage / on one machine (mean of 20 crashes)", m.dmgB / std::max(one.dmgB, 1e-6), "", loB, 1.6);
         ctx.metric(name + ": copies off their owners' trucks before the hit (mean)", m.poseErr, "m", 0, 0.25);
         // (After, both trucks tumble and knock again, on each machine a little differently: the copies are eased
         // back onto their owners' states. A 500 ms round trip leaves them further off for a moment.)
@@ -535,7 +553,7 @@ void movingCrashes(Ctx& ctx, CrashKind kind) {
 }
 }  // namespace
 
-#define MOVING_CRASH_DESC "over 0 to 250 ms lines with jitter and loss, five lines each: both machines see the hit at the same moment, and each truck's kick and damage are as on one machine"
+#define MOVING_CRASH_DESC "over 0 to 250 ms lines with jitter and loss, twenty crashes each (five lines, a few mm apart): both machines see the hit at the same moment, and each truck's kick and damage are as on one machine"
 SCENARIO(netMovingRear, "net/moving-crash/rear", "Both trucks moving, A at 65 km/h into the back of B at 36, " MOVING_CRASH_DESC) { movingCrashes(ctx, REAR); }
 SCENARIO(netMovingSide, "net/moving-crash/side", "Both trucks moving at 43 km/h, A into B's side, " MOVING_CRASH_DESC) { movingCrashes(ctx, SIDE); }
 SCENARIO(netMovingBrake, "net/moving-crash/rear-brake", "A into the back of B, B braking hard 0.3 s before (A's machine hears of it only later), " MOVING_CRASH_DESC) { movingCrashes(ctx, REAR_BRAKE); }
