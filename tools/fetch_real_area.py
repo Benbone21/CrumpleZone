@@ -129,11 +129,14 @@ def curl_get(url, dest, expect=None):
     have = os.path.getsize(dest) if os.path.exists(dest) else 0
     if have and have == remote_len(url):
         return True
-    for a in range(5):
+    slow = "rockyweb.usgs.gov" in url  # rate-limits with HTTP 429: pace and back off hard
+    for a in range(7):
         r = sh(["curl", "-fL", "--retry", "3", "-C", "-", "-A", UA, "-sS", "-o", dest, url])
         if r.returncode == 0:
+            if slow:
+                time.sleep(5)
             return True
-        time.sleep(3 * (a + 1))
+        time.sleep(min(30 * 2 ** a, 600) if slow else 3 * (a + 1))
     return False
 
 
