@@ -185,6 +185,19 @@ struct SpecLandmark {
     int64_t node = 0;
     LatLon at;
 };
+// A high-resolution patch over the DEM (`detail FILE SCALE OFFSET FEATHER`: tools/hires_patches.py): lidar on the map's own 1 m grid,
+// a GeoTIFF in degrees, NoData outside what it covers; laid over the DEM where it has data, eased in over FEATHER m from its edges.
+struct SpecDetail {
+    std::string file, path;
+    double scale = 1, offset = 0, feather = 24;
+};
+// A colour band of the rock by real elevation (`strata ELEV R G B`, sRGB 0-255): the shader's sandstone takes the colour of the band
+// it's in (blended between them), so the layers follow the real formations. With any, the map's slickrock and sand are drawn with the
+// sandstone materials (groundshader.cpp), and its scanned rocks take the look of `rock_look`.
+struct SpecStratum {
+    double elev = 0;
+    double r = 1, g = 1, b = 1;
+};
 struct SpecCourse {
     std::string name, trail, about, vehicle;  // vehicle: a VehicleSpec id ("" any)
     int difficulty = 3;                       // 1 easy .. 5 extreme
@@ -234,6 +247,19 @@ struct Spec {
     std::vector<SpecCourse> courses;
     std::vector<SpecObstacle> obstacles;
     std::vector<SpecLandmark> landmarks;
+    std::vector<SpecDetail> details;   // `detail` lines: lidar patches
+    std::vector<SpecStratum> strata;   // `strata` lines, by elevation
+    // `rock_look R G B AMOUNT`: the scanned rocks and cliffs recoloured toward this (sRGB 0-255), AMOUNT 0..1 (0: as scanned).
+    double rockLook[4] = {0, 0, 0, 0};
+    // `sand_look R G B`: with `strata`, the sand's colour (sRGB 0-255).
+    double sandLook[3] = {200, 140, 88};
+    // `rock_scans NAME ...`: only these scans (props.txt names, or their prefixes) make the rocks (empty: any).
+    std::vector<std::string> rockScans;
+    // `cover FILE`: what the ground is (from aerial imagery: tools/naip_cover.py), a GeoTIFF in degrees, a class a pixel:
+    // 0 unknown, 1 bare rock, 2 sand, 3 brush. Where given, it decides sand from rock on the slickrock and where bushes grow.
+    std::string cover, coverPath;
+    // `ledge_sharpen STRENGTH`: on the lidar patches, steps steeper than round them are made steeper (0..1; 0 off).
+    double ledgeSharpen = 0;
     // `osm FILE`: OpenStreetMap ways and points the trails, obstacles and landmarks name by id (its text is part of the hash).
     std::string osm, osmPath, osmText;
     std::string includeText;      // (the `include` files' text: part of the hash)
@@ -312,6 +338,23 @@ struct Terrain {
     double mppX = 30, mppY = 30;  // metres per DEM pixel east and south
     double cx = 0, cy = 0;        // the DEM pixel (centre convention) at the map's middle
     double detailAmp = 0.3;
+    // The lidar patches (Spec::details), on the map's frame: pixel (c, r) is map (x0 + c * sx, z0 - r * sz); heights in metres over
+    // `base` (exaggerated), and how much each pixel counts (0 at NoData and the patch's edge, 1 `feather` m inside).
+    struct Patch {
+        int w = 0, h = 0;
+        double x0 = 0, z0 = 0, sx = 1, sz = 1;
+        std::vector<float> v, wt;
+    };
+    std::vector<Patch> patches;
+    // The patches' height and weight at (x, z) (false: none there).
+    bool patchAt(double x, double z, double& y, double& w) const;
+    // The ground cover (Spec::cover) on the map's frame (0 where there's none).
+    struct Cover {
+        int w = 0, h = 0;
+        double x0 = 0, z0 = 0, sx = 1, sz = 1;
+        std::vector<uint8_t> c;
+    } cover;
+    int coverAt(double x, double z) const;
     // The land at (x, z) before anything is laid on it: bicubic through the DEM (demAt), fine detail added (landAt), and the
     // map's rim, which keeps you on it (heightAt). The plan reads demAt; the world is built from heightAt.
     double demAt(double x, double z) const;
