@@ -238,7 +238,10 @@ either side, eased in over 2 m. The ledges (everywhere) are uneven: spacing jitt
 (adding up to what's authored); on lidar each is a shorter, off-centre lip, rounded over and dying into the slope at its ends.
 An obstacle's `slabs O S` makes its ledges thick tabular beds instead: across the whole tread and S m past it either side, undercut O m
 under the lip; off the tread each bed stands 1.6x the step proud of the land as it is, broken into flat-topped blocks, each set back its
-own way with now and then a gap (Moab: the Staircase, the Golden Staircase, Double Whammy, Gold Bar's Waterfall).
+own way with now and then a gap, its ends rounded down and back, its lip and thickness varying along it; no block where the land
+across or along it is steep (a bed doesn't climb a slot's wall) (Moab: the Staircase, the Golden Staircase, Double Whammy, Gold Bar's
+Waterfall). On a map with strata the code-made rocks are a little less orange than the band, varnished in streaks down their steep
+faces, dark under a lip, and more weathered (deeper relief).
 
 `strata_fault LAT LON LAT LON SHIFT WIDTH` offsets the bands across a fault: left of the line from the first point to the second they
 sit SHIFT m higher, eased over WIDTH (Moab: 130 m higher south-west of the valley, an approximation from the rims' heights, not a

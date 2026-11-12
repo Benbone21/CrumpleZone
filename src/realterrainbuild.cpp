@@ -747,8 +747,17 @@ void World::buildReal() {
                 // flat, not a ribbon following every bump of the land)
                 const bool offT = tab && std::fabs(0.5 * (v0 + v1)) > W + 0.6;
                 if (offT && roll01(900 + (int)li * 31 + pc) < 0.22) continue;
+                if (offT) {  // (a bed doesn't climb a steep side: where the land across the piece is steeper than ~27 degrees, none)
+                    auto gAt = [&](double sAt, double v) {
+                        const V3 q = pointAlong(sAt) + leftAlong(sAt) * v;
+                        return height(q.x, q.z);
+                    };
+                    const double vm = 0.5 * (v0 + v1);
+                    if (std::fabs(gAt(sFace - sg * 0.7, v1) - gAt(sFace - sg * 0.7, v0)) > 0.5 * (v1 - v0)) continue;
+                    if (std::fabs(gAt(sUp + sg * 0.6, vm) - gAt(sFace - sg * 0.7, vm)) > 2.5 * riseK[li]) continue;  // (nor up a steep face)
+                }
                 const double blockBack = offT ? 0.6 * (roll01(950 + (int)li * 31 + pc) - 0.5) : 0.0;
-                std::vector<double> tops;
+                std::vector<double> tops, adj;
                 for (int e = 0; e <= 3; e++) {
                     const double v = v0 + (v1 - v0) * e / 3.0;
                     auto at = [&](double sAt, double y) {
@@ -768,9 +777,12 @@ void World::buildReal() {
                     const double taper = tab ? 1 - smoothstep(span - 1.2, span, std::fabs(v - off)) : onLidar ? 1 - smoothstep(0.45 * span, span, std::fabs(v - off)) : 1.0;
                     const double topY = lowY + (upperY + 0.02 + drop + 0.05 * (roll01(rk++) - 0.5) - lowY) * taper, botY = lowY - 0.45;
                     const double rise = std::max(0.1, topY - lowY);
-                    const double fs = sFace + sg * (jit + blockBack);
+                    // (a block's ends rounded down and back; its lip's rounding and thickness a little different all along it)
+                    const bool endE = offT && (e == 0 || e == 3);
+                    const double fs = sFace + sg * (jit + blockBack - (endE ? 0.15 + 0.15 * roll01(rk++) : 0.0));
                     tops.push_back(topY);
-                    const double round = tab ? 1.0 : onLidar ? 1.6 : 1.0;  // (on lidar the lip rounds over further back)
+                    adj.push_back(-(endE ? 0.12 + 0.15 * roll01(rk++) : 0.0) + (tab ? 0.08 * (roll01(rk++) - 0.5) : 0.0));
+                    const double round = tab ? 0.7 + 0.9 * roll01(rk++) : onLidar ? 1.6 : 1.0;  // (on lidar the lip rounds over further back)
                     const double under = tab ? o.slabOverhang : 0.06;           // (how far the face is cut back under the lip)
                     pts.push_back(at(fs - sg * std::max(0.04, under), botY));  // (the face's foot, buried)
                     pts.push_back(at(fs - sg * under, lowY + 0.25 * rise));    // (its lower face, undercut)
@@ -788,8 +800,8 @@ void World::buildReal() {
                     mean += 0.2 * (roll01(990 + (int)li * 31 + pc) - 0.5);
                     for (size_t q = 0; q < pts.size(); q++) {
                         const int r = (int)(q % 8), e = (int)(q / 8);
-                        if (r >= 3 && r <= 5) pts[q].y += mean - tops[e];
-                        else if (r == 6) pts[q].y = mean - 0.02;  // (the block's top runs flat back to its rear edge)
+                        if (r >= 3 && r <= 5) pts[q].y += mean + adj[e] - tops[e];
+                        else if (r == 6) pts[q].y = mean + adj[e] - 0.02;  // (the block's top runs on back to its rear edge)
                     }
                 }
                 if (onLidar || tab) {  // (a piece the taper has brought down to nothing isn't laid)

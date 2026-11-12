@@ -245,7 +245,7 @@ void buildRockMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
         const V3 col = (strata ? strataCol(k.c) * 1.0 : V3(0.34, 0.32, 0.30)) * k.tint;
         const int mat = strata ? SM_SLAB : SM_ROCK;  // (sandstone: no moss)
         const bool snowy = world.surfaceAt(k.c.x, k.c.z) == SURF_SNOW;  // snow lies on its top
-        const double relief = std::min(0.05, 0.035 * k.r);
+        const double relief = strata ? std::min(0.09, 0.05 * k.r) : std::min(0.05, 0.035 * k.r);  // (sandstone: more weathered)
         auto sink = [&](const V3& p) {
             return p + norm(k.c - p) * (relief * noise3(p * (2.2 / std::max(k.r, 0.4)) + V3(k.seed % 97, 0, 0)));
         };
@@ -265,6 +265,21 @@ void buildRockMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
                 V3 sn = norm(n * 0.5 + fn * 0.5);
                 V3 c = col * shade;
                 if (snowy) c = c + (V3(0.82, 0.84, 0.88) - c) * smoothstep(0.45, 0.7, sn.y + 0.15 * (latticeHash((int)k.seed, (int)fi + 7) - 0.5));
+                if (strata) {
+                    // (sandstone: a little less orange; desert varnish streaking down the steep faces; the shade under a lip dark)
+                    const double l = 0.3 * c.x + 0.59 * c.y + 0.11 * c.z;
+                    c = c + (V3(l, l, l) - c) * 0.15;
+                    auto look = [&](const V3& at) {
+                        V3 cc = c;
+                        const double steep = 1 - smoothstep(0.35, 0.7, std::fabs(sn.y));
+                        const double streak = smoothstep(0.35, 0.75, noise3(V3(at.x * 1.7 + at.z * 1.3, at.y * 0.25, at.z * 0.4 - at.x * 0.2)));
+                        cc = cc * (1 - steep * (0.25 + 0.35 * streak));
+                        if (sn.y < -0.05) cc = cc * (0.45 + 0.3 * smoothstep(-0.8, -0.05, sn.y));  // (under the lip)
+                        return cc;
+                    };
+                    v.push_back(vert(p, sn, look(p), mat)), v.push_back(vert(q, sn, look(q), mat)), v.push_back(vert(r, sn, look(r), mat));
+                    return;
+                }
                 v.push_back(vert(p, sn, c, mat)), v.push_back(vert(q, sn, c, mat)), v.push_back(vert(r, sn, c, mat));
             };
             for (int i = 0; i < S; i++)
