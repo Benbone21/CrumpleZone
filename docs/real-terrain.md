@@ -285,14 +285,14 @@ across the near ground at Hell's Gate, which were the screen-space occlusion of 
 (about half, 2-3 m thick, level across the face and offset across the strata's fault) weathered back up to 1.5 m under the harder
 ones, whose lips then overhang; the face set back under the rim's caprock on a tall wall; arched, flat-floored alcoves 10-24 m
 across, 3.5-9 m high and up to 3.3 m deep here and there up a tall face; a rough skin over the 1 m grid's facets. Off the lidar (the sidecar's patches' weight below 1), a face is first smoothed along itself, only ever inward: each
-point takes, averaged over 2 m either way along the face, the lowest land within 4 m along it, so the 10 m data's bicubic ribs (a
-ridge and a groove every pixel straight down the face) are cut back to their grooves. The mesh is a
+point takes, averaged over 2 m either way along the face, the lowest land within 2 m along it, cutting back at most 0.8 m, so
+the 10 m data's bicubic ribs (a ridge and a groove every pixel straight down the face) are cut back toward their grooves. The mesh is a
 surface-nets isosurface of the horizontal distance into the rock less the carving, on a 0.5 m lattice. The land stays the
 collider: the carving only goes into the rock, only from 1.8 m above a wall's foot to 0.25 m below its rim, never on a shelf a
 truck could stand on, and any vertex the mesh would put outside the land is moved back into it (`moab/cliff-walls` checks every
 vertex along the named trails). Its fragments' depth is written as if they stood at the land's face (a little in front), so the
 terrain drawn after them stays hidden behind the hollows, but never further toward the camera than where the line of sight leaves
-the rock (the land's surface or the terrain mesh's, from the terrain texture) plus 10 cm, so no vehicle beside a wall is hidden
+the rock (the land's surface or the terrain mesh's, from the terrain texture) plus 10 cm (and 0.3% of the distance: 46 cm at 120 m), so no vehicle beside a wall is hidden
 behind it (a chunk with walls keeps its full mesh within 290 m, the surface that test is made against); their light and shadow are looked up at that face. Built on a background
 thread for chunks within 300 m of the camera (dropped past 360 m), the carving eased back to the face from 200 to 285 m; at HIGH
 ground and up. `CZ_NO_CLIFFWALLS=1` leaves them off (for comparing).
