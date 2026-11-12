@@ -4486,6 +4486,10 @@ void Renderer::streamWalls(const World& world, const V3& eye) {
             rt->toMap(sp.faultA, beds.ax, beds.az), rt->toMap(sp.faultB, beds.bx, beds.bz);
             beds.shift = sp.faultShift * sp.exaggeration, beds.width = sp.faultWidth;
         }
+        if (!rt->patches.empty()) beds.lidar = [rt](double x, double z) {
+            double py, pw = 0;
+            return rt->patchAt(x, z, py, pw) ? pw : 0.0;
+        };
     }
     wallJob_ = job;
     wallBg_.post([job, rect = std::move(rect), beds] {

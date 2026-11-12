@@ -169,18 +169,52 @@ void build(const World& world, const Beds& beds, int i0, int j0, int w, int h, f
             }
         return false;
     };
-    // The nearest air at height y from (x, z) within `reach`, any way round (the face, or a hollow's): how far, and which way.
+    // The face drawn: off the lidar, the 10 m data's bicubic faces are ribbed (a ridge and a groove every pixel, straight down the
+    // face); there each point takes, averaged over 2 m either way along the face, the lowest land within 4 m along it: the ridges
+    // cut back to the grooves, never anything raised (so it stays inside the land). On gentle ground and the lidar, the land itself.
+    const int fx0 = lx0 - 10, fz0 = lz0 - 10, fw = lw + 20, fh = lh + 20;
+    std::vector<float> HFg((size_t)fw * fh);
+    for (int a = 0; a < fw; a++)
+        for (int b = 0; b < fh; b++) {
+            const double x = -half + (fx0 + a) * kS, z = -half + (fz0 + b) * kS, h0 = H(x, z);
+            double f = 0;
+            const double gx = (H(x + 1, z) - H(x - 1, z)) * 0.5, gz = (H(x, z + 1) - H(x, z - 1)) * 0.5, gm = std::sqrt(gx * gx + gz * gz);
+            if (gm > 1.0) f = smoothstep(1.0, 2.0, gm) * (beds.lidar ? 1 - clampd(beds.lidar(x, z), 0, 1) : 1);
+            if (f <= 0) { HFg[(size_t)a * fh + b] = (float)h0; continue; }
+            const double tx = -gz / gm, tz = gx / gm;
+            double along[13];
+            for (int t = -6; t <= 6; t++) along[t + 6] = H(x + tx * t, z + tz * t);
+            double sum = 0;
+            for (int s = -2; s <= 2; s++) {
+                double m = 1e30;
+                for (int t = s - 4; t <= s + 4; t++) m = std::min(m, along[t + 6]);
+                sum += m;
+            }
+            HFg[(size_t)a * fh + b] = (float)(h0 + f * (std::min(h0, sum / 5) - h0));
+        }
+    auto HF = [&](double x, double z) {
+        double fx = (x + half) / kS - fx0, fz = (z + half) / kS - fz0;
+        if (fx < 0 || fz < 0 || fx >= fw - 1.001 || fz >= fh - 1.001) return H(x, z);
+        const int a = (int)fx, b = (int)fz;
+        fx -= a, fz -= b;
+        const float* r0 = &HFg[(size_t)a * fh + b];
+        const float* r1 = &HFg[(size_t)(a + 1) * fh + b];
+        return (r0[0] * (1 - fx) + r1[0] * fx) * (1 - fz) + (r0[1] * (1 - fx) + r1[1] * fx) * fz;
+    };
+    // The nearest air at height y from (x, z) within `reach`, any way round (the face, or a hollow's): how far, and which way. (Of
+    // the face drawn, or with `land`, the land's own.)
     static const double dirs[8][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {0.7071, 0.7071}, {-0.7071, 0.7071}, {0.7071, -0.7071}, {-0.7071, -0.7071}};
-    auto airNear = [&](double x, double y, double z, double reach, double& dist, double& ux, double& uz) {
+    auto airNear = [&](double x, double y, double z, double reach, double& dist, double& ux, double& uz, bool land = false) {
+        auto Hs = [&](double px, double pz) { return land ? H(px, pz) : HF(px, pz); };
         dist = reach;
         bool found = false;
-        const double h0 = H(x, z) - y;
+        const double h0 = Hs(x, z) - y;
         if (h0 < 0) return dist = 0, ux = 1, uz = 0, true;
         for (const auto& d : dirs) {
             double prev = h0;
             for (double t = kS; t <= reach + 1e-9; t += kS) {
                 if (t - kS >= dist) break;
-                const double v = H(x + d[0] * t, z + d[1] * t) - y;
+                const double v = Hs(x + d[0] * t, z + d[1] * t) - y;
                 if (v < 0) {
                     const double at = t - kS + kS * prev / (prev - v);
                     if (at < dist) dist = at, ux = d[0], uz = d[1], found = true;
@@ -203,7 +237,7 @@ void build(const World& world, const Beds& beds, int i0, int j0, int w, int h, f
             const double x = -half + ix * kS, z = -half + iz * kS;
             const double foot = bil(lo, x, z), top = bil(hi, x, z), wallH = top - foot;
             if (wallH < kMinWall) continue;
-            const double h0 = H(x, z);
+            const double h0 = HF(x, z);
             const double gx = (H(x + 1, z) - H(x - 1, z)) * 0.5, gz = (H(x, z + 1) - H(x, z - 1)) * 0.5, nf = std::sqrt(1 + gx * gx + gz * gz);
             Col& c = cols[(size_t)a * lh + b];
             c.y0 = (int)std::floor((foot + 1.2) / kSV);
@@ -269,7 +303,7 @@ void build(const World& world, const Beds& beds, int i0, int j0, int w, int h, f
                 v.p[0] = (float)x, v.p[1] = (float)y, v.p[2] = (float)z;
                 // (how deep in the rock it is, to the land's face, and which way that is)
                 double dist = 0, ux = 1, uz = 0;
-                if (!airNear(x, y, z, 4.0, dist, ux, uz) || dist < 0.03) {
+                if (!airNear(x, y, z, 4.0, dist, ux, uz, true) || dist < 0.03) {
                     const double gx = H(x + 1, z) - H(x - 1, z), gz = H(x, z + 1) - H(x, z - 1), gl = std::sqrt(gx * gx + gz * gz);
                     if (dist < 0.03) dist = 0;
                     ux = gl > 1e-6 ? -gx / gl : 1, uz = gl > 1e-6 ? -gz / gl : 0;
@@ -389,6 +423,10 @@ void build(const World& world, const Beds& beds, int i0, int j0, int w, int h, f
             while (t0 < 3.0 && H(cx + ox * t0, cz + oz * t0) > topY) t0 += 0.1;
             const double fx = cx + ox * t0, fz = cz + oz * t0;  // (on the face at topY)
             if (H(fx + ox * (out + 0.5), fz + oz * (out + 0.5)) > botY - 2.0) continue;
+            // (a rim's: the land behind it levels off at the rim, within a metre and a half over 4 and 8 m back; a lower one's: a
+            // sheer face behind, the land 3 m back 4 m or more above it. Not on a long steep slope, whose every cell has a "top" near.)
+            if (high ? std::max(H(fx - ox * 4, fz - oz * 4), H(fx - ox * 8, fz - oz * 8)) > topY + 1.5 : H(fx - ox * 3, fz - oz * 3) < topY + 4.0) continue;
+            if (high && H(fx - ox * 4, fz - oz * 4) < topY - 0.5) continue;
             // (its corners: a box along the face, a little skewed and leaning, its top tipped a few degrees)
             const double ax = -oz, az = ox;  // (along the face)
             const double lean = (h1 - 0.5) * 0.12, tip = (h2 - 0.5) * 0.1;

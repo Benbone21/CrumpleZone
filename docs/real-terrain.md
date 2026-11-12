@@ -284,7 +284,9 @@ across the near ground at Hell's Gate, which were the screen-space occlusion of 
 4 m (cells whose corners differ by 1.5 m or more), each 64 m chunk's faces are drawn again, carved into the rock: the softer beds
 (about half, 2-3 m thick, level across the face and offset across the strata's fault) weathered back up to 1.5 m under the harder
 ones, whose lips then overhang; the face set back under the rim's caprock on a tall wall; arched, flat-floored alcoves 10-24 m
-across, 3.5-9 m high and up to 3.3 m deep here and there up a tall face; a rough skin over the 1 m grid's facets. The mesh is a
+across, 3.5-9 m high and up to 3.3 m deep here and there up a tall face; a rough skin over the 1 m grid's facets. Off the lidar (the sidecar's patches' weight below 1), a face is first smoothed along itself, only ever inward: each
+point takes, averaged over 2 m either way along the face, the lowest land within 4 m along it, so the 10 m data's bicubic ribs (a
+ridge and a groove every pixel straight down the face) are cut back to their grooves. The mesh is a
 surface-nets isosurface of the horizontal distance into the rock less the carving, on a 0.5 m lattice. The land stays the
 collider: the carving only goes into the rock, only from 1.8 m above a wall's foot to 0.25 m below its rim, never on a shelf a
 truck could stand on, and any vertex the mesh would put outside the land is moved back into it (`moab/cliff-walls` checks every
@@ -295,7 +297,8 @@ ground and up. `CZ_NO_CLIFFWALLS=1` leaves them off (for comparing).
 
 **Caprock** (`cliffwalls.cpp`, with the walls): angular, flat-topped blocks of a bed breaking out of a tall wall's face, most
 just under its rim, a few lower (a harder bed standing proud): 2-5.5 m along the face, 0.9-2.3 m thick, standing out 0.5-1.3 m and
-set 1.2 m back into the rock, a little skewed and tipped, on about one face cell in thirty. They're the one part of the walls
+set 1.2 m back into the rock, a little skewed and tipped, on about one face cell in thirty, and only at a real rim (the land behind levels off within 1.5 m of the block's top, 4 and 8 m
+back) or, lower down, in front of a sheer face (the land 3 m behind 4 m or more above it), not on a long steep slope. They're the one part of the walls
 that stands out of the land, so only where nothing reaches them: every corner 0.3 m or more under the highest ground within 4 m
 and 2.4 m or more over the lowest, and 2 m or more of drop straight under the block's front (`moab/cliff-walls` checks them).
 (An earlier pass laid the scanned Namaqualand cliff pieces along rims and feet; they read as lumpy boulder clusters stuck on the

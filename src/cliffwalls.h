@@ -11,6 +11,7 @@
 // across by 0.5 m up, over the cells of a 64 m terrain chunk that are steep. Pure: any thread; the same chunk built twice is the
 // same mesh, and two chunks' meshes meet along their edge.
 #pragma once
+#include <functional>
 #include <vector>
 
 class World;
@@ -26,6 +27,9 @@ struct Vert {
 // they sit `shift` m higher, eased over `width`. No fault: shift 0.
 struct Beds {
     double ax = 0, az = 0, bx = 1, bz = 0, shift = 0, width = 300;
+    // How much the land at (x, z) is the 1 m lidar's (0..1): its faces are drawn as they are; elsewhere (10 m data, whose bicubic
+    // faces are ribbed every pixel) a face is first smoothed along itself, only ever inward (null: none is lidar).
+    std::function<double(double, double)> lidar;
 };
 
 // The carved faces over the terrain chunk of cells [i0, i0 + w) x [j0, j0 + h) (grid point (i, j) at x = -half + i, z = -half + j).

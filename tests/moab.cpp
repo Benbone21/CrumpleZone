@@ -395,6 +395,10 @@ SCENARIO(moabCliffWalls, "moab/cliff-walls", "Moab's cliff walls (cliffwalls.h) 
     std::vector<std::pair<int, int>> pick;
     for (size_t k = 0; k < list.size(); k += 7) pick.push_back(list[k]);
     cliffwalls::Beds beds;
+    beds.lidar = [t](double x, double z) {
+        double py, pw = 0;
+        return t->patchAt(x, z, py, pw) ? pw : 0.0;
+    };
     size_t verts = 0, withWalls = 0, outside = 0, reachable = 0, blocks = 0, badBlocks = 0;
     double worst = 0, deepest = 0;
     for (const auto& c : pick) {
