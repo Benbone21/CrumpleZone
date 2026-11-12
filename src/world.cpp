@@ -313,7 +313,16 @@ Rock makeScannedRock(const World& w, const props::HullLibrary& lib, double x, do
     auto turn = [](const V3& v, const V3& k, double a) { return dm::rotateAxis(v, k, a); };
     std::vector<Cand> cands;
     const double ry = std::max(radii.y, 1e-3);
+    auto allowed = [&](int i) {
+        if (w.rockScanFilter.empty()) return lib.hulls[i].name.compare(0, 6, "talus_") != 0;  // (the talus scans are a map's to ask for)
+        for (const std::string& f : w.rockScanFilter)
+            if (lib.hulls[i].name.compare(0, f.size(), f) == 0) return true;
+        return false;
+    };
+    bool anyAllowed = false;
+    for (int i = 0; i < (int)lib.hulls.size() && !anyAllowed; i++) anyAllowed = allowed(i);
     for (int i = 0; i < (int)lib.hulls.size(); i++) {
+        if (anyAllowed && !allowed(i)) continue;
         const V3 h = lib.hulls[i].half();
         const double hy = std::max(h.y, 1e-3);
         for (int sw = 0; sw < 2; sw++) {
@@ -434,6 +443,37 @@ Rock World::makeRock(double x, double z, const V3& radii, double top, uint32_t s
     k.c = c / (double)k.v.size();
     for (const V3& q : k.v) k.r = std::max(k.r, len(q - k.c));
     return k;
+}
+
+Rock& World::addHullRock(const std::vector<V3>& pts, uint32_t seed, float tint) {
+    Rock k;
+    k.tint = tint;
+    k.seed = seed;
+    V3 mid;
+    for (const V3& q : pts) mid += q;
+    mid = mid / (double)std::max<size_t>(1, pts.size());
+    std::vector<V3> rel;
+    for (const V3& q : pts) rel.push_back(q - mid);
+    k.f = convexHull(rel);
+    k.at = mid;
+    // (only the corners the hull uses)
+    std::vector<int> map(pts.size(), -1);
+    for (auto& f : k.f)
+        for (int& i : f) {
+            if (map[i] < 0) map[i] = (int)k.v.size(), k.v.push_back(pts[i]);
+            i = map[i];
+        }
+    for (const auto& f : k.f) {
+        V3 nrm = norm(cross(k.v[f[1]] - k.v[f[0]], k.v[f[2]] - k.v[f[0]]));
+        k.fn.push_back(nrm);
+        k.fd.push_back(dot(nrm, k.v[f[0]]));
+    }
+    V3 c;
+    for (const V3& q : k.v) c += q;
+    k.c = c / (double)std::max<size_t>(1, k.v.size());
+    for (const V3& q : k.v) k.r = std::max(k.r, len(q - k.c));
+    rocks.push_back(std::move(k));
+    return rocks.back();
 }
 
 Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint, const RockPose* pose) {

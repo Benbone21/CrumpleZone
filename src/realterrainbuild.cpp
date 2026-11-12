@@ -64,6 +64,12 @@ void World::buildReal() {
     const realterrain::Terrain::Plan& P = t.plan();
     const int climate = sp.climate;
 
+    // (Its rocks from the scans it names: Moab's sandstone-coloured ones, no grey granite. Only while it's built.)
+    rockScanFilter = sp.rockScans;
+    struct ClearFilter {
+        World* w;
+        ~ClearFilter() { w->rockScanFilter.clear(); }
+    } clearFilter{this};
     steps.next("real.land");
     parallelRows(hN, [&](int i) {
         for (int j = 0; j < hN; j++) hgrid[i * hN + j] = (float)t.heightAt(X(i), X(j));
@@ -94,9 +100,12 @@ void World::buildReal() {
                     const int a = std::max(0, i - 3), b = std::min(hN - 1, i + 3), c = std::max(0, j - 3), d = std::min(hN - 1, j + 3);
                     const double hx = (S(b, j) - S(a, j)) / std::max(1, b - a), hz = (S(i, d) - S(i, c)) / std::max(1, d - c);
                     const double s = std::sqrt(hx * hx + hz * hz);
-                    const double w = smoothstep(0.18, 0.45, s) * sp.ledgeStrength * (1 - smoothstep(1.4, 2.2, s)) * (t.rimAt(X(i), X(j)) > 0 ? 0 : 1);
+                    double w = smoothstep(0.18, 0.45, s) * sp.ledgeStrength * (1 - smoothstep(1.4, 2.2, s)) * (t.rimAt(X(i), X(j)) > 0 ? 0 : 1);
                     if (w <= 0) continue;
                     const double x = X(i), z = X(j), h = S(i, j);
+                    double py, pw = 0;
+                    if (!t.patches.empty() && t.patchAt(x, z, py, pw) && pw >= 1) continue;  // (lidar: its own ledges, sharpened below)
+                    w *= 1 - pw;
                     const double jit = step * 0.4 * (fbmNoise(x * 0.015 + 7.0, z * 0.015 - 3.0, 2) - 0.5);
                     const double hs = (h + jit) / step, q = std::floor(hs), f = hs - q;
                     const double stair = (q + smoothstep(0.7, 1.0, f)) * step - jit;
@@ -104,6 +113,45 @@ void World::buildReal() {
                 }
             });
             tail.assign(src.begin() + (size_t)(std::max(lo, r1 - 3) - lo) * hN, src.begin() + (size_t)(r1 - lo) * hN);
+        }
+    }
+    // ---- Ledges in the lidar: its 1 m surface rounds a sandstone step over two or three cells; where a step stands out (steeper
+    // than the ground round it), its riser is pulled toward a stair between the tread below and the tread above -------------------
+    if (sp.ledgeSharpen > 0 && !t.patches.empty()) {
+        steps.next("real.sharpen");
+        const int band = 512, M = 4;
+        std::vector<float> tail;
+        for (int r0 = 0; r0 < hN; r0 += band) {
+            const int r1 = std::min(hN, r0 + band), lo = std::max(0, r0 - M), hi = std::min(hN, r1 + M);
+            std::vector<float> src((size_t)(hi - lo) * hN);
+            std::copy(tail.begin(), tail.end(), src.begin());
+            std::copy(hgrid.begin() + (size_t)r0 * hN, hgrid.begin() + (size_t)hi * hN, src.begin() + (size_t)(r0 - lo) * hN);
+            auto S = [&](int i, int j) {
+                i = std::min(hi - 1, std::max(lo, i)), j = std::min(hN - 1, std::max(0, j));
+                return (double)src[(size_t)(i - lo) * hN + j];
+            };
+            parallelRows(r1 - r0, [&](int ii) {
+                const int i = r0 + ii;
+                for (int j = 0; j < hN; j++) {
+                    const double x = X(i), z = X(j);
+                    double py, pw = 0;
+                    if (!t.patchAt(x, z, py, pw) || pw <= 0) continue;
+                    const double gx = S(i + 1, j) - S(i - 1, j), gz = S(i, j + 1) - S(i, j - 1);
+                    const double local = 0.5 * std::sqrt(gx * gx + gz * gz);
+                    const double wx = S(i + M, j) - S(i - M, j), wz = S(i, j + M) - S(i, j - M);
+                    const double wide = std::sqrt(wx * wx + wz * wz) / (2 * M);
+                    const double stepness = smoothstep(1.25, 2.2, local / (wide + 0.04)) * smoothstep(0.3, 0.7, local) * (1 - smoothstep(2.5, 4.0, local));
+                    if (stepness <= 0) continue;
+                    double a = 1e9, b = -1e9;
+                    for (int di = -2; di <= 2; di++)
+                        for (int dj = -2; dj <= 2; dj++) a = std::min(a, S(i + di, j + dj)), b = std::max(b, S(i + di, j + dj));
+                    if (b - a < 0.3) continue;
+                    const double h = S(i, j), f = (h - a) / (b - a);
+                    const double target = a + (b - a) * smoothstep(0.3, 0.7, f);
+                    hgrid[i * hN + j] = (float)(h + sp.ledgeSharpen * pw * stepness * (target - h));
+                }
+            });
+            tail.assign(src.begin() + (size_t)(std::max(lo, r1 - M) - lo) * hN, src.begin() + (size_t)(r1 - lo) * hN);
         }
     }
     CellTiles<uint8_t> keep;  // no trees, rocks or bushes here
@@ -578,21 +626,33 @@ void World::buildReal() {
         auto baseAt = [&](double sAt) { return base[std::min(nS - 1, std::max(0, (int)std::lround((sAt - sA) / ds)))]; };
         double maxDev = 0;
         for (int i = iBeg; i <= iEnd; i++) maxDev = std::max(maxDev, std::fabs(prof[i] - base[i]));
-        const double reach = W + 4 + std::max(0.0, 1.6 * maxDev - 3) + (o.walls != 0 ? 6 : 0);
+        const double reach = W + 4 + std::max(0.0, 1.6 * maxDev - 3) + (o.walls != 0 ? 6 + 5.0 * std::fabs(o.walls) : 0);
         const double bowlR = 0.5 * o.bowlSize;
+        const double ext = o.walls > 2.5 ? 1.5 * o.walls + 3 : 0.0;  // (a tall wall's rock runs on past the profile's ends)
         std::vector<V3> sub;
-        for (int k = idxAt(sBeg - 4) - 1; k <= idxAt(sEnd + 4); k++) sub.push_back(L[std::max(0, std::min(m - 1, k))]);
-        std::vector<double> subAt(sub.size(), at[std::max(0, idxAt(sBeg - 4) - 1)]);
+        for (int k = idxAt(sBeg - 4 - ext) - 1; k <= idxAt(sEnd + 4 + ext); k++) sub.push_back(L[std::max(0, std::min(m - 1, k))]);
+        std::vector<double> subAt(sub.size(), at[std::max(0, idxAt(sBeg - 4 - ext) - 1)]);
         for (size_t k = 1; k < sub.size(); k++) subAt[k] = subAt[k - 1] + std::hypot(sub[k].x - sub[k - 1].x, sub[k].z - sub[k - 1].z);
         scanNear(sub, reach, [&](int id, double d, double kk, double lat) {
             const int k0 = (int)clampd(std::floor(kk), 0, (double)sub.size() - 2);
             const double sAt = subAt[k0] + (subAt[k0 + 1] - subAt[k0]) * clampd(kk - k0, 0, 1);
-            if (sAt < sBeg - 3 || sAt > sEnd + 3) return;
-            const double along = smoothstep(sBeg - 3, sBeg, sAt) * (1 - smoothstep(sEnd, sEnd + 3, sAt));
-            if (along <= 0) return;
+            if (sAt < sBeg - 3 - ext || sAt > sEnd + 3 + ext) return;
             const double a = std::fabs(lat);
-            double target = profAt(sAt) + tanC * lat;
-            if (o.walls != 0) target += o.walls * smoothstep(W + 0.3, W + 2.0, a) * smoothstep(s0 - 3, s0 + 2, sAt) * (1 - smoothstep(s1 - 2, s1 + 3, sAt));
+            // (a wall rises over a run that grows with its height: a 2 m wall over 1.7 m, a 7 m one over about 5 m, a steep V)
+            const double wallRun = std::max(1.7, 0.7 * std::fabs(o.walls));
+            // (a tall wall is the edge of a mass of rock the notch is cut through: it runs on along the line and out to the sides)
+            const double wallOut = o.walls > 2.5 ? 1.5 * o.walls : 0.0;
+            const double wallH = o.walls == 0 ? 0.0 : o.walls * smoothstep(W + 0.3, W + 0.3 + wallRun, a) * smoothstep(s0 - 3 - wallOut, s0 + 2, sAt) * (1 - smoothstep(s1 - 2, s1 + 3 + wallOut, sAt));
+            const double along = smoothstep(sBeg - 3, sBeg, sAt) * (1 - smoothstep(sEnd, sEnd + 3, sAt));
+            // (the walls: added on, so their rock runs on smoothly past the profile's ends, where the tread is left as it is)
+            const double side = o.walls > 2.5 ? smoothstep(W + 0.3 + wallRun + 4.6 * o.walls, W + 0.3 + wallRun + 0.6 * o.walls, a) : 0.0;  // (a rounded top)
+            if (along <= 0) {
+                if (a < W + 0.3 || wallH <= 0 || side <= 0) return;
+                hgrid[id] = (float)(hgrid[id] + wallH * side);
+                surf[id] = SURF_ROCK, paint[id] = PAINT_REDROCK, keep[id] = 1;
+                return;
+            }
+            double target = profAt(sAt) + tanC * lat + (o.walls > 2.5 ? 0.0 : wallH);
             if (o.bowlDepth > 0) {  // (a pothole across the line, round, its lips steep)
                 const double r = std::hypot(sAt - 0.5 * (s0 + s1), lat) / std::max(1.0, bowlR);
                 if (r < 1) target -= o.bowlDepth * (1 - r * r);
@@ -604,38 +664,71 @@ void World::buildReal() {
             }
             // (eased out over 3 m, or more where it stands well above or below the land: a slope, not a wall, to its sides)
             const double dev = std::fabs(profAt(sAt) - baseAt(sAt));
-            const double inner = o.walls != 0 ? W + 2.0 : W + 0.5, outer = inner + std::max(o.walls != 0 ? 4.0 : 3.0, 1.6 * dev);
+            const double inner = o.walls != 0 ? W + 0.3 + wallRun + (o.walls > 2.5 ? 0.6 * o.walls : 0.0) : W + 0.5, outer = inner + std::max({o.walls != 0 ? 4.0 : o.steps > 0 ? 5.0 : 3.0, 1.6 * dev, (o.walls > 2.5 ? 4.0 : 1.2) * std::fabs(o.walls)});
             const double w = along * (a <= inner ? 1.0 : smoothstep(outer, inner, a));
-            if (w <= 0) return;
-            hgrid[id] = (float)(hgrid[id] + (target - hgrid[id]) * w);
+            if (w <= 0 && side <= 0) return;
+            hgrid[id] = (float)(hgrid[id] + (target - hgrid[id]) * w + (o.walls > 2.5 ? wallH * side : 0.0));
             if (a < W + 1.5) surf[id] = SURF_ROCK, paint[id] = PAINT_REDROCK;
             keep[id] = 1;
         });
-        // The rocks. A ledge's lip: flattened rocks across the tread, their long axes across, tops at the tread above.
-        auto laid = [&](double sAt, double v, V3 r, double topY, double yawJ, float tint) {
-            const V3 q = pointAlong(sAt) + leftAlong(sAt) * v, d = dirAlong(sAt);
-            const double top = std::max(0.05, topY - height(q.x, q.z));
-            r.y = std::max(r.y, (top + 0.3) / 2);
-            RockPose pose;
-            pose.yaw = std::atan2(-d.z, d.x) + M_PI / 2 + yawJ;
-            addRock(q.x, q.z, r, top, hmix(oseed ^ (uint32_t)(sAt * 31 + v * 977)), tint, &pose);
-        };
         int rk = 0;
-        for (double lp : lips) {
-            const double sLip = lp + stepSign * 0.35;  // (on the face's upper half: its top level with the tread above)
-            const double upper = stepSign > 0 ? profAt(lp + 1.0) : profAt(lp - 1.0);
-            for (double v = -W - 0.2; v < W + 0.4;) {
-                const double rl = 0.8 + 0.4 * roll01(rk++), rd = 0.7 + 0.25 * roll01(rk++);
-                const double vv = v + rl * 0.8;
-                laid(sLip, vv, V3(rl, 0.4, rd), upper + tanC * vv + 0.03 + 0.05 * roll01(rk++), 0.3 * (roll01(rk++) - 0.5), (float)(0.9 + 0.15 * roll01(rk++)));
-                v += rl * (1.3 + 0.2 * roll01(rk++));
+        // A ledge's face: the riser between the treads is a slab of the rock itself (code-made, drawn as the sandstone round it),
+        // its top level with the tread above and its lip a little rounded, its face near vertical, buried below the tread under it.
+        // Pieces of about 2 m across the tread, each convex, so it follows the line and the camber. (The 1 m grid can only ramp a
+        // step over a cell; the slab is the square edge a tire meets.)
+        for (size_t li = 0; li < lips.size(); li++) {
+            const double lp = lips[li];
+            const double sUp = stepSign > 0 ? lp + 0.45 : lp - 0.45;    // (the tread above starts here)
+            const double sFace = stepSign > 0 ? lp - 0.05 : lp + 0.05;  // (the face)
+            const double upper = profAt(stepSign > 0 ? lp + 1.0 : lp - 1.0), lower = profAt(stepSign > 0 ? lp - 1.0 : lp + 1.0);
+            const double back = stepSign > 0 ? 1.4 : -1.4;
+            // (The ledge runs on past the tread, as a bed of the rock does, dying out into the slope: each piece's top and foot are the
+            // land as now built above and below the lip, and a piece where the step has faded under 0.15 m isn't laid.)
+            const double span = W + 0.6 + (o.walls > 0 ? 0.0 : 3.0);
+            const int pieces = std::max(3, (int)std::ceil(2 * span / 1.3));
+            for (int pc = 0; pc < pieces; pc++) {
+                // (each piece set back or forward a little and a little lower or higher: a broken, weathered lip, not a kerb)
+                const double v0 = -span + 2 * span * pc / pieces - 0.05, v1 = -span + 2 * span * (pc + 1) / pieces + 0.05;
+                const double setback = 0.26 * (roll01(rk++) - 0.5), drop = -0.07 * roll01(rk++);
+                const double sg = stepSign > 0 ? 1.0 : -1.0;
+                std::vector<V3> pts;
+                bool weak = false;
+                for (int e = 0; e <= 3; e++) {
+                    const double v = v0 + (v1 - v0) * e / 3.0;
+                    auto at = [&](double sAt, double y) {
+                        const V3 q = pointAlong(sAt) + leftAlong(sAt) * v;
+                        return V3(q.x, y, q.z);
+                    };
+                    auto ground = [&](double sAt) {
+                        const V3 q = at(sAt, 0);
+                        return height(q.x, q.z);
+                    };
+                    const double inTread = std::fabs(v) <= W + 0.6 ? 1.0 : 0.0;
+                    const double upperY = inTread ? upper + tanC * v : ground(sUp + sg * 0.6);
+                    const double lowY = inTread ? lower + tanC * v : ground(sFace - sg * 0.7);
+                    if (upperY - lowY < 0.15) weak = true;
+                    const double jit = 0.08 * (roll01(rk++) - 0.5) + setback;
+                    const double topY = upperY + 0.02 + drop + 0.05 * (roll01(rk++) - 0.5), botY = lowY - 0.45;
+                    const double rise = std::max(0.2, topY - lowY);
+                    const double fs = sFace + sg * jit;
+                    pts.push_back(at(fs - sg * 0.04, botY));                   // (the face's foot, buried)
+                    pts.push_back(at(fs - sg * 0.06, lowY + 0.25 * rise));     // (its lower face, a little undercut)
+                    pts.push_back(at(fs, lowY + 0.6 * rise));
+                    pts.push_back(at(fs + sg * 0.05, topY - 0.22 * rise));     // (the lip, rounded over)
+                    pts.push_back(at(fs + sg * 0.16, topY - 0.06 * rise));
+                    pts.push_back(at(fs + sg * 0.34, topY));
+                    pts.push_back(at(sUp + back, std::min(topY, (inTread ? profAt(sUp + back) + tanC * v : ground(sUp + back)) - 0.03)));  // (back under the tread)
+                    pts.push_back(at(sUp + back, botY));
+                }
+                if (weak) continue;
+                addHullRock(pts, hmix(oseed ^ (uint32_t)(li * 977 + pc * 131 + 7)), (float)(0.92 + 0.14 * roll01(rk++)));
             }
         }
-        // Walls: big rocks lining a notch or a ravine; elsewhere a few along the tread's edges.
-        const double wallStep = o.walls > 0 ? 3.0 : 7.0;
+        // (A few fallen blocks at the foot of the walls, not a row of them: the walls are the land's.)
+        const double wallStep = o.walls > 0 ? 6.0 : 9.0;
         for (double sAt = s0 + 1; sAt < s1 - 1; sAt += wallStep) {
             for (int side = -1; side <= 1; side += 2) {
-                if (o.walls <= 0 && roll01(rk++) < 0.45) continue;
+                if (roll01(rk++) < (o.walls > 0 ? 0.5 : 0.65)) continue;
                 const double r = o.walls > 0 ? 1.1 + 1.0 * roll01(rk++) : 0.6 + 0.6 * roll01(rk++);
                 const V3 q = pointAlong(sAt) + leftAlong(sAt) * (side * (W + 0.6 + r * 0.7));
                 addRock(q.x, q.z, V3(r, r * 0.75, r * 0.9), r * (o.walls > 0 ? 1.1 : 0.6), hmix(oseed ^ (uint32_t)(sAt * 53 + side * 7)), (float)(0.85 + 0.2 * roll01(rk++)));
@@ -649,13 +742,6 @@ void World::buildReal() {
             const V3 q = pointAlong(sAt) + leftAlong(sAt) * v;
             addRock(q.x, q.z, V3(r, r * 0.7, r * 0.85), std::min(0.55, r * 0.8), hmix(oseed ^ (uint32_t)(b * 131 + 17)), (float)(0.88 + 0.2 * roll01(rk++)));
         }
-        if (o.crackDepth > 0 && !o.crackAcross)
-            for (double sAt = s0 + 0.5; sAt < s1; sAt += 1.6)
-                for (int side = 1; side <= 1; side += 2) {  // (its outer edge)
-                    const double v = 1.9 + side * (0.5 * o.crackWidth + 0.35);
-                    const double r = 0.35 + 0.15 * roll01(rk++);
-                    laid(sAt, v, V3(0.7, 0.25, r), profAt(sAt) + tanC * v + 0.04, 1.57 + 0.2 * (roll01(rk++) - 0.5), 0.95f);
-                }
         tags.push_back({o.name, V3(po.at.x, height(po.at.x, po.at.z) + 3.2, po.at.z)});
     }
     for (const auto& lm : P.landmarks) {  // (a sidecar's landmarks: named over them, a cairn at each)
@@ -684,7 +770,13 @@ void World::buildReal() {
                                 around += 0.25 * g[a * hN + b];
                             }
                             const double hollow = around - g[id];  // (> 0: lower than round it)
-                            if (s > 0.14 || (s > 0.05 && hollow < 0.1 && n1 > 0.3) || (hollow < -0.25 && n1 > 0.2)) surf[id] = SURF_ROCK, paint[id] = PAINT_REDROCK;
+                            // (Where the sidecar has a ground cover from the aerial photos, it says which is rock and which sand; the
+                            // steep is rock whatever it says, the photo's few metres of misregistration on a face.)
+                            if (const int cv = t.coverAt(x, z)) {
+                                if (s > 0.4 || (cv == 1 && !(hollow > 0.3 && s < 0.08))) surf[id] = SURF_ROCK, paint[id] = PAINT_REDROCK;
+                                else if (cv == 2 || hollow > 0.05) surf[id] = SURF_SAND, paint[id] = PAINT_SAND;
+                                else surf[id] = SURF_DIRT, paint[id] = n1 < 0.45 ? PAINT_SAND : PAINT_DESERT;
+                            } else if (s > 0.14 || (s > 0.05 && hollow < 0.1 && n1 > 0.3) || (hollow < -0.25 && n1 > 0.2)) surf[id] = SURF_ROCK, paint[id] = PAINT_REDROCK;
                             else if (hollow > 0.05 || n1 < 0.38) surf[id] = SURF_SAND, paint[id] = PAINT_SAND;
                             else surf[id] = SURF_DIRT, paint[id] = PAINT_DESERT;
                         } else if (s > 0.5 || (s > 0.2 && n1 > 0.55) || (sp.ledgeStep > 0 && s > 0.25)) surf[id] = SURF_ROCK, paint[id] = PAINT_REDROCK;
@@ -864,9 +956,15 @@ void World::buildReal() {
                     addTree(x, z, hMin + (hMax - hMin) * cellRoll(ci, cj, 900 + q, seed), kind, (float)(0.8 + 0.4 * cellRoll(ci, cj, 950 + q, seed)));
                 }
                 const int habitat = climate == realterrain::CLIMATE_DESERT ? HAB_DESERT : climate == realterrain::CLIMATE_ALPINE ? HAB_UPLAND : wood > 0.5 ? HAB_FOREST : HAB_MEADOW;
-                for (int q = 0; q < nb; q++) {
+                const bool covered = !t.cover.c.empty();
+                const int nbAll = covered ? count(eB * 2.5) : nb;  // (with a ground cover: bushes where the photos show brush)
+                for (int q = 0; q < nbAll; q++) {
                     const double x = x0 + cellRoll(ci, cj, 2000 + 3 * q, seed) * cellM, z = z0 + cellRoll(ci, cj, 2001 + 3 * q, seed) * cellM;
                     if (!clear(x, z) || slopeAt(x, z) > 0.7) continue;
+                    if (covered) {
+                        const int cv = t.coverAt(x, z);
+                        if (cv == 1 || (cv != 3 && cv != 0)) continue;
+                    }
                     const int sf = surf[cellI(x) * hN + cellI(z)];
                     if (sf == SURF_SNOW || sf == SURF_ICE) continue;
                     const int hab = climate == realterrain::CLIMATE_DESERT && sf == SURF_ROCK ? HAB_CANYON : habitat;
