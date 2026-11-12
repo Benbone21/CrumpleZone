@@ -746,17 +746,21 @@ void World::buildReal() {
                 // (a tabular bed off the tread is broken into blocks: now and then a gap, each block set back its own way and its top
                 // flat, not a ribbon following every bump of the land)
                 const bool offT = tab && std::fabs(0.5 * (v0 + v1)) > W + 0.6;
-                if (offT && roll01(900 + (int)li * 31 + pc) < 0.22) continue;
-                if (offT) {  // (a bed doesn't climb a steep side: where the land across the piece is steeper than ~27 degrees, none)
+                // (more gaps the further out: a bed breaks into shorter, uneven runs as it leaves the tread)
+                const double outFrac = offT ? clampd((std::fabs(0.5 * (v0 + v1)) - W - 0.6) / std::max(0.5, o.slabSpread), 0, 1) : 0.0;
+                if (offT && roll01(900 + (int)li * 31 + pc) < 0.18 + 0.35 * outFrac) continue;
+                if (tab && std::fabs(0.5 * (v0 + v1)) > W - 0.4) {  // (a bed doesn't climb a steep side: where the land across the piece is steeper than ~27 degrees, none)
                     auto gAt = [&](double sAt, double v) {
                         const V3 q = pointAlong(sAt) + leftAlong(sAt) * v;
                         return height(q.x, q.z);
                     };
                     const double vm = 0.5 * (v0 + v1);
-                    if (std::fabs(gAt(sFace - sg * 0.7, v1) - gAt(sFace - sg * 0.7, v0)) > 0.5 * (v1 - v0)) continue;
-                    if (std::fabs(gAt(sUp + sg * 0.6, vm) - gAt(sFace - sg * 0.7, vm)) > 2.5 * riseK[li]) continue;  // (nor up a steep face)
+                    if (std::fabs(gAt(sFace - sg * 0.7, v1) - gAt(sFace - sg * 0.7, v0)) > 0.35 * (v1 - v0)) continue;
+                    if (offT && std::fabs(gAt(sFace - sg * 0.7, vm) - lower) > 0.8) continue;  // (nor stand on a wall well above or below its step)
+                    if (offT && std::fabs(gAt(sUp + sg * 0.6, vm) - gAt(sFace - sg * 0.7, vm)) > 2.5 * riseK[li]) continue;  // (nor up a steep face)
                 }
                 const double blockBack = offT ? 0.6 * (roll01(950 + (int)li * 31 + pc) - 0.5) : 0.0;
+                const double thick = offT ? riseK[li] * 0.5 * (roll01(970 + (int)li * 31 + pc) - 0.5) : 0.0;  // (each block its own thickness)
                 std::vector<double> tops, adj;
                 for (int e = 0; e <= 3; e++) {
                     const double v = v0 + (v1 - v0) * e / 3.0;
@@ -781,7 +785,7 @@ void World::buildReal() {
                     const bool endE = offT && (e == 0 || e == 3);
                     const double fs = sFace + sg * (jit + blockBack - (endE ? 0.15 + 0.15 * roll01(rk++) : 0.0));
                     tops.push_back(topY);
-                    adj.push_back(-(endE ? 0.12 + 0.15 * roll01(rk++) : 0.0) + (tab ? 0.08 * (roll01(rk++) - 0.5) : 0.0));
+                    adj.push_back(-(endE ? 0.12 + 0.15 * roll01(rk++) : 0.0) + (tab ? 0.08 * (roll01(rk++) - 0.5) : 0.0) + thick);
                     const double round = tab ? 0.7 + 0.9 * roll01(rk++) : onLidar ? 1.6 : 1.0;  // (on lidar the lip rounds over further back)
                     const double under = tab ? o.slabOverhang : 0.06;           // (how far the face is cut back under the lip)
                     pts.push_back(at(fs - sg * std::max(0.04, under), botY));  // (the face's foot, buried)

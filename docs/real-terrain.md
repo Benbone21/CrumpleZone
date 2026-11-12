@@ -241,7 +241,11 @@ under the lip; off the tread each bed stands 1.6x the step proud of the land as 
 own way with now and then a gap, its ends rounded down and back, its lip and thickness varying along it; no block where the land
 across or along it is steep (a bed doesn't climb a slot's wall) (Moab: the Staircase, the Golden Staircase, Double Whammy, Gold Bar's
 Waterfall). On a map with strata the code-made rocks are a little less orange than the band, varnished in streaks down their steep
-faces, dark under a lip, and more weathered (deeper relief).
+faces, dark under a lip, and more weathered (deeper relief); they are drawn rounded (finer facets, the hull corners' normals averaged
+and each point pulled in toward its facet's middle the more they turn away: lips and ends round over, only ever inside the collider).
+A bed's blocks get fewer the further out they run (gaps from 18% at the tread to over half at its end) and each its own thickness;
+none stand on land steeper than ~19 degrees across them, nor well above or below the step. The faces' cliff pieces aren't placed
+within 10 m of a trail on such a map.
 
 `strata_fault LAT LON LAT LON SHIFT WIDTH` offsets the bands across a fault: left of the line from the first point to the second they
 sit SHIFT m higher, eased over WIDTH (Moab: 130 m higher south-west of the valley, an approximation from the rims' heights, not a

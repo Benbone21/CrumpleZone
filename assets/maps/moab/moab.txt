@@ -85,7 +85,7 @@ obstacle DOUBLE WHAMMY | ledges | node 9509081700 | GOLDEN SPIKE | length 10 ste
 # Body Snatcher: a tight, tipped squeeze between rock with a ledge in it.
 obstacle BODY SNATCHER | squeeze | node 9509081704 | GOLDEN SPIKE | length 14 steps 1 0.55 camber 14 walls 1.4 width 2.4
 # Gold Bar Rim's Waterfall: the big ledge across Gold Bar Canyon that sets the trail's rating; many need help; no bypass (research 2.6).
-obstacle THE WATERFALL | ledges | node 3445676597 | GOLD BAR RIM | length 10 steps 2 0.55 boulders 2 slabs 0.3 4
+obstacle THE WATERFALL | ledges | node 3445676597 | GOLD BAR RIM | length 10 steps 2 0.55 boulders 2 slabs 0.3 2.5
 # Metal Masher's end (RR4W 7, onX 8; research 2.13). Tailpipe Hill: a 0.5 m ledge to drag a tailpipe on (OSM node only).
 obstacle TAILPIPE HILL | climb | node 3444773886 | METAL MASHER | length 10 steps 1 0.5
 # Rock Chunker: the old standard route, now a playground for big rigs; OSM's short way past it is the bypass.

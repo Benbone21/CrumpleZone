@@ -701,6 +701,14 @@ void PropRenderer::layout(const World& w, int q, Layout& LO) const {
             taken.insert(key);
             const V3 n = w.normal(jx, jz);
             const double gy = w.height(jx, jz);
+            if (!slickPool.empty()) {  // (slickrock: no cliff piece within 10 m of a trail, where it would sit on an obstacle's walls as a shard)
+                bool nearTrail = false;
+                for (int a = 0; a < 8 && !nearTrail; a++) {
+                    const double ang = a * M_PI / 4;
+                    nearTrail = w.roadAt(jx + 10 * std::cos(ang), jz + 10 * std::sin(ang)).near || w.roadAt(jx + 5 * std::cos(ang), jz + 5 * std::sin(ang)).near;
+                }
+                if (nearTrail) continue;
+            }
             const int m = slickPool.empty() ? cliffModels[h % cliffModels.size()] : slickPool[h % slickPool.size()];
             const Model& md = models[m];
             // Model frame (its face's look, its up) onto the slope's (normal, uphill).

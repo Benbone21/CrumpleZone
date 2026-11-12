@@ -249,20 +249,41 @@ void buildRockMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
         auto sink = [&](const V3& p) {
             return p + norm(k.c - p) * (relief * noise3(p * (2.2 / std::max(k.r, 0.4)) + V3(k.seed % 97, 0, 0)));
         };
-        const int S = k.r > 0.7 ? 4 : 2;
+        const int S = strata && k.scan < 0 ? (k.r > 0.7 ? 6 : 3) : k.r > 0.7 ? 4 : 2;
+        // (Sandstone: the hull's corners get normals averaged over the faces round them, and every point of a facet is pulled in
+        // toward the facet's middle the more those normals turn away from the facet's own: edges and lips come out rounded, and
+        // only ever inside what a tire hits.)
+        std::vector<V3> vn;
+        if (strata) {
+            vn.assign(k.v.size(), V3());
+            for (size_t fi = 0; fi < k.f.size(); fi++) {
+                const V3 &A = k.v[k.f[fi][0]], &B = k.v[k.f[fi][1]], &C = k.v[k.f[fi][2]];
+                const double area = 0.5 * len(cross(B - A, C - A));
+                for (int q = 0; q < 3; q++) vn[k.f[fi][q]] = vn[k.f[fi][q]] + k.fn[fi] * area;
+            }
+            for (V3& n : vn) n = len(n) > 1e-12 ? norm(n) : V3(0, 1, 0);
+        }
+        const double roundR = std::min(0.35, 0.25 * k.r);
         for (size_t fi = 0; fi < k.f.size(); fi++) {
             const V3 &A = k.v[k.f[fi][0]], &B = k.v[k.f[fi][1]], &C = k.v[k.f[fi][2]];
             if (std::max({A.y, B.y, C.y}) < world.height((A.x + B.x + C.x) / 3, (A.z + B.z + C.z) / 3) - 0.2) continue;  // buried
             const V3 fn = k.fn[fi];
             const double shade = 0.9 + 0.2 * latticeHash((int)k.seed, (int)fi);
-            auto at = [&](int i, int j) {  // barycentric grid point (i along AB, j along AC)
-                return sink(A + (B - A) * ((double)i / S) + (C - A) * ((double)j / S));
+            auto smoothN = [&](int i, int j) {
+                const double b = (double)i / S, c = (double)j / S, a = 1 - b - c;
+                const V3 n = vn[k.f[fi][0]] * a + vn[k.f[fi][1]] * b + vn[k.f[fi][2]] * c;
+                return len(n) > 1e-12 ? norm(n) : fn;
             };
-            auto tri = [&](const V3& p, const V3& q, const V3& r) {
+            auto at = [&](int i, int j) {  // barycentric grid point (i along AB, j along AC)
+                V3 p = A + (B - A) * ((double)i / S) + (C - A) * ((double)j / S);
+                if (strata) p = p - fn * (roundR * (1 - std::max(0.0, dot(smoothN(i, j), fn))));  // (rounded: in, never out)
+                return sink(p);
+            };
+            auto tri = [&](const V3& p, const V3& q, const V3& r, V3 smooth = V3()) {
                 V3 n = cross(q - p, r - p);
                 n = len(n) > 1e-12 ? norm(n) : fn;
                 if (dot(n, fn) < 0) n = -n;
-                V3 sn = norm(n * 0.5 + fn * 0.5);
+                V3 sn = len(smooth) > 0.5 ? norm(n * 0.3 + smooth * 0.7) : norm(n * 0.5 + fn * 0.5);
                 V3 c = col * shade;
                 if (snowy) c = c + (V3(0.82, 0.84, 0.88) - c) * smoothstep(0.45, 0.7, sn.y + 0.15 * (latticeHash((int)k.seed, (int)fi + 7) - 0.5));
                 if (strata) {
@@ -273,7 +294,7 @@ void buildRockMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
                         V3 cc = c;
                         const double steep = 1 - smoothstep(0.35, 0.7, std::fabs(sn.y));
                         const double streak = smoothstep(0.35, 0.75, noise3(V3(at.x * 1.7 + at.z * 1.3, at.y * 0.25, at.z * 0.4 - at.x * 0.2)));
-                        cc = cc * (1 - steep * (0.25 + 0.35 * streak));
+                        cc = cc * (1 - steep * (0.12 + 0.25 * streak));  // (pale stone: the varnish light, in streaks)
                         if (sn.y < -0.05) cc = cc * (0.45 + 0.3 * smoothstep(-0.8, -0.05, sn.y));  // (under the lip)
                         return cc;
                     };
@@ -284,8 +305,12 @@ void buildRockMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
             };
             for (int i = 0; i < S; i++)
                 for (int j = 0; i + j < S; j++) {
-                    tri(at(i, j), at(i + 1, j), at(i, j + 1));
-                    if (i + j + 1 < S) tri(at(i + 1, j), at(i + 1, j + 1), at(i, j + 1));
+                    const V3 s1 = strata ? norm(smoothN(i, j) + smoothN(i + 1, j) + smoothN(i, j + 1)) : V3();
+                    tri(at(i, j), at(i + 1, j), at(i, j + 1), s1);
+                    if (i + j + 1 < S) {
+                        const V3 s2 = strata ? norm(smoothN(i + 1, j) + smoothN(i + 1, j + 1) + smoothN(i, j + 1)) : V3();
+                        tri(at(i + 1, j), at(i + 1, j + 1), at(i, j + 1), s2);
+                    }
                 }
         }
     }
