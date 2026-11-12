@@ -155,7 +155,9 @@ struct Gltf {
     std::string dir;
     bool load(const std::string& id) {
         dir = gSrc + "/" + id + "/";
-        const std::string path = dir + id + "_1k.gltf";
+        std::string path = dir + id + "_1k.gltf";
+        if (FILE* f = std::fopen(path.c_str(), "rb")) std::fclose(f);
+        else path = dir + id + "_2k.gltf";  // (the Moab set is fetched at 2k: tools/fetch_polyhaven.py --moab)
         cgltf_options o = {};
         if (cgltf_parse_file(&o, path.c_str(), &d) != cgltf_result_success) return false;
         if (cgltf_load_buffers(&o, d, path.c_str()) != cgltf_result_success) return false;
@@ -992,10 +994,16 @@ const Unit kUnits[] = {
     {"namaqualand_stones_01", 2, "nama_stone_c", props::KIND_ROCK, true, {1000, 300, 80}, {512, 256, 128}, true},
     {"namaqualand_stones_01", 3, "nama_stone_d", props::KIND_ROCK, true, {1000, 300, 80}, {512, 256, 128}, true},
     {"namaqualand_stones_01", 4, "nama_stone_e", props::KIND_ROCK, true, {1000, 300, 80}, {512, 256, 128}, true},
+    // Sandstone talus for slickrock country (Moab): opt-in by a map's `rock_scans` (talus_ sorts after the others, so no level's
+    // scan index moves; World::rockScanFilter).
+    {"namaqualand_boulder_02", 0, "talus_02", props::KIND_ROCK, true, {1800, 450, 110}, {1024, 512, 256}, true},
+    {"namaqualand_boulder_06", 0, "talus_06", props::KIND_ROCK, true, {1800, 450, 110}, {1024, 512, 256}, true},
     // Cliffs: open surfaces, visual only.
     {"rock_face_01", 0, "cliff_face_01", props::KIND_CLIFF, true, {3000, 900, 250}, {1024, 512, 256}},
     {"rock_face_02", 0, "cliff_face_02", props::KIND_CLIFF, true, {3000, 900, 250}, {1024, 512, 256}},
     {"namaqualand_cliff_01", 0, "cliff_nama_01", props::KIND_CLIFF, true, {3500, 1000, 280}, {1024, 512, 256}},
+    // A leaning, undercut slab (20 m): slickrock country's overhangs (only where a map's strata ask: propdraw.cpp).
+    {"namaqualand_cliff_02", 0, "overhang_nama_02", props::KIND_CLIFF, true, {3500, 1000, 280}, {1024, 512, 256}},
     // Stumps, logs, branches.
     {"tree_stump_01", 0, "stump_01", props::KIND_STUMP, true, {1800, 500, 120}, {512, 256, 128}},
     {"tree_stump_02", 0, "stump_02", props::KIND_STUMP, true, {1800, 500, 120}, {512, 256, 128}},

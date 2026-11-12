@@ -50,7 +50,7 @@ Code:
 **Recommended size:**
 - **6–12 km square.**
   - 6–8 km is about as big as the 8 km big map: about 1–1.5 GB while it builds, then cached.
-  - 12 km is the importer's limit, at about 2.2× that.
+  - 12 km is about 2.2× that; the importer's limit is about 17 km (Moab's 16.5 km box: 3.3 GB in the game).
 - Smaller (2–4 km) is quick to try.
 - 10 m data drives well with the fine detail the importer adds. 30 m data is smooth and better for big rolling country than for technical trails.
 
@@ -66,7 +66,7 @@ Example sidecar:
 name MOAB
 source USGS_13_n39w110.tif        # relative to this file
 centre 38.565 -109.555            # lat lon (or: bounds S W N E, or: crop x0 y0 x1 y1 in pixels)
-size 6000                         # the map's side in metres (150 m .. 12 km)
+size 6000                         # the map's side in metres (150 m .. about 17 km)
 climate desert                    # temperate | desert | alpine: ground colours, growth, rivers
 exaggeration 1.0                  # heights stretched over the lowest point
 smooth 1                          # 1-2-1 smoothing passes over the DEM's pixels
@@ -150,6 +150,60 @@ slickrock 1290 1750                                  # real elevations between w
 rim 130                                              # how wide the rim that keeps you on the map is (m)
 ```
 
+Slickrock country (all optional, per map; Moab uses them):
+
+```
+lidar detail/x+04038z-00058.tif 0.01 1265 24         # a lidar patch: FILE SCALE OFFSET FEATHER (tools/hires_patches.py writes these)
+include detail.txt                                   # ...usually a file of them
+ledge_sharpen 0.8                                    # on the patches, steps steeper than round them pulled toward a stair (0..1)
+cover cover.tif                                      # ground cover from aerial photos: 1 rock, 2 sand, 3 brush (tools/naip_cover.py)
+strata 1345 190 112 84                               # the rock's colour (sRGB) at a real elevation; one line a band, up to 8
+sand_look 176 96 62                                  # with strata: the sand's colour
+rock_look 176 104 70 0.8                             # scanned rocks and cliffs recoloured (to the strata if any, else this), 0..1
+rock_scans nama_ talus_                              # only scans whose names start so make the map's rocks (talus_ is opt-in)
+```
+
+OpenStreetMap, obstacles and a hand-authored part:
+
+```
+osm osm.txt                                          # OSM ways and points (tools/osm_extract.py: any box, by rules)
+osm_rules 1                                          # ...made trails, obstacles and landmarks by rules (below)
+include moab.txt                                     # another file's lines here: the map's hand-authored part
+trail HELL'S REVENGE | 3 0.6 | osm 1133332241 142208776 327508933 1451260012   # OSM ways chained, followed as drawn
+trail GOLD BAR RIM | 3 0.6 | osm -337485302 1354307247 326830820               # (a negative id: that first way reversed)
+trail METAL MASHER | 3 0.6 | osm 312627046 to 38.63685 -109.67214              # (from/to LAT LON: cut there)
+obstacle HELL'S GATE | notch | node 8623737727 | HELL'S GATE | climb 0.8 9 steps 2 0.55 walls 2.5 width 2.6 camber 8
+obstacle DOUBLE WHAMMY | ledges | node 9509081700 | GOLDEN SPIKE | length 10 steps 2 0.6 bypass DOUBLE WHAMMY BYPASS
+obstacle MOAB RIM DOME | climb | 38.55152 -109.57345 | MOAB RIM | climb 0.85 12 bypass left
+landmark LION'S BACK: CLOSED, PRIVATE LAND | node 8707699266
+```
+
+- **OSM trails** (`osm WAY ...`) aren't routed: the ways are chained (each turned to carry on from the last), kept 200 m inside the map's
+  edge, and only the gaps (two ways that don't meet; a line that leaves the map and comes back) are routed, leaving the way the line was
+  going. A trail that starts on another named trail (an obstacle's option) gets no spur to the roads.
+- **Obstacles** (`SpecObstacle`, `realterrainbuild.cpp`) are built on their trail's laid line through the point: keys `climb G L`,
+  `steps N R`, `length`, `width`, `walls H` (< 0: a fin's drops), `camber DEG`, `crack D W [cross]`, `bowl D SIZE`, `boulders N`,
+  `bypass left|right|TRAIL`. The tread's profile is the obstacle's own (pitch and ledges) from a foot dug at most 1 m into the trail,
+  joined to it by a run-in and run-out at 30%, eased into the land at its sides over 3 m (5 m with steps) or 1.6x its height. Each
+  ledge's face is a slab of the rock itself (`World::addHullRock`: code-made convex pieces about 1.3 m across, each set back and
+  dropped a little, the lip rounded and the foot undercut, top level with the tread above, drawn in the band's colour), running on past
+  the tread as a bed of rock does until the step dies out (the 1 m grid can only ramp a step over a cell). A wall over 2.5 m is the
+  edge of a mass of rock the notch is cut through: it rises over 0.7x its height and runs on past the profile's ends and out to the
+  sides; a few fallen blocks lie at the walls' feet. No rows of boulders, no box slabs. A `bypass left|right` is laid as a trail round it (10 m and more off the line); `bypass TRAIL`
+  is one of the sidecar's (OSM's own bypass). Each is named over it (`World::tags`).
+- **Courses** keep their gates off an obstacle that has a bypass, and carry `easiest`: the line with each such obstacle taken by its
+  bypass (what the tests drive; the course itself is the main line).
+- **By rules** (`osm_rules 1`, `realterrainplan.cpp`), from any box's OSM file with no hand work: every `highway=track` that is
+  `4wd_only=yes` or named (not `motor_vehicle=no`, not private) and not on an authored trail is a trail under its OSM name, rated by
+  `tracktype` (grade1-2 blue, 3 black, 4-5 red) and `smoothness` (`very_horrible` red), cut where it leaves the map or meets a big
+  river; every `tourism=attraction` (not a natural or historic feature) within 12 m of a black or red OSM trail is an obstacle under its
+  name (two 0.4 m ledges over 10 m: nothing says more of an unknown one); every trailhead and viewpoint a landmark. What the sidecar
+  names (by way or node id) wins. In Moab's box the rules add 70 small trails and no obstacles (every attraction on a 4x4 track there is
+  authored).
+- **`include FILE`** reads another file's lines in its place; its text is part of the hash, as the osm file's is. Moab keeps its
+  generic settings in `terrain.txt` and everything hand-made (town, river, bridge, the famous trails' way chains, obstacle sizes,
+  courses) in `moab.txt`.
+
 - With `place` lines, no outposts are picked unless `outposts` asks; the town is first, and is the start.
 - A big river can't be forded: roads and trails only cross it over a bridge.
 - A named trail's route is an A* over (cell, heading): no turn sharper than ~53 degrees a step, so a switchback is wide enough for
@@ -159,15 +213,64 @@ rim 130                                              # how wide the rim that kee
 - Each `course` is a sprint level on MAP_REAL (`realCourseLevels`, in the level list after the built-in ones): the start on the
   trail's first metres, a gate every ~250 m, medals by length and difficulty. Difficulty 5 has no repairs.
 
+### Lidar detail
+The DEM (10 m for Moab) is smooth: domes read as dunes and every ledge is rounded away. `tools/hires_patches.py` (the ROCm venv:
+numpy, rasterio, pyproj, cv2) cuts high-resolution DEM tiles (USGS 3DEP 1 m, any projected CRS) into patches on the map's own 1 m
+grid where they matter: corridors along the named trails (rated 2+, 60 m either side), 400 m squares round the named obstacles, and
+any `--box` asked for. Each is a GeoTIFF in NAD83 degrees, one pixel a map metre, int16 centimetres over its own offset, NoData
+outside, deflate; neighbouring patches overlap by their feather so no seam shows. The sources go best first (the first with a pixel
+wins). The game (`Terrain::patchAt`) lays them over the DEM bicubically, eased in over the feather (a 3-4 chamfer distance from
+NoData: integers, the same everywhere), without the made-up fine bumps (`landAt`); the contour ledges skip them, and `ledge_sharpen`
+pulls their risers toward a stair where a step is much steeper than the ground round it. The patches are hashed into `Spec::hash`.
+
+Moab: 28 patches, 25 M cells, 25.4 MB (`assets/maps/moab/detail/`), from `UT_FEMA_FS_FlamingGorge_2020_B20` (x61..x63, y427..y428:
+one survey over all of box D, so no seam where another begins) first, then `UT_Southern_QL1_2018` and `UT_COUTAML_D24` where it has
+no data, over the trails, the obstacles and Hell's Revenge (38.560-38.600 N, 109.540-109.500 W). Every named obstacle is on it.
+The UGRC 2025 0.5 m DEM (Hell's Revenge core) states no licence, so nothing from it ships.
+
+Hard trails (rated 3, and bypasses) over the lidar level only about 3.6 m of tread, eased into the survey over 2.5 m, so a slot
+keeps its walls and its V. The patches are read with `loadGeoTiff`, not `loadDem`, so their NoData isn't filled in.
+
+**Obstacles on lidar.** Where a patch has its full weight over an obstacle's whole stretch, the land is taken to have the obstacle's
+real form: its authored walls, fins, pitch and camber are dropped, and only the ledges are added, cut into the land's own slope (up
+or down) with their faces as slabs; a crack or a pothole is still authored (the survey smooths them). Its tread is at most 1.8 m
+either side, eased in over 2 m. The ledges (everywhere) are uneven: spacing jittered, rises varied up to about a fifth either way
+(adding up to what's authored); on lidar each is a shorter, off-centre lip, rounded over and dying into the slope at its ends.
+
+`strata_fault LAT LON LAT LON SHIFT WIDTH` offsets the bands across a fault: left of the line from the first point to the second they
+sit SHIFT m higher, eased over WIDTH (Moab: 130 m higher south-west of the valley, an approximation from the rims' heights, not a
+geologic map).
+
+### Ground cover and the slickrock look
+`tools/naip_cover.py` classifies NAIP 2024 (USDA, 0.6 m, public domain) by colour: pale, low-saturation pixels are bare rock, the
+more saturated orange ones sand, dark greener ones brush; median-filtered, then resampled by mode onto the map's frame at 2 m
+(`cover.tif`, 7.4 MB for Moab). In the slickrock band the build follows it (the steep is rock whatever it says; looked up a little off
+the point by noise, so the pixels' square edges are ragged), and bushes grow only on brush.
+
+With `strata`, the ground shader (`groundshader.cpp`, uniform `uSlick`; every other map has it 0 and looks as before) draws the map's
+slickrock (paint REDROCK) with four sandstone materials, bedded and streaked ones (Poly Haven `cliff_side`, ambientCG `Rock029`) on the
+faces, cracked and worn ones (`rock_boulder_cracked`, `worn_rock_natural_01`) on the tops, and its sand with `red_sand`. Their own
+colour is only light and shade: the colour is the band's at that height (noise-wobbled), with beds a metre or two thick, cross-bedding
+lines dipping one way in a patch and another in the next, desert varnish streaking down the faces and bleached tops. The scanned
+rocks and cliffs (`propdraw.cpp`, `uRetint`) and the code-made rocks (`scenery.cpp`) take the same bands. The faces get the
+Namaqualand cliff and the leaning, undercut `overhang_nama_02` slab instead of the grey lichened faces.
+
 ### Shipping a real map
 `build/realterrain make SIDECAR --out DIR --int16 0.1 1000` writes the crop as int16 decimetres (LZW, horizontal predictor) and
 adds the `vertical_scale` and `vertical_offset` lines: a third of the float32 crop's size, and 10 cm steps are well under the
 DEM's own accuracy. `build/realterrain pack TILE LAT LON SIZE K OUT.tif` makes a backdrop (K x K pixels averaged, whole metres).
 The game ships its maps in `assets/maps/` (copied into every package); `maps/` and `data/real/` are still searched for others.
 
-**Moab** (`assets/maps/moab/`, `docs/plans/real-moab.md`): option A, 12 x 12 km round 38.565 N, 109.555 W, 2.7 MB in all
-(dem.tif 1.8 MB, backdrop.tif 0.9 MB). Option B (16 km, 4 km east) is the `centre` and `size` lines and a new crop from the source
-tile: the trails, places and courses are in lat/lon and stay put. The tests are `tests/moab.cpp`.
+**Moab** (`assets/maps/moab/`, `docs/plans/real-moab.md`, `docs/plans/moab-trails.md`): box D, 16.5 x 16.5 km round 38.570 N,
+109.585 W (38.500-38.640 N, 109.680-109.490 W and a little more north and south), 4.7 MB in all (dem.tif 3.6 MB, backdrop.tif 0.9 MB,
+osm.txt 0.3 MB). The tests are `tests/moab.cpp`. Credits: `assets/maps/moab/CREDITS.txt` (USGS; OSM, ODbL).
+
+**Memory** (Moab, box D, measured): the game peaks at 3.3 GB (4.7 GB before its scattered scanned rocks were made whole hulls:
+20 k rocks cut into convex pieces were 1.5 GB); the tool and the tests (code-made rocks) at 2.4 GB, so the tests build one Moab at a
+time. The 1 m grid is 1.6 GB of it (heights 4 bytes, surface and paint 1 each, 272 M cells): the ledge pass no longer copies it whole.
+With the lidar patches (25 M cells, int16 heights and 8-bit weights: about 75 MB) and the ground cover (68 MB of classes), the
+game's peak resident size measured offscreen at 1600x900 (VmHWM, building the map) is 3.69-3.71 GB, against 3.42-3.44 GB on the same
+runs before them.
 
 ## Determinism, the cache and multiplayer
 
@@ -182,6 +285,16 @@ tile: the trails, places and courses are in lat/lon and stay put. The tests are 
   - Another real map shares `MAP_REAL`'s id. Discoveries are keyed `7:NAME`, so two real maps with a place of the same name share it.
 
 ## Limits and next steps
+
+What wouldn't scale to a whole country (Moab is the test for that):
+- **One map in memory, 1 m everywhere.** A 16.5 km square is 3.3 GB in the game; the grid alone grows with area (6 bytes a m2). A
+  bigger country needs the procedural world's way: a window streamed round the player, the far land coarse.
+- **The preprocessing is per box and by hand**: crop the DEM (one tile, no mosaics), run one Overpass query (a few MB; Overpass
+  limits big ones), `tools/osm_extract.py`. A country needs tiles of both, made by a batch job and cached.
+- **Hand-authored obstacles.** Their sizes come from reading trail guides one at a time (no source publishes them); the rules make a
+  generic pair of ledges for an OSM attraction and nothing for a trail with none. Only famous trails can be authored.
+- **Courses and their drive checks** take minutes each (a 10 km course is about 5 minutes of the test suite).
+- **OSM's coverage varies**: Moab's 4x4 obstacles are tagged because a mapper entered them; most places have none.
 
 - **Mosaics.** One DEM file per map. A crop across tiles needs the tiles merged first.
 - **Drainage on dead-flat land.** It can make straight runs (D8 on flats). Real DEMs rarely show it; synthetic flats do.

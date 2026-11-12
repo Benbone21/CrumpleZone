@@ -897,9 +897,15 @@ std::vector<Level> realCourseLevels() {
         };
         lv.hasStart = true, lv.start = L[2], lv.startYaw = yawAt(2);
         double along = 0, next = 250;
+        // (None on an obstacle that has a way round (PlanCourse::optional): the way round is a way through.)
+        auto optional = [&](double s) {
+            for (const auto& o : c.optional)
+                if (s > o.first - 15 && s < o.second + 15) return true;
+            return false;
+        };
         for (size_t k = 1; k < L.size(); k++) {
             along += std::hypot(L[k].x - L[k - 1].x, L[k].z - L[k - 1].z);
-            if ((along >= next && c.length - along > 120) || k + 1 == L.size()) {
+            if ((along >= next && c.length - along > 120 && !optional(along)) || k + 1 == L.size()) {
                 Gate g;
                 g.p = L[k], g.yaw = yawAt(k), g.width = c.spec.difficulty >= 3 ? 16 : 20;
                 lv.gates.push_back(g);

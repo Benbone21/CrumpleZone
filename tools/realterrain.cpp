@@ -9,6 +9,7 @@
 //   build/realterrain synth cone|valley|mesa DIR   writes a synthetic DEM and its terrain.txt (for trying the importer)
 //   build/realterrain grid SIDECAR OUT.f32 [STEP]  the land every STEP m as raw float32 (to look at with other tools)
 //   build/realterrain pack FILE LAT LON SIZE K OUT a coarse int16 copy round a point (K x K pixels averaged): a map's backdrop
+//   build/realterrain views SIDECAR|DIR            a driver's-eye view of each named obstacle, as the game's --eye and --spawn
 //   (make ... --int16 SCALE OFFSET: the cropped DEM as int16 with its vertical_scale and vertical_offset, about half the size)
 #include <chrono>
 #include <cmath>
@@ -38,7 +39,8 @@ int usage() {
                  "       realterrain make SIDECAR|DIR [--out DIR] [--preview FILE.ppm] [--no-world] [--scans]\n"
                  "       realterrain synth cone|valley|mesa DIR\n"
                  "       realterrain grid SIDECAR|DIR OUT.f32 [STEP]\n"
-                 "       realterrain pack FILE LAT LON SIZE_M K OUT.tif\n");
+                 "       realterrain pack FILE LAT LON SIZE_M K OUT.tif\n"
+                 "       realterrain views SIDECAR|DIR\n");
     return 2;
 }
 
@@ -156,6 +158,36 @@ void preview(const World& w, const rt::Terrain& t, const std::string& path) {
     f.write((const char*)img.data(), (std::streamsize)img.size());
 }
 
+// Where to look at each named obstacle from (a sidecar's `obstacle` lines): a driver's eye 2 m up, 16 m back from its start, facing it,
+// and a vehicle parked behind, as the game's --eye X,Z,H,YAW,PITCH and --spawn X,Z,HEADING (degrees; the review shots).
+int views(const std::string& path) {
+    rt::Spec s;
+    std::string err;
+    if (!rt::loadSpec(path, s, &err)) return std::fprintf(stderr, "%s\n", err.c_str()), 1;
+    auto t = rt::prepare(s, &err);
+    if (!t) return std::fprintf(stderr, "%s\n", err.c_str()), 1;
+    const auto& p = t->plan();
+    for (const auto& o : p.obstacles) {
+        const std::vector<V3> L = rt::smoothLine(p.trails[o.trail].pts, 1.0);
+        std::vector<double> at(L.size(), 0);
+        for (size_t k = 1; k < L.size(); k++) at[k] = at[k - 1] + std::hypot(L[k].x - L[k - 1].x, L[k].z - L[k - 1].z);
+        auto pt = [&](double sAt) {
+            size_t k = 0;
+            while (k + 1 < L.size() && at[k] < sAt) k++;
+            return L[k];
+        };
+        // (straight back from its start the way the trail comes into it: a short option's line may not reach that far back; the
+        // vehicle parked further back still, out of the picture)
+        const V3 f0 = pt(o.from), f1 = pt(o.from + 3);
+        const V3 d = norm(V3(f1.x - f0.x, 0, f1.z - f0.z)), mid = pt(0.5 * (o.from + o.to));
+        const V3 eye = f0 - d * 16, car = f0 - d * 30;
+        const double yaw = std::atan2(-(mid.z - eye.z), mid.x - eye.x) * 180 / M_PI, head = std::atan2(-d.z, d.x) * 180 / M_PI;
+        const double pitch = std::atan2(t->demAt(mid.x, mid.z) - t->demAt(eye.x, eye.z) - 2, std::hypot(mid.x - eye.x, mid.z - eye.z)) * 180 / M_PI;
+        std::printf("%s|--eye %.1f,%.1f,2.0,%.1f,%.1f --spawn %.1f,%.1f,%.1f\n", o.spec.name.c_str(), eye.x, eye.z, yaw, pitch, car.x, car.z, head);
+    }
+    return 0;
+}
+
 int make(int argc, char** argv) {
     std::string path, out, prev;
     bool world = true, scans = false;
@@ -198,6 +230,9 @@ int make(int argc, char** argv) {
     for (const auto& c : p.courses)
         std::printf("    course %-20s %.2f km, %.0f m up, %.0f m down, difficulty %d (%s), start (%.0f, %.0f)\n", c.spec.name.c_str(), c.length / 1000, c.climb, c.drop,
                     c.spec.difficulty, c.spec.vehicle.empty() ? "any" : c.spec.vehicle.c_str(), c.line.empty() ? 0.0 : c.line[0].x, c.line.empty() ? 0.0 : c.line[0].z);
+    for (const auto& o : p.obstacles)
+        std::printf("    obstacle %-24s %-7s on %-20s (%6.0f, %6.0f) %5.0f m along, %4.0f..%4.0f%s%s\n", o.spec.name.c_str(), o.spec.kind.c_str(), o.spec.trail.c_str(), o.at.x, o.at.z,
+                    o.along, o.from, o.to, o.bypass >= 0 ? ", bypass " : "", o.bypass >= 0 ? (p.trails[o.bypass].name.empty() ? "(made)" : p.trails[o.bypass].name.c_str()) : "");
     std::printf("  prepared in %.2f s\n", std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
     if (!out.empty()) {
         namespace fs = std::filesystem;
@@ -360,6 +395,7 @@ int main(int argc, char** argv) {
     if (cmd == "make") return make(argc - 2, argv + 2);
     if (cmd == "synth" && argc >= 4) return synth(argv[2], argv[3]);
     if (cmd == "grid" && argc >= 4) return grid(argv[2], argv[3], argc >= 5 ? std::atof(argv[4]) : 12);
+    if (cmd == "views" && argc >= 3) return views(argv[2]);
     if (cmd == "pack" && argc >= 8) return pack(argv[2], std::atof(argv[3]), std::atof(argv[4]), std::atof(argv[5]), std::max(1, std::atoi(argv[6])), argv[7]);
     return usage();
 }

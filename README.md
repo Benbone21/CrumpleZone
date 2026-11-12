@@ -816,6 +816,9 @@ The scans are CC0 from [Poly Haven](https://polyhaven.com). The raw downloads st
 
 ```bash
 python3 tools/fetch_polyhaven.py assets/source/polyhaven   # ~154 MB, md5-checked
+python3 tools/fetch_polyhaven.py assets/source/polyhaven --moab   # Moab's sandstone set at 2k, ~190 MB
+python3 tools/fetch_ambientcg.py assets/source/ambientcg Rock029  # ~60 MB (zip kept)
+python3 tools/ground_layers.py ph assets/source/polyhaven/textures cliff_side ...   # 2k -> assets/ground's 1k sets
 make bake                                                  # -> assets/props (committed): 3 LODs, atlases, hulls, billboards
 ```
 
@@ -837,7 +840,12 @@ Poly Haven `leafy_grass`, `aerial_grass_rock` (grass), `coast_sand_01`, `aerial_
   namaqualand_boulders_01, namaqualand_stones_01, rock_face_01/02, namaqualand_cliff_01, fir_sapling,
   pine_sapling_small, dead_tree_trunk, dead_tree_trunk_02, shrub_02/03/04, fern_02, grass_medium_02,
   tree_stump_01/02, dry_branches_medium_01; forrest_ground_01, brown_mud_leaves_01, brown_mud_03, brown_mud_dry,
-  rocky_terrain_02, gravel_ground_01, sandy_gravel_02, snow_02, forest_leaves_04, rocky_trail).
+  rocky_terrain_02, gravel_ground_01, sandy_gravel_02, snow_02, forest_leaves_04, rocky_trail; for Moab's slickrock
+  namaqualand_boulder_02/06, namaqualand_cliff_02, cliff_side, rock_boulder_cracked, worn_rock_natural_01, red_sand).
+- Moab's streaked cliff rock: [ambientCG](https://ambientcg.com) Rock029, CC0.
+- The real Moab map (`assets/maps/moab/`): heights from the [USGS 3D Elevation Program](https://www.usgs.gov/3d-elevation-program)
+  (public domain); trails, roads, the river line and named places and obstacles © [OpenStreetMap](https://www.openstreetmap.org/copyright)
+  contributors, ODbL 1.0 (`assets/maps/moab/osm.txt`, derived by `tools/osm_extract.py`).
 - `src/third_party/stb_image.h`: Sean Barrett, public domain.
 - `src/third_party/cgltf.h`: Johannes Kuhlmann, MIT license.
 

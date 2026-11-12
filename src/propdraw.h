@@ -183,7 +183,7 @@ private:
     std::vector<uint8_t> treeNear;  // trees per 16 m cell (forest floor or meadow)
     int treeNearN = 0;
     // The models the world's objects map to.
-    std::vector<int> pineModels, snagModels, logModels, bushModels, cliffModels;
+    std::vector<int> pineModels, snagModels, logModels, bushModels, cliffModels, overhangModels;
 
     // This frame's draw lists: per (model, lod) the instance records, and per model the billboards.
     struct Bucket {

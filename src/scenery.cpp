@@ -1,5 +1,6 @@
 #include <unordered_map>
 #include "scenery.h"
+#include "realterrain.h"
 
 #include "forest.h"
 #include "meshopt.h"
@@ -216,11 +217,33 @@ void slab(std::vector<Vtx>& out, const Box& b) {
 }  // namespace
 
 void buildRockMesh(const World& world, std::vector<Vtx>& v, const ScanCover& skip) {
+    // (A real map with rock strata (Moab): its code-made rocks, the ledges' faces among them, in the colour of the band they're in.)
+    const std::shared_ptr<const realterrain::Terrain> rt = world.map == MAP_REAL ? realterrain::active() : nullptr;
+    const bool strata = rt && !rt->spec.strata.empty();
+    double fax = 0, faz = 0, fbx = 1, fbz = 0;
+    if (strata && rt->spec.hasFault) rt->toMap(rt->spec.faultA, fax, faz), rt->toMap(rt->spec.faultB, fbx, fbz);
+    auto strataCol = [&](const V3& at) {
+        const std::vector<realterrain::SpecStratum>& st = rt->spec.strata;
+        double e = rt->realElevation(at.y);
+        if (rt->spec.hasFault) {  // (as the shader: the bands sit higher left of the fault)
+            const double dx = fbx - fax, dz = fbz - faz, L = std::max(1e-3, std::sqrt(dx * dx + dz * dz));
+            const double side = (dx * (at.z - faz) - dz * (at.x - fax)) / L;
+            e -= rt->spec.faultShift * smoothstep(-0.5 * rt->spec.faultWidth, 0.5 * rt->spec.faultWidth, side);
+        }
+        auto lin = [](double c) { return c / 255.0; };  // (vertex colours are sRGB)
+        V3 c(lin(st[0].r), lin(st[0].g), lin(st[0].b));
+        for (size_t i = 1; i < st.size(); i++) {
+            const double t = smoothstep(0.3, 0.7, (e - st[i - 1].elev) / std::max(1.0, st[i].elev - st[i - 1].elev)) * (e >= st[i - 1].elev ? 1 : 0);
+            c = c + (V3(lin(st[i].r), lin(st[i].g), lin(st[i].b)) - c) * t;
+        }
+        return c;
+    };
     for (const Rock& k : world.rocks) {
         if (k.scan >= 0 && skip.rocks) continue;
         // The collider's own facets, each split into 16 and given a little relief, always
         // pushed inward (toward the middle), so nothing drawn sticks out past what a tire hits.
-        const V3 col = V3(0.34, 0.32, 0.30) * k.tint;
+        const V3 col = (strata ? strataCol(k.c) * 1.12 : V3(0.34, 0.32, 0.30)) * k.tint;
+        const int mat = strata ? SM_SLAB : SM_ROCK;  // (sandstone: no moss)
         const bool snowy = world.surfaceAt(k.c.x, k.c.z) == SURF_SNOW;  // snow lies on its top
         const double relief = std::min(0.05, 0.035 * k.r);
         auto sink = [&](const V3& p) {
@@ -242,7 +265,7 @@ void buildRockMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
                 V3 sn = norm(n * 0.5 + fn * 0.5);
                 V3 c = col * shade;
                 if (snowy) c = c + (V3(0.82, 0.84, 0.88) - c) * smoothstep(0.45, 0.7, sn.y + 0.15 * (latticeHash((int)k.seed, (int)fi + 7) - 0.5));
-                v.push_back(vert(p, sn, c, SM_ROCK)), v.push_back(vert(q, sn, c, SM_ROCK)), v.push_back(vert(r, sn, c, SM_ROCK));
+                v.push_back(vert(p, sn, c, mat)), v.push_back(vert(q, sn, c, mat)), v.push_back(vert(r, sn, c, mat));
             };
             for (int i = 0; i < S; i++)
                 for (int j = 0; i + j < S; j++) {

@@ -1,4 +1,5 @@
 #include "propdraw.h"
+#include "realterrain.h"
 #include "loadprof.h"
 #include "meshcache.h"
 #include "texcomp.h"
@@ -67,6 +68,27 @@ out vec4 oCol;
 uniform sampler2D uDiff, uNorm, uArm;
 uniform int uAlpha, uFoliage, uHasNorm, uHasArm;
 uniform float uCutoff;
+uniform int uRetint;
+uniform vec4 uRockLook;
+uniform vec4 uStrata[8];
+uniform int uStrataN;
+uniform vec4 uStrataFault;
+uniform vec2 uStrataShift;
+float propStrataShift(vec2 xz){
+  if (uStrataShift.x == 0.0) return 0.0;
+  vec2 a = uStrataFault.xy, d = uStrataFault.zw - a;
+  float side = (d.x * (xz.y - a.y) - d.y * (xz.x - a.x)) / max(length(d), 1e-3);
+  return uStrataShift.x * smoothstep(-0.5 * uStrataShift.y, 0.5 * uStrataShift.y, side);
+}
+vec3 propStrataAt(float y){
+  vec3 c = uStrata[0].yzw;
+  for (int i = 1; i < 8; i++) {
+    if (i >= uStrataN) break;
+    float t = (y - uStrata[i - 1].x) / max(uStrata[i].x - uStrata[i - 1].x, 1.0);
+    c = mix(c, uStrata[i].yzw, smoothstep(0.3, 0.7, t) * step(uStrata[i - 1].x, y));
+  }
+  return c;
+}
 void main(){
   if (uFoliage == 1 && vExtra.w > ditherAt(gl_FragCoord.xy)) discard;  // a tree the camera sees through: its leaves only, never the trunk (the extra's w: how much is hidden)
   vec4 d = texture(uDiff, vUv);
@@ -87,6 +109,14 @@ void main(){
   float ao = 1.0, rough = 0.85;
   if (uHasArm == 1) { vec3 a = texture(uArm, vUv).rgb; ao = a.r; rough = max(a.g, 0.05); }
   vec3 alb = d.rgb * vExtra.x;
+  // A real map's rock look (its `strata` and `rock_look`: Moab): a scanned rock or cliff takes the colour of the rock band it stands
+  // in, its own photo kept as its light and shade. (Off everywhere else: uRockLook.w is 0.)
+  if (uRetint == 1 && uRockLook.w > 0.0) {
+    float l = dot(alb, vec3(0.2126, 0.7152, 0.0722));
+    vec3 c = uStrataN > 0 ? propStrataAt(vPos.y - propStrataShift(vPos.xz) + 2.0 * (hash(floor(NP.xz * 0.2)) - 0.5)) : uRockLook.rgb;
+    c *= 0.9 + 0.2 * hash(floor(vPos.xz * 0.5 + vExtra.y));
+    alb = mix(alb, c * clamp(l / 0.11, 0.25, 2.0), uRockLook.w);
+  }
   // Snow lying on whatever faces up (props standing in snow).
   float snow = vExtra.z * smoothstep(0.45, 0.8, n.y + 0.15 * (hash(floor(NP.xz * 6.0)) - 0.5));
   alb = mix(alb, vec3(0.80, 0.83, 0.88), snow);
@@ -490,6 +520,7 @@ bool PropRenderer::ensureLoaded(int q) {
         else if (startsWith(n, "log_")) logModels.push_back(i);
         else if (startsWith(n, "shrub_")) bushModels.push_back(i);
         else if (startsWith(n, "cliff_")) cliffModels.push_back(i);
+        else if (startsWith(n, "overhang_")) overhangModels.push_back(i);
         else if (startsWith(n, "grass_")) scatterGrass.push_back(i);
         else if (startsWith(n, "fern_")) scatterFern.push_back(i);
         else if (startsWith(n, "stump_") || startsWith(n, "branches_")) scatterLitter.push_back(i);
@@ -619,6 +650,17 @@ void PropRenderer::layout(const World& w, int q, Layout& LO) const {
     }
     // Cliff faces on the steep ground (visual only: the physics has the slope), laid on it
     // facing out, a little sunk in, away from trails and water.
+    // (Slickrock country, a real map with rock strata (Moab): its faces get the Namaqualand cliff and the leaning, undercut slab,
+    // recoloured to the rock's bands by the shader, not the grey lichened faces.)
+    std::vector<int> slickPool;
+    if (w.map == MAP_REAL) {
+        const std::shared_ptr<const realterrain::Terrain> rt = realterrain::active();
+        if (rt && !rt->spec.strata.empty()) {
+            for (int i : cliffModels)
+                if (models[i].name == "cliff_nama_01") slickPool.push_back(i);
+            for (int i : overhangModels) slickPool.push_back(i), slickPool.push_back(i);
+        }
+    }
     if (!cliffModels.empty()) {
         // Every steep spot inside the rim (the crags beyond are scenery far off), then a
         // spread-out share of them by hash, at least 9 m apart.
@@ -659,7 +701,7 @@ void PropRenderer::layout(const World& w, int q, Layout& LO) const {
             taken.insert(key);
             const V3 n = w.normal(jx, jz);
             const double gy = w.height(jx, jz);
-            const int m = cliffModels[h % cliffModels.size()];
+            const int m = slickPool.empty() ? cliffModels[h % cliffModels.size()] : slickPool[h % slickPool.size()];
             const Model& md = models[m];
             // Model frame (its face's look, its up) onto the slope's (normal, uphill).
             const V3 zM = md.faceNormal, xM = norm(cross(up, zM)), yM = cross(zM, xM);
@@ -973,12 +1015,13 @@ void PropRenderer::submit(GLuint prog, bool depth, long long& tris, int& draws, 
     Uniform1i(uniformLocation(prog, "uArm"), 7);
     const GLint uAlpha = uniformLocation(prog, "uAlpha"), uCut = uniformLocation(prog, "uCutoff"), uFol = uniformLocation(prog, "uFoliage");
     const GLint uHasN = uniformLocation(prog, "uHasNorm"), uHasA = uniformLocation(prog, "uHasArm"), uWind = uniformLocation(prog, "uWind");
-    const GLint uTop = uniformLocation(prog, "uTop");
+    const GLint uTop = uniformLocation(prog, "uTop"), uRetint = uniformLocation(prog, "uRetint");
     for (size_t b = 0; b < buckets.size(); b++) {
         const int n = (int)(buckets[b].data.size() / 16);
         if (!n) continue;
         const Model& g = models[buckets[b].model];
         Uniform1f(uTop, g.height);
+        if (!depth) Uniform1i(uRetint, g.kind == props::KIND_ROCK || g.kind == props::KIND_CLIFF ? 1 : 0);  // (a real map's rock look)
         for (const Sub& s : g.lods[buckets[b].lod]) {
             const Mat& mt = g.mats[std::min<size_t>(s.mat, g.mats.size() - 1)];
             if (mt.twoSided || mt.alpha) Disable(GL_CULL_FACE);

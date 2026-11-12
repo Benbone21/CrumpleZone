@@ -41,8 +41,8 @@ float fbmFew(vec2 p, int oct, int full){ return fbm(p, oct) * (1.0 - exp2(-float
 
 // ---- Materials: a layer of the arrays, a tint, a size on the ground, a relief strength ----
 const int kPROC = 16;  // "not a photo": the procedural look
-const int   kVLayer[17] = int[](0, 2, 1, 3, 4, 6, 7, 5, 5, 8, 8, 7, 7, 9, 4, 7, 0);
-const vec4  kVTint[17] = vec4[](
+const int   kVLayer[22] = int[](0, 2, 1, 3, 4, 6, 7, 5, 5, 8, 8, 7, 7, 9, 4, 7, 0, 10, 11, 12, 13, 14);
+const vec4  kVTint[22] = vec4[](
   vec4(1.00, 1.00, 1.00, 0.85),  //  0 MUD         wet mud
   vec4(1.00, 1.00, 1.00, 1.00),  //  1 MUDLEAF     mud with sprouts
   vec4(0.85, 0.80, 0.75, 1.00),  //  2 DIRT        dry earth, trails
@@ -59,9 +59,40 @@ const vec4  kVTint[17] = vec4[](
   vec4(1.50, 1.50, 1.55, 1.00),  // 13 SNOW
   vec4(1.00, 0.88, 0.60, 1.00),  // 14 DRYGRASS    sparse grass, bleached
   vec4(0.52, 0.51, 0.50, 1.00),  // 15 CLIFF       the stones, dark grey, big
-  vec4(1.0));
-const float kVTile[17] = float[](2.5, 3.0, 2.5, 3.0, 3.0, 3.0, 2.5, 3.0, 3.5, 3.5, 4.0, 3.5, 2.0, 3.5, 3.0, 4.5, 3.0);
-const float kVBump[17] = float[](1.0, 1.0, 1.0, 1.0, 0.8, 0.8, 1.0, 0.9, 0.5, 0.7, 0.7, 1.1, 1.2, 0.5, 0.8, 1.3, 0.0);
+  vec4(1.0),                     // 16 (the procedural look)
+  // Slickrock country (uSlick): recoloured to the rock's band after, so their own colour is only their light and shade.
+  vec4(1.00, 1.00, 1.00, 1.00),  // 17 SANDFACE    bedded cliff face
+  vec4(1.00, 1.00, 1.00, 1.00),  // 18 SANDCRACK   slickrock, cracked
+  vec4(1.00, 1.00, 1.00, 1.00),  // 19 SANDSMOOTH  worn smooth
+  vec4(1.00, 1.00, 1.00, 1.10),  // 20 REDSAND     sand
+  vec4(1.00, 1.00, 1.00, 1.00)); // 21 STREAKED    streaked cliff
+const float kVTile[22] = float[](2.5, 3.0, 2.5, 3.0, 3.0, 3.0, 2.5, 3.0, 3.5, 3.5, 4.0, 3.5, 2.0, 3.5, 3.0, 4.5, 3.0, 4.0, 6.0, 4.0, 3.0, 5.0);
+const float kVBump[22] = float[](1.0, 1.0, 1.0, 1.0, 0.8, 0.8, 1.0, 0.9, 0.5, 0.7, 0.7, 1.1, 1.2, 0.5, 0.8, 1.3, 0.0, 1.3, 0.9, 0.8, 0.5, 1.2);
+
+// ---- Slickrock country (a real map's `strata`: Moab): its sandstone, coloured by bands of real elevation ----
+uniform float uSlick;        // 1: on (paint 15 is sandstone, 7 and 14 its sand); 0: every other map, as ever
+uniform vec4 uStrata[8];     // (map height, linear r, g, b), by height
+uniform int uStrataN;
+uniform vec3 uSandLook;      // the sand's colour (linear)
+uniform vec4 uStrataFault;   // a fault's line on the map (x, z, x, z) ...
+uniform vec2 uStrataShift;   // ... and how much higher the bands sit left of it (m), eased over (m)
+float strataShift(vec2 xz){
+  if (uStrataShift.x == 0.0) return 0.0;
+  vec2 a = uStrataFault.xy, d = uStrataFault.zw - a;
+  float side = (d.x * (xz.y - a.y) - d.y * (xz.x - a.x)) / max(length(d), 1e-3);  // (> 0: left of it)
+  return uStrataShift.x * smoothstep(-0.5 * uStrataShift.y, 0.5 * uStrataShift.y, side);
+}
+float gSlickRock = 0.0, gSlickSand = 0.0, gFace = 0.0;
+vec3 strataAt(float y){
+  if (uStrataN <= 0) return vec3(0.5);
+  vec3 c = uStrata[0].yzw;
+  for (int i = 1; i < 8; i++) {
+    if (i >= uStrataN) break;
+    float t = (y - uStrata[i - 1].x) / max(uStrata[i].x - uStrata[i - 1].x, 1.0);
+    c = mix(c, uStrata[i].yzw, smoothstep(0.3, 0.7, t) * step(uStrata[i - 1].x, y));
+  }
+  return c;
+}
 
 // ---- The material mix at this pixel: up to 12 (variant, weight) slots ----
 float gProc = 0.0;       // weight of the procedural look
@@ -143,6 +174,21 @@ void expandPaint(int paint, float w){
 #else
   float nz = paint != 0 ? gNoiseA : 0.0, nz2 = paint == 8 ? gNoiseB : 0.0;
 #endif
+  if (uSlick > 0.5 && paint == 15) {  // sandstone: bedded and streaked on the faces, cracked and worn smooth on the tops
+    gSlickRock += w;
+    float nz3 = gNoiseB;
+    addSlot(17, w * gFace * (0.65 + 0.3 * nz));
+    addSlot(21, w * gFace * (0.35 - 0.3 * nz));
+    addSlot(18, w * (1.0 - gFace) * clamp(0.5 + 0.6 * (nz3 - 0.5), 0.0, 1.0));
+    addSlot(19, w * (1.0 - gFace) * clamp(0.5 - 0.6 * (nz3 - 0.5), 0.0, 1.0));
+    return;
+  }
+  if (uSlick > 0.5 && (paint == 7 || paint == 14)) {  // its sand, and the sandy dirt between
+    gSlickSand += w * (paint == 7 ? 1.0 : 0.7);
+    addSlot(20, w * (paint == 7 ? 0.8 + 0.15 * nz : 0.55));
+    addSlot(paint == 7 ? 8 : 9, w * (paint == 7 ? 0.2 - 0.15 * nz : 0.45));
+    return;
+  }
   if (paint == 0) { naturalGround(w); }
   else if (paint == 1) {
     if (uMap == 0 || uMap == 2) {  // asphalt road: the procedural look out to its gravel shoulder, the land beyond
@@ -268,6 +314,7 @@ void main(){
 #ifdef X_RA
   oCol = vec4(gN1 + gNoiseA + gNoiseB + gDry + gBald + gSteep + gHigh + gSnowH + gForest); return;
 #endif
+  gFace = 1.0 - smoothstep(0.45, 0.82, N0.y);
   // ---- The four cells round this point, from a slightly wobbled spot so edges are ragged, not 1 m stairs ----
   vec2 wob = lo == 1 ? vec2(0.0) : (vec2(vnoise(p * 0.8), vnoise(p.yx * 0.8 + 7.0)) - 0.5) * 1.4;
   vec2 gp = pr + wob + (uTerrainN - 1.0) * 0.5;
@@ -417,6 +464,36 @@ void main(){
 #ifdef X_R4
   oCol = vec4(alb + nrm + vec3(rough + ao), 1.0); return;
 #endif
+  // ---- Slickrock country: the rock takes its band's colour (the photos give its light and shade), with thin beds across a face
+  // and desert varnish streaking down it; the sand its own colour ----
+  if (uSlick > 0.5 && gSlickRock + gSlickSand > 0.001) {
+    float avgL = 0.0, aw = 0.0;
+    for (int k = 0; k < 4; k++) if (k < K && selW[k] > 0.0) { avgL += dot(avgA[k].rgb, vec3(0.2126, 0.7152, 0.0722)) * selW[k]; aw += selW[k]; }
+    avgL = max(avgL / max(aw, 1e-4), 0.02);
+    float shade = clamp(dot(alb, vec3(0.2126, 0.7152, 0.0722)) / avgL, 0.35, 1.7);
+    float yb = vPos.y - strataShift(vPos.xz) + 3.0 * (fbm(p * 0.008 + 4.0, 2) - 0.5) + 1.2 * (vnoise(p * 0.05) - 0.5);
+    vec3 band = strataAt(yb);
+    band *= 0.88 + 0.24 * vnoise(vec2(yb * 0.45, 3.7) + p * 0.0015);           // beds a metre or two thick
+    band *= 0.94 + 0.12 * vnoise(vec2(yb * 2.2, 9.1) + p * 0.004) ;            // and thinner ones within them
+    // Cross-bedding (Navajo's old dunes): thin lines across the faces and swirling over the domes' tops, dipping one way in a
+    // patch and another in the next.
+    float ang = 6.2831853 * vnoise(p * 0.004 + 31.0);
+    float ph = yb * 1.1 + 0.3 * dot(p, vec2(cos(ang), sin(ang))) + 2.5 * fbm(p * 0.015 + 2.0, 2);
+    float xb = smoothstep(0.40, 0.49, abs(fract(ph) - 0.5));
+    band *= 1.0 - xb * mix(0.10, 0.16, gFace) * smoothstep(0.0, 0.3, fbm(p * 0.01 - 7.0, 2));
+    float along = dot(p, vec2(0.7071, 0.7071));
+    float streak = smoothstep(0.45, 0.85, vnoise(vec2(along * 1.3 + 17.0 * floor(along * 0.05), vPos.y * 0.07)) * (0.6 + 0.6 * vnoise(p * 0.03 + 2.0)));
+    band = mix(band, band * vec3(0.30, 0.24, 0.21), streak * gFace * 0.75);   // desert varnish down the faces
+    band = mix(band, band * 1.12 + 0.02, (1.0 - gFace) * smoothstep(0.55, 0.8, fbm(p * 0.02 + 8.0, 2)) * 0.5);  // bleached tops
+    // (sand and rock meet along a ragged, feathered line, the sand thinning over the rock at its edges, not a painted one)
+    float rk = clamp(gSlickRock / (gSlickRock + gSlickSand), 0.0, 1.0);
+    rk = smoothstep(0.1, 0.9, clamp(rk + 0.55 * (fbm(p * 0.35 + 1.3, 3) - 0.5) + 0.3 * (vnoise(p * 2.3) - 0.5), 0.0, 1.0));
+    vec3 sand = uSandLook * (0.82 + 0.3 * fbm(p * 0.05 - 5.0, 2)) * mix(1.0, shade, 0.6);
+    sand *= mix(vec3(1.0), vec3(1.06, 0.96, 0.88), vnoise(p * 0.6 + 3.0));          // (redder and paler grains)
+    sand *= 0.93 + 0.07 * sin(dot(p, vec2(2.1, 1.3)) + 3.0 * vnoise(p * 0.3));      // (faint wind ripples)
+    vec3 recol = mix(sand, band * shade, rk);
+    alb = mix(alb, recol, clamp(gSlickRock + gSlickSand, 0.0, 1.0));
+  }
   // ---- Large-scale variation: patches of lighter and darker, warmer and cooler ground ----
   float bright = 0.80 + 0.40 * (lo == 1 ? fbmFew(p * 0.045 + 11.0, 1, 3) : fbm(p * 0.045 + 11.0, 3));
   vec3 warm = mix(vec3(1.05, 1.0, 0.92), vec3(0.94, 0.99, 1.04), vnoise(p * 0.02 - 6.0));

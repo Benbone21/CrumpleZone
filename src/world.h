@@ -420,6 +420,12 @@ public:
     // The rock addRock would add, not added (anything about the world it reads, it only reads: rocks can be made on several threads,
     // with the thread's scanned rocks (props::activeRockScans) the same as the world's builder's).
     Rock makeRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint = 1, const RockPose* pose = nullptr) const;
+    // A code-made rock that is the convex hull of these points (world coordinates): a slab of rock shaped to fit, such as the face of a
+    // sandstone ledge (realterrainbuild.cpp). Never a scan; collided with exactly as drawn.
+    // While a map is built: only the scans whose names start with one of these make its rocks (empty: any). A real map's
+    // `rock_scans` (Moab: its sandstone-coloured boulders, none of the grey granite).
+    std::vector<std::string> rockScanFilter;
+    Rock& addHullRock(const std::vector<V3>& pts, uint32_t seed, float tint = 1);
     // Indices of poles whose cylinders may overlap the box [mn, mx] (appended to out).
     void polesNear(const V3& mn, const V3& mx, std::vector<int>& out) const;
     // Every solid whose lookup cells touch the rectangle [x0, x1] x [z0, z1]: indices into

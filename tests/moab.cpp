@@ -1,11 +1,15 @@
-// Moab (assets/maps/moab, docs/real-terrain.md, docs/plans/real-moab.md): the real map the game ships. Its import is the same every
-// time (the files' hash, the plan's fingerprint, the land's hash) and its heights are the real ones; the map builds with its town, its
-// river and the bridge over it; and each of its courses is driven start to finish through every gate: the hard ones by a set-up
-// Bronco, the easy one by a stock 4Runner.
+// Moab (assets/maps/moab, docs/real-terrain.md, docs/plans/real-moab.md, docs/plans/moab-trails.md): the real map the game ships, box D
+// (16.5 km). Its import is the same every time (the files' hash, the plan's fingerprint, the land's hash) and its heights are the real
+// ones; the map builds with its town, its river and the bridge over it; its famous trails are on OpenStreetMap's lines and its named
+// obstacles at OpenStreetMap's points; and each course is shown completable start to finish through every gate (the hard ones by a
+// set-up Bronco, taking the bypasses the real trails have; the easy one by a stock 4Runner). That check proves a course can be done;
+// it doesn't judge how it plays (docs/terrain-generator-handoff.md).
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -22,9 +26,11 @@ namespace rt = realterrain;
 
 namespace {
 // What the shipped files make (update with the files: a new crop, a changed terrain.txt or a change to the importer that moves the land).
-constexpr uint64_t kMoabFiles = 0x75671d7aca889dccull;  // the DEM's bytes and terrain.txt (Spec::hash)
-constexpr uint64_t kMoabPlan = 0xa77c73b3ca463285ull;  // places, trails and courses (planFingerprint)
-constexpr uint64_t kMoabLand = 0x6d9f143f6611e4cfull;  // World::landHash, code-made rocks (Linux x86-64)
+constexpr uint64_t kMoabFiles = 0x031a57740f20f689ull;  // the DEM's bytes, terrain.txt, moab.txt, osm.txt, the lidar patches and cover.tif (Spec::hash)
+constexpr uint64_t kMoabPlan = 0x675c14bcf4759c2eull;  // places, trails, obstacles and courses (planFingerprint)
+constexpr uint64_t kMoabLand = 0x5636615750541fafull;  // World::landHash, code-made rocks (Linux x86-64)
+// A built Moab is about 2.3 GB (the 16.5 km grid): one at a time, whatever --jobs is (docs/real-terrain.md, memory).
+std::mutex gOneMoab;
 
 std::string moabDir() {
     const std::string d = findAssetDir("assets/maps");
@@ -52,8 +58,9 @@ uint64_t planFingerprint(const rt::Terrain& t) {
     for (const MapPlace& m : p.places) mix(m.p.x), mix(m.p.z), mix(m.kind);
     for (const rt::PlanTrail& tr : p.trails)
         for (const V3& q : tr.pts) mix(q.x), mix(q.z), mix(q.y);
-    for (const rt::PlanCourse& c : p.courses) mix(c.length), mix(c.climb), mix((double)c.line.size());
+    for (const rt::PlanCourse& c : p.courses) mix(c.length), mix(c.climb), mix((double)c.line.size()), mix((double)c.easiest.size());
     for (const rt::PlanRiver& r : p.rivers) mix((double)r.pts.size());
+    for (const rt::PlanObstacle& o : p.obstacles) mix(o.at.x), mix(o.at.z), mix(o.from), mix(o.to), mix(o.bypass);
     return h;
 }
 const VehicleSpec& vehicle(const std::string& id) {
@@ -75,7 +82,8 @@ const double kRealMetres[][3] = {
     {38.573, -109.550, 1229},  // Moab town
     {38.560, -109.580, 1347},  // Moab Rim
     {38.587, -109.513, 1424},  // Hell's Revenge slickrock
-    {38.578, -109.490, 1482},  // Sand Flats
+    {38.578, -109.495, 1460},  // Sand Flats (near the map's east edge)
+    {38.560, -109.625, 1373},  // Poison Spider Mesa
 };
 }  // namespace
 
@@ -84,7 +92,7 @@ SCENARIO(moabImport, "moab/import", "Moab's files import the same every time (fi
     auto t = loadMoab(&why);
     ctx.check("the shipped map loads (assets/maps/moab)", t != nullptr, why);
     if (!t) return;
-    ctx.check("named MOAB, 12 km square", t->spec.name == "MOAB" && t->half == 6000, t->spec.name + " " + std::to_string(t->half));
+    ctx.check("named MOAB, 16.5 km square (box D)", t->spec.name == "MOAB" && t->half == 8250, t->spec.name + " " + std::to_string(t->half));
     char b[64];
     std::snprintf(b, sizeof b, "%016llx", (unsigned long long)t->spec.hash);
     ctx.check("its files are the ones shipped", t->spec.hash == kMoabFiles, b);
@@ -111,7 +119,7 @@ SCENARIO(moabImport, "moab/import", "Moab's files import the same every time (fi
     ctx.check("prepared twice, the same plan", f1 == f2, b);
     ctx.check("the plan's fingerprint", f1 == kMoabPlan, b);
     const rt::Terrain::Plan& p = t->plan();
-    ctx.check("five courses, each on its trail", p.courses.size() == 5);
+    ctx.check("nine courses, each on its trail", p.courses.size() == 9);
     bool town = false;
     for (const MapPlace& m : p.places) town |= m.name == "MOAB" && (m.services & SVC_REPAIR) && (m.services & SVC_FUEL) && (m.services & SVC_SHOP);
     ctx.check("MOAB is the first place: repair, fuel and shop", town && !p.places.empty() && p.places[0].name == "MOAB");
@@ -125,13 +133,14 @@ SCENARIO(moabImport, "moab/import", "Moab's files import the same every time (fi
 }
 
 SCENARIO(moabMap, "moab/map", "Moab as a map: on the list as REAL: MOAB, built with the town at the start, the Colorado deep and unfordable, a deck over it, the land hash fixed") {
+    std::lock_guard<std::mutex> one(gOneMoab);
     auto t = loadMoab();
     ctx.check("the shipped map loads", t != nullptr);
     if (!t) return;
     rt::ScopedTerrain scope(t, {findAssetDir("assets/maps")});
     ctx.check("REAL: MOAB on the map list", mapListed(MAP_REAL) && std::string(mapName(MAP_REAL)) == "REAL: MOAB", mapName(MAP_REAL));
     std::unique_ptr<World> w = buildMoab(t);
-    ctx.metric("land cells", (double)w->gridSize() * w->gridSize(), "", 1.4e8, 1.5e8);
+    ctx.metric("land cells", (double)w->gridSize() * w->gridSize(), "", 2.7e8, 2.8e8);
     char b[64];
     std::snprintf(b, sizeof b, "%016llx", (unsigned long long)w->landHash());
     std::printf("MOAB LAND %s\n", b);
@@ -182,7 +191,7 @@ SCENARIO(moabMap, "moab/map", "Moab as a map: on the list as REAL: MOAB, built w
     std::snprintf(b, sizeof b, "%d of %d points over the water decked", decked, wetUnder);
     ctx.check("the bridge's deck spans the river, well over the water", wetUnder >= 3 && decked == wetUnder, b);
     ctx.check("...and a road reaches each end", w->roadAt(br.a.x, br.a.z).near && w->roadAt(br.b.x, br.b.z).near);
-    ctx.check("the named trails on the M map", w->trails.size() >= 5);
+    ctx.check("the named trails on the M map", w->trails.size() >= 20);
 }
 
 namespace {
@@ -256,6 +265,7 @@ double driveCourse(Ctx& ctx, Car& c, const std::vector<V3>& pts, const Level& lv
 
 // A course of the shipped Moab, as the level list has it, driven start to finish.
 void driveMoab(Ctx& ctx, const std::string& name) {
+    std::lock_guard<std::mutex> one(gOneMoab);
     auto t = loadMoab();
     ctx.check("the shipped map loads", t != nullptr);
     if (!t) return;
@@ -276,12 +286,31 @@ void driveMoab(Ctx& ctx, const std::string& name) {
     applyLevel(lv, ctx.sim.world);
     const World& w = ctx.sim.world;
     ctx.check("its start is on dry ground", w.waterLevel(lv.start.x, lv.start.z) < w.height(lv.start.x, lv.start.z));
+    // (the line with its optional obstacles taken by their bypasses: the real trails' way through for a capable rig)
     std::vector<V3> pts;
-    for (size_t k = 2; k < pc->line.size(); k += 2) pts.push_back(pc->line[k]);
-    pts.push_back(pc->line.back());
-    const std::string id = pc->spec.vehicle.empty() ? "4runner" : pc->spec.vehicle;
+    for (size_t k = 2; k < pc->easiest.size(); k += 2) pts.push_back(pc->easiest[k]);
+    pts.push_back(pc->easiest.back());
+    // (Tuning only: MOAB_FROM=M [MOAB_SPAN=S] drives just S m (default 300) of it from M m along, no gates: one obstacle at a time.)
+    V3 start = lv.start;
+    double startYaw = lv.startYaw;
+    const bool part = std::getenv("MOAB_FROM") != nullptr;
+    if (part) {
+        const double from = std::atof(std::getenv("MOAB_FROM")), span = std::getenv("MOAB_SPAN") ? std::atof(std::getenv("MOAB_SPAN")) : 300;
+        std::vector<V3> cut;
+        double a = 0;
+        for (size_t k = 0; k < pts.size(); k++) {
+            if (k) a += std::hypot(pts[k].x - pts[k - 1].x, pts[k].z - pts[k - 1].z);
+            if (a >= from && a <= from + span) cut.push_back(pts[k]);
+        }
+        if (cut.size() >= 4) {
+            pts.swap(cut);
+            start = pts[0], startYaw = std::atan2(-(pts[2].z - pts[0].z), pts[2].x - pts[0].x);
+            lv.gates.clear();
+        }
+    }
+    const std::string id = std::getenv("MOAB_VEHICLE") ? std::getenv("MOAB_VEHICLE") : pc->spec.vehicle.empty() ? "4runner" : pc->spec.vehicle;
     const VehicleSpec& spec = vehicle(id);
-    Car& c = ctx.add(spec, lv.start.x, lv.start.z, lv.startYaw * 180 / M_PI);
+    Car& c = ctx.add(spec, start.x, start.z, startYaw * 180 / M_PI);
     ctx.focus(c);
     ctx.run(1.0);
     const bool hard = pc->spec.difficulty >= 3;
@@ -296,7 +325,8 @@ void driveMoab(Ctx& ctx, const std::string& name) {
     int gates = 0;
     double worst = 0;
     const double got = driveCourse(ctx, c, pts, lv, kmh, pc->length / (kmh / 3.6) * 3 + 120, gates, worst);
-    const double want = pc->length;
+    double want = 0;
+    for (size_t k = 1; k < pts.size(); k++) want += std::hypot(pts[k].x - pts[k - 1].x, pts[k].z - pts[k - 1].z);
     char b[160];
     std::snprintf(b, sizeof b, "%.0f of %.0f m in %.0f s, %d of %d gates, damage %.1f%%", got, want, ctx.t, gates, (int)lv.gates.size(), worst * 100);
     std::printf("MOAB DRIVE %s (%s%s): %s\n", name.c_str(), spec.name, hard ? ", set up" : ", stock", b);
@@ -308,8 +338,179 @@ void driveMoab(Ctx& ctx, const std::string& name) {
 }
 }  // namespace
 
-SCENARIO(moabSandFlats, "moab/sand-flats-road", "SAND FLATS ROAD (difficulty 1): a stock 4Runner drives from Moab up the graded road to the Sand Flats entrance, every gate") { driveMoab(ctx, "SAND FLATS ROAD"); }
-SCENARIO(moabHellsRevenge, "moab/hells-revenge", "HELL'S REVENGE (difficulty 4): a set-up Bronco over the slickrock fins from the Sand Flats trailhead, every gate") { driveMoab(ctx, "HELL'S REVENGE"); }
-SCENARIO(moabFins, "moab/fins-n-things", "FINS N' THINGS (difficulty 3): a set-up Bronco round the loop over the Sand Flats fins, every gate") { driveMoab(ctx, "FINS N' THINGS"); }
-SCENARIO(moabRim, "moab/moab-rim", "MOAB RIM (difficulty 5): a set-up Bronco up the slab from the river to the rim and on toward Hidden Valley, every gate") { driveMoab(ctx, "MOAB RIM"); }
-SCENARIO(moabPoisonSpider, "moab/poison-spider", "POISON SPIDER MESA (difficulty 4): a set-up Bronco from the Potash Road side up onto the mesa, every gate") { driveMoab(ctx, "POISON SPIDER MESA"); }
+SCENARIO(moabSandFlats, "moab/sand-flats-road", "SAND FLATS ROAD (difficulty 1): a stock 4Runner up the county road from Mill Creek Drive to the Fins N' Things trailhead, every gate") { driveMoab(ctx, "SAND FLATS ROAD"); }
+SCENARIO(moabHellsRevenge, "moab/hells-revenge", "HELL'S REVENGE (difficulty 4, RR4W 6): a set-up Bronco round OSM's line from the trailhead to the exit, every gate (the options left to the player)") { driveMoab(ctx, "HELL'S REVENGE"); }
+SCENARIO(moabFins, "moab/fins-n-things", "FINS N' THINGS (difficulty 3, RR4W 4): a set-up Bronco east on the daylight section and back on the north section, every gate") { driveMoab(ctx, "FINS N' THINGS"); }
+SCENARIO(moabRim, "moab/moab-rim", "MOAB RIM (difficulty 5, RR4W 7): a set-up Bronco from Kane Creek Road up the slab, Devil's Crack and the Z Turn, round the dome on top, every gate") { driveMoab(ctx, "MOAB RIM"); }
+SCENARIO(moabPoisonSpider, "moab/poison-spider", "POISON SPIDER MESA (difficulty 4, RR4W 6): a set-up Bronco from the Potash Road trailhead up the Waterfall to the mesa, every gate") { driveMoab(ctx, "POISON SPIDER MESA"); }
+SCENARIO(moabGoldenSpike, "moab/golden-spike", "GOLDEN SPIKE (difficulty 5, RR4W 7): a set-up Bronco from Poison Spider to Gold Bar Rim over all its named obstacles (Double Whammy by its bypass), every gate") { driveMoab(ctx, "GOLDEN SPIKE"); }
+SCENARIO(moabGoldBar, "moab/gold-bar-rim", "GOLD BAR RIM (difficulty 4, RR4W 6): a set-up Bronco from the US-191 trailhead up the Waterfall to the rim, every gate") { driveMoab(ctx, "GOLD BAR RIM"); }
+SCENARIO(moabCliffhanger, "moab/cliffhanger", "CLIFFHANGER (difficulty 5, RR4W 8): a set-up Bronco from Kane Creek Road up Amasa Back and over the Cliffhanger ledge, every gate") { driveMoab(ctx, "CLIFFHANGER"); }
+SCENARIO(moabMetalMasher, "moab/metal-masher", "METAL MASHER (difficulty 5, RR4W 7): a set-up Bronco over Tailpipe Hill and Mirror Gulch to Eagles Perch (Rock Chunker by its bypass), every gate") { driveMoab(ctx, "METAL MASHER"); }
+
+namespace {
+// Where an OSM point is on the map.
+V3 osmPoint(const rt::Terrain& t, int64_t node) {
+    const rt::OsmNode* n = t.spec.osmNode(node);
+    double x = 0, z = 0;
+    if (n) t.toMap(n->at, x, z);
+    return V3(x, 0, z);
+}
+// The nearest a polyline comes to (x, z) in plan (m).
+double distToLine(const std::vector<V3>& L, const V3& p) {
+    double best = 1e18;
+    for (size_t k = 0; k + 1 < L.size(); k++) {
+        const V3 a = L[k], b = L[k + 1];
+        const double dx = b.x - a.x, dz = b.z - a.z, L2 = dx * dx + dz * dz;
+        const double u = L2 > 1e-12 ? clampd(((p.x - a.x) * dx + (p.z - a.z) * dz) / L2, 0, 1) : 0;
+        best = std::min(best, std::hypot(p.x - a.x - dx * u, p.z - a.z - dz * u));
+    }
+    return best;
+}
+}  // namespace
+
+SCENARIO(moabTrails, "moab/osm-trails", "Moab's famous trails are on OpenStreetMap's lines (credited, ODbL): each trail's laid line within a few metres of its OSM ways where they're on the map; Lion's Back left off (closed, private)") {
+    auto t = loadMoab();
+    ctx.check("the shipped map loads", t != nullptr);
+    if (!t) return;
+    ctx.check("its OSM file is credited (OpenStreetMap contributors, ODbL)", t->spec.osmText.find("OpenStreetMap contributors") != std::string::npos && t->spec.osmText.find("ODbL") != std::string::npos);
+    const rt::Terrain::Plan& p = t->plan();
+    for (const char* name : {"SAND FLATS ROAD", "HELL'S REVENGE", "FINS N' THINGS", "MOAB RIM", "POISON SPIDER MESA", "GOLDEN SPIKE", "GOLD BAR RIM", "CLIFFHANGER", "METAL MASHER",
+                             "HELL'S GATE", "ESCALATOR", "MICKEY'S HOT TUB", "TIPOVER CHALLENGE", "STAIRCASE"}) {
+        const rt::SpecTrail* st = nullptr;
+        const rt::PlanTrail* pt = nullptr;
+        for (const rt::SpecTrail& s : t->spec.trails)
+            if (s.name == name) st = &s;
+        for (const rt::PlanTrail& q : p.trails)
+            if (q.name == name && !pt) pt = &q;  // (the authored one: the rules' come after, and may share its OSM name)
+        if (!st || !pt || st->osmWays.empty()) {
+            ctx.check(std::string(name) + " is on the map from OSM", false);
+            continue;
+        }
+        const std::vector<V3> laid = rt::smoothLine(pt->pts, 1.0);
+        // Every OSM vertex well inside the map (and between the trail's cuts) within 6 m of the line as laid (it's smoothed a little).
+        int n = 0, near = 0;
+        double worst = 0, len = 0;
+        for (size_t k = 1; k < laid.size(); k++) len += std::hypot(laid[k].x - laid[k - 1].x, laid[k].z - laid[k - 1].z);
+        std::string ids;
+        for (int64_t w : st->osmWays) {
+            ids += (ids.empty() ? "" : " ") + std::to_string(w < 0 ? -w : w);
+            for (const rt::LatLon& ll : t->spec.osmWay(w < 0 ? -w : w)->pts) {
+                double x, z;
+                t->toMap(ll, x, z);
+                if (std::fabs(x) > t->half - 230 || std::fabs(z) > t->half - 230) continue;
+                const V3 q(x, 0, z);
+                if (std::hypot(q.x - laid.front().x, q.z - laid.front().z) > 0 && distToLine(laid, q) > 50) continue;  // (cut off by from/to)
+                const double d = distToLine(laid, q);
+                n++, near += d < 6, worst = std::max(worst, d);
+            }
+        }
+        char b[200];
+        std::snprintf(b, sizeof b, "%.2f km; %d of %d OSM points within 6 m (worst %.1f m); ways %s", len / 1000, near, n, worst, ids.c_str());
+        std::printf("MOAB TRAIL %-24s %s\n", name, b);
+        ctx.check(std::string(name) + " follows its OSM ways", n >= 2 && near >= n * 0.97, b);
+    }
+    // Lion's Back: closed. A sign at it, no trail within 40 m of its top (Hell's Revenge and the alternate route pass its foot).
+    const rt::SpecLandmark* lion = nullptr;
+    for (const rt::SpecLandmark& m : t->spec.landmarks)
+        if (m.name.find("LION'S BACK") == 0) lion = &m;
+    ctx.check("Lion's Back is marked closed", lion && lion->name.find("CLOSED") != std::string::npos);
+    if (lion) {
+        const V3 q = osmPoint(*t, lion->node);
+        double nearest = 1e9;
+        for (const rt::PlanTrail& tr : p.trails) nearest = std::min(nearest, distToLine(tr.pts, q));
+        ctx.check("...and no trail onto it", nearest > 40, std::to_string(nearest));
+    }
+}
+
+SCENARIO(moabObstacles, "moab/obstacles", "Moab's named obstacles: each at its OpenStreetMap point (its built stretch within 4 m of it), shaped and laid with scanned-rock ledges as authored, named over it, its bypass laid where the real trail has one") {
+    std::lock_guard<std::mutex> one(gOneMoab);
+    auto t = loadMoab();
+    ctx.check("the shipped map loads", t != nullptr);
+    if (!t) return;
+    const rt::Terrain::Plan& p = t->plan();
+    // The ones the owner named (docs/plans/moab-trails.md), all inside box D.
+    for (const char* name : {"HELL'S GATE", "ESCALATOR", "MICKEY'S HOT TUB", "TIPOVER CHALLENGE", "THE STAIRCASE", "LAUNCHING PAD", "ZUKI HILL", "GOLDEN CRACK",
+                             "GOLDEN STAIRCASE", "DOUBLE WHAMMY", "BODY SNATCHER", "THE WATERFALL", "ROCK CHUNKER", "MIRROR GULCH", "TAILPIPE HILL", "MOAB RIM DOME"}) {
+        bool found = false;
+        for (const rt::PlanObstacle& o : p.obstacles) found |= o.spec.name == name;
+        ctx.check(std::string(name) + " is on the map", found);
+    }
+    rt::ScopedTerrain scope(t, {findAssetDir("assets/maps")});
+    std::unique_ptr<World> w = buildMoab(t);
+    for (const rt::PlanObstacle& o : p.obstacles) {
+        const rt::SpecObstacle& so = o.spec;
+        const std::vector<V3> L = rt::smoothLine(p.trails[o.trail].pts, 1.0);
+        std::vector<double> at(L.size(), 0);
+        for (size_t k = 1; k < L.size(); k++) at[k] = at[k - 1] + std::hypot(L[k].x - L[k - 1].x, L[k].z - L[k - 1].z);
+        std::vector<V3> stretch;
+        for (size_t k = 0; k < L.size(); k++)
+            if (at[k] >= o.from - 0.5 && at[k] <= o.to + 0.5) stretch.push_back(L[k]);
+        const V3 want = so.node ? osmPoint(*t, so.node) : o.at;
+        const double off = stretch.size() >= 2 ? distToLine(stretch, want) : 1e9;
+        char b[240];
+        // Shaped: the land under the stretch isn't the DEM's (the profile moved somewhere by a ledge's height or more), and rocks on it.
+        double moved = 0;
+        for (size_t k = 0; k + 1 < stretch.size(); k++) {
+            const V3 d = norm(V3(stretch[k + 1].x - stretch[k].x, 0, stretch[k + 1].z - stretch[k].z)), lf(-d.z, 0, d.x);
+            for (double v = -so.width; v <= so.width + 1e-9; v += 0.5) {
+                const V3 q = stretch[k] + lf * v;
+                moved = std::max(moved, std::fabs(w->height(q.x, q.z) - t->heightAt(q.x, q.z)));
+            }
+        }
+        int rocks = 0;
+        for (const Rock& r : w->rocks)
+            if (distToLine(stretch, r.c) < so.width + 6) rocks++;
+        bool tagged = false;
+        for (const World::Tag& g : w->tags) tagged |= g.text == so.name && std::hypot(g.p.x - o.at.x, g.p.z - o.at.z) < 1;
+        // A ledge: at each lip the tread rises most of its height within 2 m (the grid's ramp; the rocks laid there make the face).
+        double minStep = 1e9;
+        auto hAlong = [&](double sAt) {
+            size_t i = 0;
+            while (i + 1 < at.size() && at[i] < sAt) i++;
+            return w->height(L[i].x, L[i].z);
+        };
+        for (int k = 0; k < so.steps; k++) {  // (the most it rises in 2 m about each lip)
+            const double lp = o.from + (o.to - o.from) * (k + 0.5) / so.steps;
+            double best = 0;
+            for (double x = lp - 2; x <= lp; x += 0.5) best = std::max(best, std::fabs(hAlong(x + 2) - hAlong(x)));
+            minStep = std::min(minStep, best);
+        }
+        if (std::getenv("MOAB_TRACE"))
+            for (double sAt = o.from - 6; sAt <= o.to + 6; sAt += 1) std::printf("  %s s %.0f h %.2f\n", so.name.c_str(), sAt, hAlong(sAt));
+        // (how far the OSM node itself is off its way: one or two aren't on it)
+        double nodeOff = 0;
+        if (so.node) {
+            const rt::SpecTrail* st = nullptr;
+            for (const rt::SpecTrail& x : t->spec.trails)
+                if (x.name == so.trail) st = &x;
+            nodeOff = st ? 1e9 : distToLine(p.trails[o.trail].pts, want);  // (one by the rules: on a trail of OSM's own)
+            for (int64_t wid : st ? st->osmWays : std::vector<int64_t>()) {
+                std::vector<V3> wl;
+                for (const rt::LatLon& ll : t->spec.osmWay(wid < 0 ? -wid : wid)->pts) {
+                    double x, z;
+                    t->toMap(ll, x, z);
+                    wl.push_back(V3(x, 0, z));
+                }
+                nodeOff = std::min(nodeOff, distToLine(wl, want));
+            }
+        }
+        std::snprintf(b, sizeof b, "%s on %s: %.1f m from %s; land moved up to %.2f m; %d rocks; %s%s", so.name.c_str(), so.trail.c_str(), off,
+                      so.node ? ("OSM node " + std::to_string(so.node)).c_str() : "its point", moved, rocks, so.steps ? ("lips rise " + std::to_string(minStep).substr(0, 4) + " m; ").c_str() : "",
+                      o.bypass >= 0 ? "bypass laid" : "no bypass");
+        std::printf("MOAB OBSTACLE %s\n", b);
+        ctx.check(so.name + " at its point (its stretch within 4 m, more where OSM's node is off its way)", off < 4 + nodeOff, b);
+        ctx.check(so.name + ": shaped", moved > 0.3, b);
+        ctx.check(so.name + ": named over it", tagged, b);
+        if (so.steps > 0 || so.walls > 0 || so.boulders > 0) ctx.check(so.name + ": scanned rocks laid on it", rocks >= 3, b);
+        if (so.steps > 0) ctx.check(so.name + ": each ledge rises most of its height within 2 m", minStep > 0.6 * so.rise, b);
+        if (!so.bypass.empty()) {
+            ctx.check(so.name + ": its bypass is laid", o.bypass >= 0, b);
+            if (o.bypass >= 0) {
+                const std::vector<V3>& by = p.trails[o.bypass].pts;
+                const V3 mid = by[by.size() / 2];
+                ctx.check(so.name + ": ...and is a trail on the ground", w->roadAt(mid.x, mid.z).near, b);
+            }
+        }
+    }
+}

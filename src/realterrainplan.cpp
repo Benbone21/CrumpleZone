@@ -645,7 +645,116 @@ const Terrain::Plan& Terrain::plan() const {
         std::vector<int> starts;
         // The sidecar's named trails: through its points in order, each leg the cheapest way no steeper than its grade (a little
         // steeper where there's no such way), and a spur from its start to the network when it isn't on it.
+        std::vector<int> startTrail;  // (which trail each of `starts` begins)
         for (const SpecTrail& st : spec.trails) {
+            if (!st.osmWays.empty()) {
+                // OpenStreetMap's line: the ways chained, each turned to carry on from the one before, cut to from/to, kept to the
+                // map inside its rim. Followed as it is; a gap (where two ways don't meet, or the line leaves the map and comes back)
+                // is routed as a named trail's leg is.
+                std::vector<std::vector<V3>> ways;
+                for (int64_t wid : st.osmWays) {
+                    std::vector<V3> w;
+                    for (const LatLon& ll : spec.osmWay(wid < 0 ? -wid : wid)->pts) {
+                        double x, z;
+                        if (toMap(ll, x, z)) w.push_back(V3(x, 0, z));
+                    }
+                    if (wid < 0) std::reverse(w.begin(), w.end());  // (the first way: as OSM has it, or reversed when its id is given negative)
+                    if (w.size() >= 2) ways.push_back(std::move(w));
+                }
+                auto d2 = [](const V3& a, const V3& b) { return (a.x - b.x) * (a.x - b.x) + (a.z - b.z) * (a.z - b.z); };
+                std::vector<V3> line;
+                std::vector<uint8_t> brk;  // (1: a gap before this point)
+                for (size_t k = 0; k < ways.size(); k++) {
+                    std::vector<V3>& w = ways[k];
+                    if (k > 0 && d2(line.back(), w.back()) < d2(line.back(), w.front())) std::reverse(w.begin(), w.end());
+                    for (size_t q = 0; q < w.size(); q++) {
+                        if (!line.empty() && q == 0 && d2(line.back(), w[0]) < 1.0) continue;  // (the shared node)
+                        brk.push_back(!line.empty() && q == 0 && d2(line.back(), w[0]) > 25.0 * 25.0);
+                        line.push_back(w[q]);
+                    }
+                }
+                auto nearestIdx = [&](const LatLon& ll) {
+                    double x, z;
+                    toMap(ll, x, z);
+                    size_t best = 0;
+                    for (size_t q = 1; q < line.size(); q++)
+                        if (d2(line[q], V3(x, 0, z)) < d2(line[best], V3(x, 0, z))) best = q;
+                    return best;
+                };
+                if (line.size() >= 2 && (st.hasFrom || st.hasTo)) {
+                    const size_t a = st.hasFrom ? nearestIdx(st.from) : 0, b = st.hasTo ? nearestIdx(st.to) : line.size() - 1;
+                    std::vector<V3> cut(line.begin() + std::min(a, b), line.begin() + std::max(a, b) + 1);
+                    std::vector<uint8_t> cb(brk.begin() + std::min(a, b), brk.begin() + std::max(a, b) + 1);
+                    if (a > b) std::reverse(cut.begin(), cut.end()), std::reverse(cb.begin(), cb.end()), std::rotate(cb.begin(), cb.end() - 1, cb.end());
+                    if (!cb.empty()) cb[0] = 0;
+                    line.swap(cut), brk.swap(cb);
+                }
+                // Into runs inside the map (200 m in from its edge), each a few metres a point.
+                const double lim = half - 200;
+                std::vector<std::vector<V3>> runs;
+                bool open = false;
+                for (size_t q = 0; q < line.size(); q++) {
+                    const bool in = std::fabs(line[q].x) <= lim && std::fabs(line[q].z) <= lim;
+                    if (!in) {
+                        open = false;
+                        continue;
+                    }
+                    if (!open || brk[q]) runs.emplace_back(), open = true;
+                    runs.back().push_back(line[q]);
+                }
+                std::vector<V3> pts;
+                bool ok = !runs.empty();
+                int dir = -1;
+                for (size_t r = 0; r < runs.size() && ok; r++) {
+                    if (runs[r].size() < 2 && runs.size() > 1) continue;
+                    if (!pts.empty()) {  // (the gap from the last run: routed, leaving the way the line was going (no turning back on itself))
+                        const int a = p.cellOf(pts.back().x) * n + p.cellOf(pts.back().z), b = p.cellOf(runs[r][0].x) * n + p.cellOf(runs[r][0].z);
+                        if (pts.size() >= 2) {
+                            const V3 d = pts.back() - pts[pts.size() - std::min<size_t>(pts.size(), 6)];
+                            double best = -2;
+                            for (int k = 0; k < 16; k++) {
+                                const double c = (kMI[k] * d.x + kMJ[k] * d.z) / (std::sqrt((double)(kMI[k] * kMI[k] + kMJ[k] * kMJ[k])) * std::max(1e-9, std::sqrt(d.x * d.x + d.z * d.z)));
+                                if (c > best) best = c, dir = k;
+                            }
+                        }
+                        std::vector<int> leg;
+                        bool got = a == b;
+                        for (double gr = st.grade; !got && gr <= st.grade * 1.6 + 1e-9; gr += st.grade * 0.2) {
+                            int d = dir;
+                            got = astarTurns(a, b, gr, d, leg);
+                        }
+                        if (!got) {
+                            std::printf("real terrain %s: trail %s: no way across a gap in its OSM line\n", spec.name.c_str(), st.name.c_str());
+                            ok = false;
+                            break;
+                        }
+                        for (size_t q = 1; q + 1 < leg.size(); q++) pts.push_back(V3(X(leg[q] / n), 0, X(leg[q] % n)));
+                    }
+                    pts.insert(pts.end(), runs[r].begin(), runs[r].end());
+                }
+                if (!ok || pts.size() < 2) {
+                    std::printf("real terrain %s: trail %s has no OSM line on the map\n", spec.name.c_str(), st.name.c_str());
+                    continue;
+                }
+                PlanTrail t;
+                t.road = false, t.maxGrade = st.grade, t.name = st.name, t.rating = st.rating, t.osm = true;
+                for (size_t q = 0; q < pts.size(); q++) {
+                    // (a point every 4 m or less: the build smooths and lays it a metre a point)
+                    if (q > 0) {
+                        const V3 a = pts[q - 1], b = pts[q];
+                        const int m = (int)std::ceil(std::sqrt(d2(a, b)) / 4.0);
+                        for (int k = 1; k < m; k++) t.pts.push_back(a + (b - a) * ((double)k / m));
+                    }
+                    t.pts.push_back(pts[q]);
+                }
+                for (V3& q : t.pts) {
+                    const int c = p.cellOf(q.x) * n + p.cellOf(q.z);
+                    q.y = HA[c], network[c] = 1;
+                }
+                starts.push_back(p.cellOf(t.pts[0].x) * n + p.cellOf(t.pts[0].z)), startTrail.push_back((int)p.trails.size());
+                p.trails.push_back(std::move(t));
+                continue;
+            }
             std::vector<int> way;
             for (const LatLon& ll : st.pts) {
                 int id;
@@ -689,7 +798,63 @@ const Terrain::Plan& Terrain::plan() const {
             if (!ok) continue;
             addTrail(all, -1, -1, false, used);
             p.trails.back().name = st.name, p.trails.back().rating = st.rating;
-            starts.push_back(all[0]);
+            starts.push_back(all[0]), startTrail.push_back((int)p.trails.size() - 1);
+        }
+        // The osm file's own 4x4 tracks, by rules (Spec::osmRules): each way not already on a named trail, a trail of its own under its
+        // OSM name, rated by its tags, followed as OSM draws it; cut where it leaves the map or meets a big river (no fording those).
+        auto tagOf = [](const std::string& tags, const std::string& k) {
+            const size_t at = (" " + tags).find(" " + k + "=");
+            if (at == std::string::npos) return std::string();
+            const size_t v = at + k.size() + 1, e = tags.find(' ', v);
+            return tags.substr(v, e == std::string::npos ? std::string::npos : e - v);
+        };
+        if (spec.osmRules) {
+            std::vector<int64_t> used;
+            for (const SpecTrail& st : spec.trails)
+                for (int64_t w : st.osmWays) used.push_back(w < 0 ? -w : w);
+            for (const OsmWay& w : spec.osmWays) {
+                if (std::find(used.begin(), used.end(), w.id) != used.end()) continue;
+                const std::string hw = tagOf(w.tags, "highway"), fwd = tagOf(w.tags, "4wd_only"), mv = tagOf(w.tags, "motor_vehicle");
+                if (hw != "track" || mv == "no" || tagOf(w.tags, "access") == "private" || tagOf(w.tags, "access") == "no" || (fwd != "yes" && w.name.empty())) continue;
+                const std::string tt = tagOf(w.tags, "tracktype"), sm = tagOf(w.tags, "smoothness");
+                int rating = tt == "grade1" || tt == "grade2" ? 1 : tt == "grade4" || tt == "grade5" ? 3 : 2;
+                if (sm == "very_horrible" || sm == "impassable") rating = 3;
+                else if (sm == "horrible") rating = std::max(rating, 2);
+                std::vector<V3> run;
+                auto flush = [&] {
+                    double L = 0;
+                    for (size_t q = 1; q < run.size(); q++) L += std::sqrt((run[q].x - run[q - 1].x) * (run[q].x - run[q - 1].x) + (run[q].z - run[q - 1].z) * (run[q].z - run[q - 1].z));
+                    if (L >= 40) {
+                        PlanTrail t;
+                        t.road = false, t.maxGrade = 0.6, t.name = w.name.empty() ? "4X4 TRACK" : w.name, t.rating = rating, t.osm = true;
+                        for (size_t q = 0; q < run.size(); q++) {
+                            if (q > 0) {
+                                const V3 a = run[q - 1], b = run[q];
+                                const int m = (int)std::ceil(std::sqrt((b.x - a.x) * (b.x - a.x) + (b.z - a.z) * (b.z - a.z)) / 4.0);
+                                for (int k = 1; k < m; k++) t.pts.push_back(a + (b - a) * ((double)k / m));
+                            }
+                            t.pts.push_back(run[q]);
+                        }
+                        for (V3& q : t.pts) {
+                            const int c = p.cellOf(q.x) * n + p.cellOf(q.z);
+                            q.y = HA[c], network[c] = 1;
+                        }
+                        p.trails.push_back(std::move(t));
+                    }
+                    run.clear();
+                };
+                for (const LatLon& ll : w.pts) {
+                    double x, z;
+                    toMap(ll, x, z);
+                    const int c = p.cellOf(x) * n + p.cellOf(z);
+                    if (std::fabs(x) > half - 200 || std::fabs(z) > half - 200 || (big[c] && !deck[c]) || p.lake[c] != -1) {
+                        flush();
+                        continue;
+                    }
+                    run.push_back(V3(x, 0, z));
+                }
+                flush();
+            }
         }
         // The outposts joined by the shortest tree of straight lines (Prim's, from the ranger station).
         {
@@ -716,8 +881,18 @@ const Terrain::Plan& Terrain::plan() const {
         for (const PlanTrail& t : p.trails)
             if (t.rating >= 0)
                 for (const V3& q : t.pts) named[p.cellOf(q.x) * n + p.cellOf(q.z)] = 1;
-        for (int st0 : starts) {
+        for (size_t si = 0; si < starts.size(); si++) {
+            const int st0 = starts[si];
             bool onNet = false;
+            // (A trail that starts on another named trail (an obstacle's line off the main one) is reached along that one: no spur.)
+            const V3 s0(X(st0 / n), 0, X(st0 % n));
+            for (size_t k = 0; k < p.trails.size() && !onNet; k++)
+                if ((int)k != startTrail[si] && p.trails[k].rating >= 0)
+                    for (const V3& q : p.trails[k].pts)
+                        if ((q.x - s0.x) * (q.x - s0.x) + (q.z - s0.z) * (q.z - s0.z) < 40.0 * 40.0) {
+                            onNet = true;
+                            break;
+                        }
             for (int a = -3; a <= 3 && !onNet; a++)
                 for (int c = -3; c <= 3 && !onNet; c++) {
                     const int ni = st0 / n + a, nj = st0 % n + c;
@@ -805,6 +980,112 @@ const Terrain::Plan& Terrain::plan() const {
                 at.push_back(q);
             }
         }
+        // The sidecar's obstacles: each on its trail's line (as it will be laid: smoothed, a metre a point) at the point given, and
+        // its way round: one of the sidecar's trails (an OSM bypass), or one made here on the side asked, leaving the line before it
+        // and rejoining after, clear of what the obstacle reshapes.
+        auto trailIdx = [&](const std::string& nm) {
+            for (size_t k = 0; k < p.trails.size(); k++)
+                if (p.trails[k].name == nm && p.trails[k].rating >= 0) return (int)k;
+            return -1;
+        };
+        auto alongOf = [](const std::vector<V3>& L) {
+            std::vector<double> at(L.size(), 0);
+            for (size_t k = 1; k < L.size(); k++) at[k] = at[k - 1] + std::sqrt((L[k].x - L[k - 1].x) * (L[k].x - L[k - 1].x) + (L[k].z - L[k - 1].z) * (L[k].z - L[k - 1].z));
+            return at;
+        };
+        for (const SpecObstacle& so : spec.obstacles) {
+            PlanObstacle o;
+            o.spec = so;
+            o.trail = trailIdx(so.trail);
+            LatLon ll = so.at;
+            if (so.node) ll = spec.osmNode(so.node)->at;
+            double x, z;
+            if (o.trail < 0 || !toMap(ll, x, z)) {
+                std::printf("real terrain %s: obstacle %s isn't on the map\n", spec.name.c_str(), so.name.c_str());
+                continue;
+            }
+            const std::vector<V3> L = smoothLine(p.trails[o.trail].pts, 1.0);
+            const std::vector<double> at = alongOf(L);
+            size_t k = 0;
+            for (size_t q = 1; q < L.size(); q++)
+                if ((L[q].x - x) * (L[q].x - x) + (L[q].z - z) * (L[q].z - z) < (L[k].x - x) * (L[k].x - x) + (L[k].z - z) * (L[k].z - z)) k = q;
+            o.at = V3(x, demAt(x, z), z), o.along = at[k];
+            const double len = so.length > 0 ? so.length : so.climbLen > 0 ? so.climbLen : so.steps > 0 ? 6.0 * so.steps : so.bowlSize > 0 ? so.bowlSize + 6 : 12;
+            // (through the point, but kept 8 m off the trail's ends: an option's line leaves the main trail there, untouched)
+            o.from = clampd(o.along - 0.5 * len, std::min(8.0, 0.25 * at.back()), std::max(std::min(8.0, 0.25 * at.back()), at.back() - 8 - len));
+            o.to = std::min(at.back(), o.from + len);
+            if (so.bypass == "left" || so.bypass == "right") {
+                const double side = so.bypass == "left" ? 1 : -1, off = so.width + 1.5 * so.walls + 10;
+                const double s0 = std::max(0.0, o.from - 22), s1 = std::min(at.back(), o.to + 22);
+                PlanTrail b;
+                b.road = false, b.maxGrade = std::max(0.35, p.trails[o.trail].maxGrade), b.bypass = true;
+                size_t q = 0;
+                for (double sAt = s0; sAt <= s1 + 1e-9; sAt += 2) {
+                    while (q + 2 < L.size() && at[q + 1] < sAt) q++;
+                    const double u = clampd((sAt - at[q]) / std::max(1e-9, at[q + 1] - at[q]), 0, 1);
+                    const V3 c = L[q] + (L[q + 1] - L[q]) * u, d = L[q + 1] - L[q];
+                    const double dl = std::sqrt(d.x * d.x + d.z * d.z);
+                    const double e = smoothstep(s0, s0 + 16, sAt) * (1 - smoothstep(s1 - 16, s1, sAt));
+                    const V3 left = dl > 1e-9 ? V3(-d.z / dl, 0, d.x / dl) : V3(0, 0, 1);
+                    V3 pt = c + left * (side * off * e);
+                    pt.y = demAt(pt.x, pt.z);
+                    b.pts.push_back(pt);
+                }
+                o.bypass = (int)p.trails.size();
+                p.trails.push_back(std::move(b));
+            } else if (!so.bypass.empty()) o.bypass = trailIdx(so.bypass);
+            p.obstacles.push_back(o);
+        }
+        // By rules (Spec::osmRules): each tourism=attraction the sidecar doesn't name, on a rough trail (rated 2 or 3, within 12 m of its
+        // line), an obstacle under its OSM name: a pair of 0.4 m ledges over 10 m, which any set-up rig makes (no source says more of an
+        // unknown one); and each trailhead and viewpoint a landmark.
+        std::vector<SpecLandmark> landmarks = spec.landmarks;
+        if (spec.osmRules) {
+            for (const OsmNode& nd : spec.osmNodes) {
+                bool named = false;
+                for (const SpecObstacle& so : spec.obstacles) named |= so.node == nd.id;
+                for (const SpecLandmark& sl : spec.landmarks) named |= sl.node == nd.id;
+                if (named) continue;
+                if (tagOf(nd.tags, "highway") == "trailhead" || tagOf(nd.tags, "tourism") == "viewpoint") {
+                    SpecLandmark m;
+                    m.name = nd.name, m.node = nd.id;
+                    landmarks.push_back(m);
+                    continue;
+                }
+                if (tagOf(nd.tags, "tourism") != "attraction" || !tagOf(nd.tags, "natural").empty() || !tagOf(nd.tags, "historic").empty()) continue;
+                double x, z;
+                if (!toMap(nd.at, x, z)) continue;
+                int best = -1;
+                double bd = 12.0 * 12.0;
+                for (size_t k = 0; k < p.trails.size(); k++) {
+                    if (p.trails[k].rating < 2 || !p.trails[k].osm) continue;
+                    for (const V3& q : p.trails[k].pts) {
+                        const double d = (q.x - x) * (q.x - x) + (q.z - z) * (q.z - z);
+                        if (d < bd) bd = d, best = (int)k;
+                    }
+                }
+                if (best < 0) continue;
+                const std::vector<V3> L = smoothLine(p.trails[best].pts, 1.0);
+                const std::vector<double> at = alongOf(L);
+                if (at.back() < 40) continue;
+                size_t k = 0;
+                for (size_t q = 1; q < L.size(); q++)
+                    if ((L[q].x - x) * (L[q].x - x) + (L[q].z - z) * (L[q].z - z) < (L[k].x - x) * (L[k].x - x) + (L[k].z - z) * (L[k].z - z)) k = q;
+                PlanObstacle o;
+                o.spec.name = nd.name, o.spec.kind = "ledges", o.spec.trail = p.trails[best].name, o.spec.node = nd.id;
+                o.spec.steps = 2, o.spec.rise = 0.4, o.spec.length = 10;
+                o.trail = best, o.at = V3(x, demAt(x, z), z), o.along = at[k];
+                o.from = clampd(o.along - 5, 8, std::max(8.0, at.back() - 18)), o.to = std::min(at.back(), o.from + 10);
+                p.obstacles.push_back(o);
+            }
+        }
+        for (const SpecLandmark& sl : landmarks) {
+            LatLon ll = sl.at;
+            if (sl.node) ll = spec.osmNode(sl.node)->at;
+            double x, z;
+            if (!toMap(ll, x, z) || std::fabs(x) > half - 150 || std::fabs(z) > half - 150) continue;
+            p.landmarks.push_back({sl.name, V3(x, demAt(x, z), z)});
+        }
         // The sidecar's courses: each along its trail's line, as it will be laid (smoothed, a metre apart).
         for (const SpecCourse& sc : spec.courses) {
             PlanCourse c;
@@ -819,6 +1100,44 @@ const Terrain::Plan& Terrain::plan() const {
                 c.length += std::sqrt((c.line[k].x - c.line[k - 1].x) * (c.line[k].x - c.line[k - 1].x) + (c.line[k].z - c.line[k - 1].z) * (c.line[k].z - c.line[k - 1].z));
                 const double dy = c.line[k].y - c.line[k - 1].y;
                 (dy > 0 ? c.climb : c.drop) += std::fabs(dy);
+            }
+            // Its obstacles with a way round: their stretch kept free of gates, and the line through them by the way round (each
+            // spliced in where the line passes nearest its ends).
+            const std::vector<double> at = alongOf(c.line);
+            c.easiest = c.line;
+            struct Cut {
+                size_t a, b;
+                std::vector<V3> by;
+            };
+            std::vector<Cut> cuts;
+            for (const PlanObstacle& o : p.obstacles) {
+                if (o.trail != c.trail || o.bypass < 0) continue;
+                std::vector<V3> by = smoothLine(p.trails[o.bypass].pts, 1.0);
+                auto nearest = [&](const V3& q) {
+                    size_t best = 0;
+                    for (size_t k = 1; k < c.line.size(); k++)
+                        if ((c.line[k].x - q.x) * (c.line[k].x - q.x) + (c.line[k].z - q.z) * (c.line[k].z - q.z) <
+                            (c.line[best].x - q.x) * (c.line[best].x - q.x) + (c.line[best].z - q.z) * (c.line[best].z - q.z))
+                            best = k;
+                    return best;
+                };
+                size_t a = nearest(by.front()), b = nearest(by.back());
+                if (a > b) std::swap(a, b), std::reverse(by.begin(), by.end());
+                c.optional.push_back({std::min(at[a], o.from), std::max(at[b], o.to)});
+                cuts.push_back({a, b, by});
+            }
+            std::sort(cuts.begin(), cuts.end(), [](const Cut& u, const Cut& v) { return u.a < v.a; });
+            if (!cuts.empty()) {
+                std::vector<V3> e;
+                size_t k = 0;
+                for (const Cut& u : cuts) {
+                    if (u.a < k) continue;  // (overlapping another: that one's way round stands)
+                    e.insert(e.end(), c.line.begin() + k, c.line.begin() + u.a);
+                    e.insert(e.end(), u.by.begin(), u.by.end());
+                    k = u.b + 1;
+                }
+                e.insert(e.end(), c.line.begin() + std::min(k, c.line.size()), c.line.end());
+                c.easiest.swap(e);
             }
             p.courses.push_back(std::move(c));
         }

@@ -128,3 +128,28 @@ picked, and B is the `centre`/`size` lines plus a new crop (everything authored 
   Spider on the north-west bank upstream of it.
 - **Memory:** the tool (code-made rocks) peaks at 1.45 GB; the game at ~2.6 GB (the 12 km grid, the renderer, ~10 k scanned rocks).
   A 12 km real map isn't put in the world cache (encoding it doubled the peak to over 4 GB); it builds in ~10 s.
+
+## Box D and the real trails (wip/moab-trails, 2026-11-08)
+
+Owner approved box D of `docs/plans/moab-trails.md` (38.500-38.640 N, 109.680-109.490 W), OpenStreetMap trail data, the famous trails on
+their OSM lines and their named obstacles at OSM's points.
+
+- **The map:** a 16.5 km square round 38.570 N, 109.585 W (the box, and 0.5 km more north and south: the map is square), re-cropped
+  from the 1/3" tile (dem.tif 3.6 MB). The backdrop is the same file (its middle is read from the map's). The Colorado follows OSM's
+  river line (a point every ~900 m) from the north-east, past the bridge and the Portal, round the Gooseneck, out to the south.
+- **OSM:** one bounded Overpass query of the box (5.7 MB, kept in `data/real/moab/source/`, not committed) and one for the river,
+  cut down by `tools/osm_extract.py` to `assets/maps/moab/osm.txt` (204 ways, 101 points, 0.3 MB). Credit: `CREDITS.txt`, README.
+- **Generic vs Moab:** `terrain.txt` is the settings any box would have plus `osm_rules 1` (every 4x4 track a trail, every attraction
+  on one an obstacle, trailheads and viewpoints landmarks); `moab.txt` (included) is the hand part: town, river, bridge, the famous
+  trails' way chains, the obstacles' sizes, the courses.
+- **Trails on OSM's lines** (way ids in `moab.txt`): Sand Flats Road, Hell's Revenge (and its options Hell's Gate, the Escalator,
+  Mickey's Hot Tub, the Tip-Over Challenge, the Staircase and its bypass, Hell's Alternate Route, the Colorado River Overlook spur),
+  Baby Lion's Back, Fins N' Things (its west loop; joined by a short routed link at the map's east edge), Moab Rim, Poison Spider
+  Mesa (and its loop), Golden Spike (and the Double Whammy bypass), Gold Bar Rim, Rusty Nail, Cliffhanger, Metal Masher's end (and the
+  short way past Rock Chunker). Lion's Back is left off (private, closed): a sign on its top, no trail within 40 m of it. Steel Bender
+  and Porcupine Rim start east of the box (OSM has no 4x4 way for either inside it): not on the map.
+- **Obstacles:** 23 authored (18 at OSM nodes, 5 at points on the OSM line where no source places them); sizes from the research's
+  descriptions within the game's measured limits. See `moab.txt` for each one's basis.
+- **Courses:** 9 (Sand Flats Road 1; Fins N' Things 3; Hell's Revenge, Poison Spider Mesa, Gold Bar Rim 4; Moab Rim, Golden Spike,
+  Cliffhanger, Metal Masher 5). Metal Masher's starts at the map's west edge (its trailhead is 4 km west of the box).
+- **Memory:** game 4.7 GB as first built, 3.3 GB after the scattered rocks were made whole hulls; tool and tests 2.4 GB.
