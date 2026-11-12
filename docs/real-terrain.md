@@ -270,6 +270,14 @@ lips, all following the bands (the fault's offset included); the varnish hangs i
 cross-bedding is drawn across the face rather than from above. The faces get the
 Namaqualand cliff and the leaning, undercut `overhang_nama_02` slab instead of the grey lichened faces.
 
+**The drawn ground** (`render.cpp` prepareTerrain): a real map is meshed at 1 m, its lidar's grid (2 m before). Each 64 m chunk
+knows how far each coarser LOD's surface strays from its full mesh, and draws the coarser of its distance's LOD and the next one
+when that strays less than about 2 pixels (0.2 % of the distance, at least 5 cm): smooth ground costs what it did at 2 m, cliffs,
+rims and ledges keep every metre. The shadow casters do the same (10 cm, 30 cm). Its far patches keep a vertex every 32 m and
+its occlusion samples every 4 m, as at 2 m. On a real map the ambient occlusion ignores occluders less than ~12 degrees above a
+pixel's plane: the folds between the 1 m facets (a few degrees each) had each drawn a dark line, the "long straight creases"
+across the near ground at Hell's Gate, which were the screen-space occlusion of the mesh's folds, not the shadows or the paint.
+
 ### Shipping a real map
 `build/realterrain make SIDECAR --out DIR --int16 0.1 1000` writes the crop as int16 decimetres (LZW, horizontal predictor) and
 adds the `vertical_scale` and `vertical_offset` lines: a third of the float32 crop's size, and 10 cm steps are well under the

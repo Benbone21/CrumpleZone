@@ -272,23 +272,31 @@ private:
     double terrainSpacing = 1;
     // The terrain (docs/plans/big-maps.md 3.4): the map in chunks of 64 x 64 mesh cells. A chunk's full mesh lives in a slot of
     // one pooled vertex buffer (terrainVbo: 65 x 65 vertices a slot), drawn through index sets shared by every chunk of its size
-    // (terrainIbo, four LODs each). A small map keeps every chunk in the pool; a big one keeps the ring round the camera
+    // (terrainIbo, kTerrainLods LODs each). A small map keeps every chunk in the pool; a big one keeps the ring round the camera
     // (streamTerrain) and draws the rest as far patches (16 mesh steps, skirted), which sit with the backdrop in the coarse
     // buffers (coarseVbo, coarseIbo).
     GLuint terrainVao = 0, terrainVbo = 0, terrainIbo = 0, coarseVao = 0, coarseVbo = 0, coarseIbo = 0;
+    static constexpr int kTerrainLods = 5;  // a vertex every 1, 2, 4, 8, 16 mesh steps
     struct TerrainChunk {
         RenderBounds bounds;
-        unsigned first[4] = {}, count[4] = {};  // a backdrop piece: its triangles in the coarse buffer (the same at every LOD)
+        unsigned first[kTerrainLods] = {}, count[kTerrainLods] = {};  // a backdrop piece: its triangles in the coarse buffer (the same at every LOD)
         bool proc = true;  // may hold paved/procedural paint (Apple: the rest are drawn with a ground shader without that code; see drawTerrain)
         bool backdrop = false;
         int i0 = 0, j0 = 0, w = 0, h = 0;  // a map chunk: its first mesh vertex (i, j) and its cells along i and j
         int lodSet = 0;                    // its shared index set (by size)
         int slot = -1;                     // its pool slot (-1: its full mesh isn't loaded)
         unsigned farFirst = 0, farCount = 0, farV0 = 0, farVN = 0;  // its far patch in the coarse buffers (farCount 0: none)
+        float err[kTerrainLods] = {};  // (terrainErrLod_) how far (m) each LOD's surface strays from the full mesh, at most
     };
     struct LodSet {
-        unsigned first[4] = {}, count[4] = {};
+        unsigned first[kTerrainLods] = {}, count[kTerrainLods] = {};
     };
+    // A real map's ground is meshed at 1 m (its lidar), and each chunk takes the coarsest of two LODs (the distance's and the one
+    // past it) whose error is small enough from where it's seen: smooth ground as coarse as it was at 2 m, its cliffs and ledges
+    // at full detail (no long straight creases down them, crisp rims). Every other map: by distance alone.
+    bool terrainErrLod_ = false;
+    int terrainFarStep_ = 16;  // (its far patches' vertex step, mesh steps)
+    int terrainLod(const TerrainChunk& c, double d) const;
     // Far patches drawn 8 x 8 chunks at a go where none of the 64 has its full mesh loaded (one draw, not 64).
     struct FarGroup {
         RenderBounds bounds;
@@ -371,8 +379,8 @@ public:
         std::vector<Vtx> poolVerts;        // the loaded chunks' full meshes, slot by slot from 0 (chunks[].slot says which)
         std::vector<Vtx> coarseVerts;      // far patches and the backdrop
         std::vector<unsigned> coarseIdx;
-        bool all = true;
-        int occlStep = 1;
+        bool all = true, errLod = false;
+        int occlStep = 1, farStep = 16;
         TerrainOcclusion occl;
         std::vector<float> data;  // the shaders' height / grass / paint / water texels: the window's, row by row as stored
         int texW = 0, winI = 0, winJ = 0;

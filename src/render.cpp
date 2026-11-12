@@ -2407,6 +2407,7 @@ uniform sampler2D uDepth; uniform mat4 uInvProj;
 uniform vec2 uTexel;       // one depth texel
 uniform vec2 uAOTexel;     // one AO texel
 uniform float uProjScale;  // AO pixels per meter at 1 m
+uniform float uAOAngle;    // occluders less than this far above the plane (sine of the angle) don't count (0: all do)
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 // Depth is read by integer pixel: an AO texel's centre sits on the corner of four depth texels, and a
 // filtered fetch there picks one by rounding (differently per GPU), which striped flat ground at HIGH.
@@ -2439,7 +2440,7 @@ void main(){
     vec3 Q = posPx(c + ivec2(floor(vec2(cos(ang), sin(ang)) * a * rpx * (uAOTexel / uTexel) + 0.5)));
     vec3 v = Q - P;
     float vv = dot(v, v), f = max(R * R - vv, 0.0);
-    sum += f * f * f * max((dot(v, n) - bias) / (vv + 0.01), 0.0);
+    sum += f * f * f * max((dot(v, n) - bias - uAOAngle * sqrt(vv)) / (vv + 0.01), 0.0);
   }
   oCol = vec4(max(0.0, 1.0 - sum * 1.1 / pow(R, 6.0) * (5.0 / float(N))));
 })";
@@ -3008,6 +3009,9 @@ void Renderer::postProcess(const View& view, const M4& proj) {
         Uniform2f(uniformLocation(progAO, "uTexel"), 1.0f / w, 1.0f / h);
         Uniform2f(uniformLocation(progAO, "uAOTexel"), 1.0f / aoW, 1.0f / aoH);
         Uniform1f(uniformLocation(progAO, "uProjScale"), aoH / (2.0f * std::tan(view.fovy * 0.5f)));
+        // (A real map's 1 m ground is a field of small facets, each fold between two a few degrees: counted, every concave one
+        // drew a dark line, long straight ones across the near ground. There a fold must be steeper than ~12 degrees to shade.)
+        Uniform1f(uniformLocation(progAO, "uAOAngle"), terrainErrLod_ ? 0.2f : 0.0f);
         ActiveTexture(GL_TEXTURE0);
         BindTexture(GL_TEXTURE_2D, depthTex);
         Uniform1i(uniformLocation(progAO, "uDepth"), 0);
@@ -3582,7 +3586,7 @@ void Renderer::drawTerrain(const M4& vp, const View& view, const std::function<v
             DrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, reinterpret_cast<const void*>((uintptr_t)first * sizeof(unsigned)));
         } else {
             const LodSet& set = terrainLods_[chunk.lodSet];
-            const int lod = terrainLodForDistance(o.first);
+            const int lod = terrainLod(chunk, o.first);
             first = set.first[lod], count = set.count[lod];
             DrawElementsBaseVertex(GL_TRIANGLES, count, GL_UNSIGNED_INT, reinterpret_cast<const void*>((uintptr_t)first * sizeof(unsigned)),
                                    chunk.slot * kChunkVerts);
@@ -3620,6 +3624,15 @@ void Renderer::drawTerrain(const M4& vp, const View& view, const std::function<v
     }
 }
 
+// A loaded chunk's LOD seen from d m (render.h terrainErrLod_).
+int Renderer::terrainLod(const TerrainChunk& c, double d) const {
+    const int base = terrainLodForDistance(d);
+    if (!terrainErrLod_) return base;
+    // (the next LOD if it strays less than about 2 pixels' worth at 1600 x 900, else this one)
+    const double tol = std::max(0.05, 0.002 * d);
+    return c.err[base + 1] <= tol ? base + 1 : base;
+}
+
 // The ground in a shadow pass: every loaded chunk in the light's box, the near cascade at full detail and the far one at the
 // next LOD (every LOD keeps the chunk's edges: no gaps between them). Only the faces turned from the light go in (the lit
 // ones culled), pushed back by the pass's polygon offset: the sunny ground never shadows itself, while a slope's lee side
@@ -3634,10 +3647,12 @@ void Renderer::drawTerrainCasters(const M4& lightVP, int cascade) {
     Enable(GL_CULL_FACE);
     CullFace(GL_FRONT);
     BindVertexArray(terrainVao);
-    const int lod = cascade == 0 ? 0 : 1;
+    const int lod0 = cascade == 0 ? 0 : 1;
     for (const TerrainChunk& chunk : terrainChunks) {
         if (chunk.backdrop || chunk.slot < 0 || !chunk.bounds.visible(lightVP)) continue;
         const LodSet& set = terrainLods_[chunk.lodSet];
+        // (On a 1 m real map a smooth chunk casts from the next LOD, as it did at 2 m; one with cliffs or ledges keeps its detail.)
+        const int lod = terrainErrLod_ && chunk.err[lod0 + 1] <= (cascade == 0 ? 0.1f : 0.3f) ? lod0 + 1 : lod0;
         DrawElementsBaseVertex(GL_TRIANGLES, set.count[lod], GL_UNSIGNED_INT, reinterpret_cast<const void*>((uintptr_t)set.first[lod] * sizeof(unsigned)),
                                chunk.slot * kChunkVerts);
         geometryStats_.shadowTerrainTriangles += set.count[lod] / 3;
@@ -3893,13 +3908,13 @@ static void chunkVertices(const World& world, double spacing, int i0, int j0, in
         for (int j = 0; j <= h; j++) out[i * kChunkSide + j] = terrainVertex(world, -half + (i0 + i) * spacing, -half + (j0 + j) * spacing);
 }
 
-// A chunk's far patch: a vertex every kFarStep mesh steps (and its far edges), and a skirt hanging kSkirt down round it.
-static void farPatch(const World& world, double spacing, int i0, int j0, int w, int h, std::vector<Vtx>& verts, std::vector<unsigned>& idx) {
+// A chunk's far patch: a vertex every `step` mesh steps (kFarStep; a 1 m real map twice that) (and its far edges), and a skirt hanging kSkirt down round it.
+static void farPatch(const World& world, double spacing, int step, int i0, int j0, int w, int h, std::vector<Vtx>& verts, std::vector<unsigned>& idx) {
     const double half = world.halfSize();
     std::vector<int> us, vs;
-    for (int k = 0; k < w; k += kFarStep) us.push_back(k);
+    for (int k = 0; k < w; k += step) us.push_back(k);
     us.push_back(w);
-    for (int k = 0; k < h; k += kFarStep) vs.push_back(k);
+    for (int k = 0; k < h; k += step) vs.push_back(k);
     vs.push_back(h);
     const int nu = (int)us.size(), nv = (int)vs.size();
     const unsigned base = (unsigned)verts.size();
@@ -3967,7 +3982,7 @@ void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, i
         }
         if (chunk.farCount) {  // (its far patch, made again in place: the same vertices, new heights)
             fv.clear(), fi.clear();
-            farPatch(world, sp, chunk.i0, chunk.j0, chunk.w, chunk.h, fv, fi);
+            farPatch(world, sp, terrainFarStep_, chunk.i0, chunk.j0, chunk.w, chunk.h, fv, fi);
             if (fv.size() == chunk.farVN) {
                 BindBuffer(GL_ARRAY_BUFFER, coarseVbo);
                 BufferSubData(GL_ARRAY_BUFFER, (GLintptr)((size_t)chunk.farV0 * sizeof(Vtx)), (GLsizeiptr)(fv.size() * sizeof(Vtx)), fv.data());
@@ -4001,8 +4016,13 @@ static bool chunkHasProcPaint(const World& world, const RenderBounds& b) {
 // The CPU half of the terrain: the chunks, their shared index sets, the full meshes of the ones loaded at the start (all of a
 // small map; round the spawn on a big one), the far patches and the backdrop, and the occlusion pyramid. Pure: any thread.
 void Renderer::prepareTerrain(const World& world, Prepared& p) {
-    // 1 m on the mountain (its crawl features are small) and the wilds (the sections' steps), 2 m on the proving ground.
-    const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY || world.map == MAP_WILDS || world.map == MAP_PROCEDURAL ? 1.0 : 2.0, half = world.halfSize();
+    // 1 m on the mountain (its crawl features are small) and the wilds (the sections' steps), 2 m on the proving ground. A real map
+    // too is meshed at 1 m (its lidar's ledges, rims and walls), its chunks' LODs picked by their error (terrainLod): only its steep
+    // and broken ground keeps the extra triangles.
+    const bool real = world.map == MAP_REAL;
+    const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY || world.map == MAP_WILDS || world.map == MAP_PROCEDURAL || real ? 1.0 : 2.0, half = world.halfSize();
+    p.errLod = real;
+    p.farStep = real ? 2 * kFarStep : kFarStep;  // (32 m, as its 2 m mesh had: the far patches of a 16 km map at 16 m would be 160 MB)
     const int n = (int)(2 * half / spacing) + 1, cells = n - 1, cn = (cells + kChunkCells - 1) / kChunkCells;
     p.spacing = spacing;
     p.n = n;
@@ -4019,7 +4039,7 @@ void Renderer::prepareTerrain(const World& world, Prepared& p) {
             auto it = sets.find(key);
             if (it == sets.end()) {
                 LodSet s;
-                for (int lod = 0; lod < 4; ++lod) {
+                for (int lod = 0; lod < kTerrainLods; ++lod) {
                     s.first[lod] = (unsigned)p.lodIdx.size();
                     appendTerrainLod(p.lodIdx, kChunkSide, 0, 0, c.w, c.h, 1 << lod);
                     s.count[lod] = (unsigned)p.lodIdx.size() - s.first[lod];
@@ -4032,13 +4052,34 @@ void Renderer::prepareTerrain(const World& world, Prepared& p) {
         }
     const int mapChunks = (int)chunks.size();
     // Their bounds: every vertex's height (as drawn), a row of chunks per thread.
+    // (A real map: and how far each LOD's surface strays from them, against the bilinear surface through its corners.)
     parallelRows(cn, [&](int ci) {
+        float hs[kChunkVerts];
         for (int cj = 0; cj < cn; cj++) {
             TerrainChunk& c = chunks[(size_t)ci * cn + cj];
             for (int i = 0; i <= c.w; i++)
                 for (int j = 0; j <= c.h; j++) {
                     const float x = (float)(-half + (c.i0 + i) * spacing), z = (float)(-half + (c.j0 + j) * spacing);
-                    c.bounds.add(V3(x, (float)terrainY(world, x, z), z));
+                    const float y = (float)terrainY(world, x, z);
+                    hs[i * kChunkSide + j] = y;
+                    c.bounds.add(V3(x, y, z));
+                }
+            if (p.errLod)
+                for (int lod = 1; lod < kTerrainLods; lod++) {
+                    const int st = 1 << lod;
+                    float e = 0;
+                    for (int i = 0; i <= c.w; i++) {
+                        const int a0 = std::min(i / st * st, std::max(0, c.w - 1)), a1 = std::min(a0 + st, c.w);
+                        const float u = a1 > a0 ? (float)(i - a0) / (a1 - a0) : 0;
+                        for (int j = 0; j <= c.h; j++) {
+                            const int b0 = std::min(j / st * st, std::max(0, c.h - 1)), b1 = std::min(b0 + st, c.h);
+                            const float v = b1 > b0 ? (float)(j - b0) / (b1 - b0) : 0;
+                            const float bl = (hs[a0 * kChunkSide + b0] * (1 - v) + hs[a0 * kChunkSide + b1] * v) * (1 - u) +
+                                             (hs[a1 * kChunkSide + b0] * (1 - v) + hs[a1 * kChunkSide + b1] * v) * u;
+                            e = std::max(e, std::fabs(hs[i * kChunkSide + j] - bl));
+                        }
+                    }
+                    c.err[lod] = std::max(e, c.err[lod - 1]);
                 }
         }
     }, 1);
@@ -4070,10 +4111,10 @@ void Renderer::prepareTerrain(const World& world, Prepared& p) {
         std::vector<std::vector<unsigned>> pi(mapChunks);
         parallelRows(mapChunks, [&](int k) {
             const TerrainChunk& c = chunks[k];
-            farPatch(world, spacing, c.i0, c.j0, c.w, c.h, pv[k], pi[k]);
+            farPatch(world, spacing, p.farStep, c.i0, c.j0, c.w, c.h, pv[k], pi[k]);
         }, 8);
         // In groups of 8 x 8 chunks, each group's triangles together (drawn at once where none of its chunks is loaded).
-        constexpr int G = 8;
+        const int G = p.farStep > kFarStep ? 16 : 8;  // (a 1 m real map: 1 km groups, as its 2 m mesh had)
         for (int gi = 0; gi < cn; gi += G)
             for (int gj = 0; gj < cn; gj += G) {
                 FarGroup g;
@@ -4117,7 +4158,7 @@ void Renderer::prepareTerrain(const World& world, Prepared& p) {
             const auto& v = p.coarseVerts[index];
             chunk.bounds.add(V3(v.p[0], v.p[1], v.p[2]));
         }
-        for (int lod = 0; lod < 4; ++lod) {
+        for (int lod = 0; lod < kTerrainLods; ++lod) {
             chunk.first[lod] = (unsigned)p.coarseIdx.size();
             chunk.count[lod] = (unsigned)entry.second.size();
         }
@@ -4129,7 +4170,7 @@ void Renderer::prepareTerrain(const World& world, Prepared& p) {
     }
     // The horizon test's heights: the drawn mesh's, every vertex (a small map), else every occlStep-th, each the lowest of the
     // mesh round it (a lower bound of what's drawn).
-    p.occlStep = p.all ? 1 : 2;
+    p.occlStep = p.all ? 1 : n > 10000 ? 4 : 2;  // (a 16 km map at 1 m: still a sample every 4 m)
     const int f = p.occlStep, on = (n - 1) / f + 1;
     std::vector<float> hs((size_t)on * on);
     parallelRows(on, [&](int I) {
@@ -4515,7 +4556,7 @@ void Renderer::adoptTerrain(Prepared& p) {
     if (coarseVbo) DeleteBuffers(1, &coarseVbo);
     if (coarseIbo) DeleteBuffers(1, &coarseIbo);
     terrainVbo = p.vbo, terrainIbo = p.ibo, coarseVbo = p.cvbo, coarseIbo = p.cibo;
-    terrainSpacing = p.spacing, terrainMeshN = p.n;
+    terrainSpacing = p.spacing, terrainMeshN = p.n, terrainErrLod_ = p.errLod, terrainFarStep_ = p.farStep;
     // (Swapped, not moved: the window that goes out's chunks, LOD sets, far groups and occlusion grid go out with `p`, which a
     // procedural slide frees on a thread of its own after the swap frame (freeRetired), not here.)
     std::swap(terrainChunks, p.chunks);
