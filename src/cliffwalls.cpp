@@ -58,9 +58,9 @@ double carve(const Beds& beds, double x, double y, double z, double hb, double h
     if (hash1(k) < 0.5) {
         const double pinch = smoothstep(0.3, 0.65, vn2(x * 0.06 + k * 3.7, z * 0.06 - k * 1.3));
         // (deeper and shallower along the face, and a bed's notch not always its middle: under its top or over its foot)
-        const double along = 0.35 + 0.9 * vn2(x * 0.035 + k * 1.9, z * 0.035 - k * 0.7);
+        const double along = 0.5 + 0.9 * vn2(x * 0.035 + k * 1.9, z * 0.035 - k * 0.7);
         const double skew = 0.3 + 0.4 * hash1(k + 13.7), g = f < skew ? 0.5 * f / skew : 0.5 + 0.5 * (f - skew) / (1 - skew);
-        notch = std::pow(std::sin(M_PI * g), 0.7) * (0.25 + 1.2 * hash1(k + 71.3)) * pinch * along;
+        notch = std::pow(std::sin(M_PI * g), 0.7) * (0.35 + 1.4 * hash1(k + 71.3)) * pinch * along;
     }
     // Under the rim the face is set back under the caprock's lip (on a tall wall).
     const double cap = 1.0 * smoothstep(1.0, 2.5, ht) * (1 - smoothstep(4.0, 9.0, ht)) * smoothstep(8.0, 14.0, wallH);
@@ -170,8 +170,8 @@ void build(const World& world, const Beds& beds, int i0, int j0, int w, int h, f
         return false;
     };
     // The face drawn: off the lidar, the 10 m data's bicubic faces are ribbed (a ridge and a groove every pixel, straight down the
-    // face); there each point takes, averaged over 2 m either way along the face, the lowest land within 4 m along it: the ridges
-    // cut back to the grooves, never anything raised (so it stays inside the land). On gentle ground and the lidar, the land itself.
+    // face); there each point takes, averaged over 2 m either way along the face, the lowest land within 2 m along it, and no more
+    // than 0.8 m back: the ridges cut back toward the grooves, never anything raised (so it stays inside the land). On gentle ground and the lidar, the land itself.
     const int fx0 = lx0 - 10, fz0 = lz0 - 10, fw = lw + 20, fh = lh + 20;
     std::vector<float> HFg((size_t)fw * fh);
     for (int a = 0; a < fw; a++)
@@ -182,15 +182,16 @@ void build(const World& world, const Beds& beds, int i0, int j0, int w, int h, f
             if (gm > 1.0) f = smoothstep(1.0, 2.0, gm) * (beds.lidar ? 1 - clampd(beds.lidar(x, z), 0, 1) : 1);
             if (f <= 0) { HFg[(size_t)a * fh + b] = (float)h0; continue; }
             const double tx = -gz / gm, tz = gx / gm;
-            double along[13];
-            for (int t = -6; t <= 6; t++) along[t + 6] = H(x + tx * t, z + tz * t);
+            double along[9];
+            for (int t = -4; t <= 4; t++) along[t + 4] = H(x + tx * t, z + tz * t);
             double sum = 0;
             for (int s = -2; s <= 2; s++) {
                 double m = 1e30;
-                for (int t = s - 4; t <= s + 4; t++) m = std::min(m, along[t + 6]);
+                for (int t = s - 2; t <= s + 2; t++) m = std::min(m, along[t + 4]);
                 sum += m;
             }
-            HFg[(size_t)a * fh + b] = (float)(h0 + f * (std::min(h0, sum / 5) - h0));
+            // (at most 0.8 m back into the face: where the face curves away, the line along it leaves it for the ground below)
+            HFg[(size_t)a * fh + b] = (float)(h0 + f * (std::max(h0 - 0.8 * gm, std::min(h0, sum / 5)) - h0));
         }
     auto HF = [&](double x, double z) {
         double fx = (x + half) / kS - fx0, fz = (z + half) / kS - fz0;
@@ -442,6 +443,9 @@ void build(const World& world, const Beds& beds, int i0, int j0, int w, int h, f
             // (every corner well under the highest ground round it and well over the lowest)
             bool fits = true;
             for (int q = 0; q < 8 && fits; q++) fits = c[q].y <= bil(hi, c[q].x, c[q].z) - 0.3 && c[q].y >= bil(lo, c[q].x, c[q].z) + 2.4;
+            // (and set into the rock: its back's top corners under the land, and the land over its back's middle too)
+            for (int q : {4, 5}) fits = fits && H(c[q].x, c[q].z) >= c[q].y + 0.15;
+            fits = fits && H((c[4].x + c[5].x) * 0.5, (c[4].z + c[5].z) * 0.5) >= (c[4].y + c[5].y) * 0.5 + 0.15;
             if (!fits) continue;
             static const int F[6][4] = {{0, 1, 3, 2}, {4, 6, 7, 5}, {0, 2, 6, 4}, {1, 5, 7, 3}, {0, 4, 5, 1}, {2, 3, 7, 6}};
             const V3 mid = (c[0] + c[7]) * 0.5;

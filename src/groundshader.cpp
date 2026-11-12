@@ -580,7 +580,7 @@ void main(){
     // (a sand-filled hollow in bare rock is a lens of the rock's own grains, dulled by dust: less saturated and a little darker than
     // the sidecar's colour in the open, where a pool of it otherwise glowed orange)
     float sandL = dot(sand, vec3(0.2126, 0.7152, 0.0722));
-    sand = mix(sand, vec3(sandL), 0.22) * 0.92;
+    sand = mix(sand, vec3(sandL), 0.14) * 0.94;
     vec3 recol = mix(sand, band * shade, rk);
     alb = mix(alb, recol, clamp(gSlickRock + gSlickSand, 0.0, 1.0));
   }
@@ -686,14 +686,15 @@ void main(){
     float c = max(dot(wOut, toCam), 0.6);
     float pull = wRec / c + 0.15 + 0.006 * dist;
     // (but never out past the land toward the camera, where a vehicle could be: only to where the line of sight leaves the rock,
-    // the land's or the terrain mesh's, whichever is further out, and 10 cm more)
+    // the land's or the terrain mesh's, whichever is further out, and 10 cm more, a little more far off where the mesh is
+    // coarser than the cells: 46 cm at 120 m, where a vehicle is a few pixels)
     float prev = 0.0;
     for (int k = 1; k <= 16; k++) {
       float t = pull * float(k) / 16.0;
       vec3 q = vPos + toCam * t;
       if (q.y > landAt(q.xz) + 0.02) {
         vec3 m = vPos + toCam * (0.5 * (prev + t));
-        pull = min(pull, (m.y > landAt(m.xz) + 0.02 ? 0.5 * (prev + t) : t) + 0.1);
+        pull = min(pull, (m.y > landAt(m.xz) + 0.02 ? 0.5 * (prev + t) : t) + 0.1 + 0.003 * dist);
         break;
       }
       prev = t;
