@@ -57,7 +57,10 @@ double carve(const Beds& beds, double x, double y, double z, double hb, double h
     double notch = 0;
     if (hash1(k) < 0.5) {
         const double pinch = smoothstep(0.3, 0.65, vn2(x * 0.06 + k * 3.7, z * 0.06 - k * 1.3));
-        notch = std::pow(std::sin(M_PI * f), 0.7) * (0.4 + 1.1 * hash1(k + 71.3)) * pinch;
+        // (deeper and shallower along the face, and a bed's notch not always its middle: under its top or over its foot)
+        const double along = 0.35 + 0.9 * vn2(x * 0.035 + k * 1.9, z * 0.035 - k * 0.7);
+        const double skew = 0.3 + 0.4 * hash1(k + 13.7), g = f < skew ? 0.5 * f / skew : 0.5 + 0.5 * (f - skew) / (1 - skew);
+        notch = std::pow(std::sin(M_PI * g), 0.7) * (0.25 + 1.2 * hash1(k + 71.3)) * pinch * along;
     }
     // Under the rim the face is set back under the caprock's lip (on a tall wall).
     const double cap = 1.0 * smoothstep(1.0, 2.5, ht) * (1 - smoothstep(4.0, 9.0, ht)) * smoothstep(8.0, 14.0, wallH);

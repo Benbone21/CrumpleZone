@@ -491,7 +491,7 @@ void main(){
   else { alb = vec3(0.1); rough = 0.9; ao = 1.0; nrm = N0; }
   ao = mix(1.0, ao, distFade * 0.9 + 0.1);
 #ifdef WALL
-  ao *= 1.0 - 0.55 * smoothstep(0.05, 1.6, wRec);  // (deep in a hollow, little of the sky)
+  ao *= 1.0 - (0.25 + 0.2 * vnoise(p * 0.07 + 3.0)) * smoothstep(0.1, 2.0, wRec);  // (deep in a hollow, less of the sky)
 #endif
 
 #ifdef X_R4
@@ -637,6 +637,11 @@ void main(){
   vec3 lspec, lamp = lampLight(vPos, n, V, max(P, 12.0), 0.0, lspec);
 #endif
   vec3 col = lin * (ambientAt(n) * ao + NL * aoD * sh * kSunCol + lamp);
+#ifdef WALL
+  // (A hollow's roof and back are lit by the sunlit rock and sand below and across it: warm light bounced up into it, not black.)
+  float bounce = (0.12 + 0.3 * max(-n.y, 0.0) + 0.12 * (1.0 - abs(n.y))) * smoothstep(0.05, 0.5, wRec) * clamp(uSun.y * 1.5, 0.0, 1.0);
+  col += lin * kSunCol * bounce * vec3(1.0, 0.82, 0.66) * 0.4;
+#endif
   col += sunSpec * (1.0 - clamp(gProc, 0.0, 1.0));
   col += lspec * 0.08 * (1.0 - rough) * (1.0 - clamp(gProc, 0.0, 1.0)) * 4.0;
   // Glossy ground (wet mud, puddles, the shore) mirrors the sky.
