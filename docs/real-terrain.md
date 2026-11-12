@@ -150,6 +150,19 @@ slickrock 1290 1750                                  # real elevations between w
 rim 130                                              # how wide the rim that keeps you on the map is (m)
 ```
 
+Slickrock country (all optional, per map; Moab uses them):
+
+```
+detail detail/x+04038z-00058.tif 0.01 1265 24        # a lidar patch: FILE SCALE OFFSET FEATHER (tools/hires_patches.py writes these)
+include detail.txt                                   # ...usually a file of them
+ledge_sharpen 0.8                                    # on the patches, steps steeper than round them pulled toward a stair (0..1)
+cover cover.tif                                      # ground cover from aerial photos: 1 rock, 2 sand, 3 brush (tools/naip_cover.py)
+strata 1345 190 112 84                               # the rock's colour (sRGB) at a real elevation; one line a band, up to 8
+sand_look 176 96 62                                  # with strata: the sand's colour
+rock_look 176 104 70 0.8                             # scanned rocks and cliffs recoloured (to the strata if any, else this), 0..1
+rock_scans nama_ talus_                              # only scans whose names start so make the map's rocks (talus_ is opt-in)
+```
+
 OpenStreetMap, obstacles and a hand-authored part:
 
 ```
@@ -171,9 +184,12 @@ landmark LION'S BACK: CLOSED, PRIVATE LAND | node 8707699266
 - **Obstacles** (`SpecObstacle`, `realterrainbuild.cpp`) are built on their trail's laid line through the point: keys `climb G L`,
   `steps N R`, `length`, `width`, `walls H` (< 0: a fin's drops), `camber DEG`, `crack D W [cross]`, `bowl D SIZE`, `boulders N`,
   `bypass left|right|TRAIL`. The tread's profile is the obstacle's own (pitch and ledges) from a foot dug at most 1 m into the trail,
-  joined to it by a run-in and run-out at 30%, eased into the land at its sides over 3 m or 1.6x its height. Each ledge's lip is a row of
-  flattened scanned rocks across the tread, tops level with the tread above (the 1 m grid can't make a square edge); walls are lined
-  with big scanned rocks. No box slabs. A `bypass left|right` is laid as a trail round it (10 m and more off the line); `bypass TRAIL`
+  joined to it by a run-in and run-out at 30%, eased into the land at its sides over 3 m (5 m with steps) or 1.6x its height. Each
+  ledge's face is a slab of the rock itself (`World::addHullRock`: code-made convex pieces about 1.3 m across, each set back and
+  dropped a little, the lip rounded and the foot undercut, top level with the tread above, drawn in the band's colour), running on past
+  the tread as a bed of rock does until the step dies out (the 1 m grid can only ramp a step over a cell). A wall over 2.5 m is the
+  edge of a mass of rock the notch is cut through: it rises over 0.7x its height and runs on past the profile's ends and out to the
+  sides; a few fallen blocks lie at the walls' feet. No rows of boulders, no box slabs. A `bypass left|right` is laid as a trail round it (10 m and more off the line); `bypass TRAIL`
   is one of the sidecar's (OSM's own bypass). Each is named over it (`World::tags`).
 - **Courses** keep their gates off an obstacle that has a bypass, and carry `easiest`: the line with each such obstacle taken by its
   bypass (what the tests drive; the course itself is the main line).
@@ -196,6 +212,37 @@ landmark LION'S BACK: CLOSED, PRIVATE LAND | node 8707699266
   rock (not painted as a dirt track), and are marked with cairns. All named trails are on the M map.
 - Each `course` is a sprint level on MAP_REAL (`realCourseLevels`, in the level list after the built-in ones): the start on the
   trail's first metres, a gate every ~250 m, medals by length and difficulty. Difficulty 5 has no repairs.
+
+### Lidar detail
+The DEM (10 m for Moab) is smooth: domes read as dunes and every ledge is rounded away. `tools/hires_patches.py` (the ROCm venv:
+numpy, rasterio, pyproj, cv2) cuts high-resolution DEM tiles (USGS 3DEP 1 m, any projected CRS) into patches on the map's own 1 m
+grid where they matter: corridors along the named trails (rated 2+, 60 m either side), 400 m squares round the named obstacles, and
+any `--box` asked for. Each is a GeoTIFF in NAD83 degrees, one pixel a map metre, int16 centimetres over its own offset, NoData
+outside, deflate; neighbouring patches overlap by their feather so no seam shows. The sources go best first (the first with a pixel
+wins). The game (`Terrain::patchAt`) lays them over the DEM bicubically, eased in over the feather (a 3-4 chamfer distance from
+NoData: integers, the same everywhere), without the made-up fine bumps (`landAt`); the contour ledges skip them, and `ledge_sharpen`
+pulls their risers toward a stair where a step is much steeper than the ground round it. The patches are hashed into `Spec::hash`.
+
+Moab: 21 patches, 9 M cells, 12.8 MB (`assets/maps/moab/detail/`), from `UT_Southern_QL1_2018` (x62y427, x62y428, x63y427) first, then
+`UT_FEMA_FS_FlamingGorge_2020_B20` (x61y427, x61y428, x63y428) and `UT_COUTAML_D24`. Hell's Gate, the Escalator, Mickey's Hot Tub, the
+east end of Golden Spike (Launching Pad, Narrow Ravine, Zuki Hill), Devil's Crack, the Moab Rim dome and the Poison Spider Waterfall
+fall in gaps of the tiles on disk (the 2018 survey's edge runs diagonally through Hell's Revenge; FlamingGorge's x62y427, x62y428 and
+x63y427 weren't fetched): they keep the 10 m DEM. The UGRC 2025 0.5 m DEM (Hell's Revenge core) states no licence, so nothing from it
+ships.
+
+### Ground cover and the slickrock look
+`tools/naip_cover.py` classifies NAIP 2024 (USDA, 0.6 m, public domain) by colour: pale, low-saturation pixels are bare rock, the
+more saturated orange ones sand, dark greener ones brush; median-filtered, then resampled by mode onto the map's frame at 2 m
+(`cover.tif`, 7.4 MB for Moab). In the slickrock band the build follows it (the steep is rock whatever it says; looked up a little off
+the point by noise, so the pixels' square edges are ragged), and bushes grow only on brush.
+
+With `strata`, the ground shader (`groundshader.cpp`, uniform `uSlick`; every other map has it 0 and looks as before) draws the map's
+slickrock (paint REDROCK) with four sandstone materials, bedded and streaked ones (Poly Haven `cliff_side`, ambientCG `Rock029`) on the
+faces, cracked and worn ones (`rock_boulder_cracked`, `worn_rock_natural_01`) on the tops, and its sand with `red_sand`. Their own
+colour is only light and shade: the colour is the band's at that height (noise-wobbled), with beds a metre or two thick, cross-bedding
+lines dipping one way in a patch and another in the next, desert varnish streaking down the faces and bleached tops. The scanned
+rocks and cliffs (`propdraw.cpp`, `uRetint`) and the code-made rocks (`scenery.cpp`) take the same bands. The faces get the
+Namaqualand cliff and the leaning, undercut `overhang_nama_02` slab instead of the grey lichened faces.
 
 ### Shipping a real map
 `build/realterrain make SIDECAR --out DIR --int16 0.1 1000` writes the crop as int16 decimetres (LZW, horizontal predictor) and
