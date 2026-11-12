@@ -185,7 +185,7 @@ struct SpecLandmark {
     int64_t node = 0;
     LatLon at;
 };
-// A high-resolution patch over the DEM (`detail FILE SCALE OFFSET FEATHER`: tools/hires_patches.py): lidar on the map's own 1 m grid,
+// A high-resolution patch over the DEM (`lidar FILE SCALE OFFSET FEATHER`: tools/hires_patches.py): lidar on the map's own 1 m grid,
 // a GeoTIFF in degrees, NoData outside what it covers; laid over the DEM where it has data, eased in over FEATHER m from its edges.
 struct SpecDetail {
     std::string file, path;
@@ -247,10 +247,15 @@ struct Spec {
     std::vector<SpecCourse> courses;
     std::vector<SpecObstacle> obstacles;
     std::vector<SpecLandmark> landmarks;
-    std::vector<SpecDetail> details;   // `detail` lines: lidar patches
+    std::vector<SpecDetail> details;   // `lidar` lines: lidar patches
     std::vector<SpecStratum> strata;   // `strata` lines, by elevation
     // `rock_look R G B AMOUNT`: the scanned rocks and cliffs recoloured toward this (sRGB 0-255), AMOUNT 0..1 (0: as scanned).
     double rockLook[4] = {0, 0, 0, 0};
+    // `strata_fault LAT LON LAT LON SHIFT WIDTH`: a fault the strata are offset across. Left of the line (looking from the first point
+    // to the second) the bands sit SHIFT m higher (the rock there was lifted), eased across WIDTH m. (Moab's: along the valley.)
+    bool hasFault = false;
+    LatLon faultA, faultB;
+    double faultShift = 0, faultWidth = 300;
     // `sand_look R G B`: with `strata`, the sand's colour (sRGB 0-255).
     double sandLook[3] = {200, 140, 88};
     // `rock_scans NAME ...`: only these scans (props.txt names, or their prefixes) make the rocks (empty: any).
@@ -339,11 +344,15 @@ struct Terrain {
     double cx = 0, cy = 0;        // the DEM pixel (centre convention) at the map's middle
     double detailAmp = 0.3;
     // The lidar patches (Spec::details), on the map's frame: pixel (c, r) is map (x0 + c * sx, z0 - r * sz); heights in metres over
-    // `base` (exaggerated), and how much each pixel counts (0 at NoData and the patch's edge, 1 `feather` m inside).
+    // `base` (exaggerated) as vBase + q * vStep, and how much each pixel counts in 255ths (0 at NoData and the patch's edge, 255
+    // `feather` m inside). (Kept small: Moab's are 25 M pixels, 3 bytes each.)
     struct Patch {
         int w = 0, h = 0;
         double x0 = 0, z0 = 0, sx = 1, sz = 1;
-        std::vector<float> v, wt;
+        double vBase = 0, vStep = 0.01;
+        std::vector<int16_t> v;
+        std::vector<uint8_t> wt;
+        double at(size_t k) const { return vBase + v[k] * vStep; }
     };
     std::vector<Patch> patches;
     // The patches' height and weight at (x, z) (false: none there).

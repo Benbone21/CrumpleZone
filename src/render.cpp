@@ -3092,6 +3092,13 @@ void setSlickrockUniforms(GLuint prog, int mapId) {
         v[i * 4] = (float)rt->mapHeight(st.elev), v[i * 4 + 1] = lin(st.r), v[i * 4 + 2] = lin(st.g), v[i * 4 + 3] = lin(st.b);
     }
     Uniform1f(uniformLocation(prog, "uSlick"), 1.0f);
+    {  // (the fault the strata are offset across, on the map's frame; shift 0: none)
+        double ax = 0, az = 0, bx = 1, bz = 0;
+        const realterrain::Spec& sp = rt->spec;
+        if (sp.hasFault) rt->toMap(sp.faultA, ax, az), rt->toMap(sp.faultB, bx, bz);
+        Uniform4f(uniformLocation(prog, "uStrataFault"), (float)ax, (float)az, (float)bx, (float)bz);
+        Uniform2f(uniformLocation(prog, "uStrataShift"), sp.hasFault ? (float)(sp.faultShift * sp.exaggeration) : 0.0f, (float)sp.faultWidth);
+    }
     Uniform4fv(uniformLocation(prog, "uStrata"), 8, v);
     Uniform1i(uniformLocation(prog, "uStrataN"), n);
     Uniform3f(uniformLocation(prog, "uSandLook"), lin(rt->spec.sandLook[0]), lin(rt->spec.sandLook[1]), lin(rt->spec.sandLook[2]));

@@ -74,6 +74,14 @@ uniform float uSlick;        // 1: on (paint 15 is sandstone, 7 and 14 its sand)
 uniform vec4 uStrata[8];     // (map height, linear r, g, b), by height
 uniform int uStrataN;
 uniform vec3 uSandLook;      // the sand's colour (linear)
+uniform vec4 uStrataFault;   // a fault's line on the map (x, z, x, z) ...
+uniform vec2 uStrataShift;   // ... and how much higher the bands sit left of it (m), eased over (m)
+float strataShift(vec2 xz){
+  if (uStrataShift.x == 0.0) return 0.0;
+  vec2 a = uStrataFault.xy, d = uStrataFault.zw - a;
+  float side = (d.x * (xz.y - a.y) - d.y * (xz.x - a.x)) / max(length(d), 1e-3);  // (> 0: left of it)
+  return uStrataShift.x * smoothstep(-0.5 * uStrataShift.y, 0.5 * uStrataShift.y, side);
+}
 float gSlickRock = 0.0, gSlickSand = 0.0, gFace = 0.0;
 vec3 strataAt(float y){
   if (uStrataN <= 0) return vec3(0.5);
@@ -463,7 +471,7 @@ void main(){
     for (int k = 0; k < 4; k++) if (k < K && selW[k] > 0.0) { avgL += dot(avgA[k].rgb, vec3(0.2126, 0.7152, 0.0722)) * selW[k]; aw += selW[k]; }
     avgL = max(avgL / max(aw, 1e-4), 0.02);
     float shade = clamp(dot(alb, vec3(0.2126, 0.7152, 0.0722)) / avgL, 0.35, 1.7);
-    float yb = vPos.y + 3.0 * (fbm(p * 0.008 + 4.0, 2) - 0.5) + 1.2 * (vnoise(p * 0.05) - 0.5);
+    float yb = vPos.y - strataShift(vPos.xz) + 3.0 * (fbm(p * 0.008 + 4.0, 2) - 0.5) + 1.2 * (vnoise(p * 0.05) - 0.5);
     vec3 band = strataAt(yb);
     band *= 0.88 + 0.24 * vnoise(vec2(yb * 0.45, 3.7) + p * 0.0015);           // beds a metre or two thick
     band *= 0.94 + 0.12 * vnoise(vec2(yb * 2.2, 9.1) + p * 0.004) ;            // and thinner ones within them
@@ -477,8 +485,12 @@ void main(){
     float streak = smoothstep(0.45, 0.85, vnoise(vec2(along * 1.3 + 17.0 * floor(along * 0.05), vPos.y * 0.07)) * (0.6 + 0.6 * vnoise(p * 0.03 + 2.0)));
     band = mix(band, band * vec3(0.30, 0.24, 0.21), streak * gFace * 0.75);   // desert varnish down the faces
     band = mix(band, band * 1.12 + 0.02, (1.0 - gFace) * smoothstep(0.55, 0.8, fbm(p * 0.02 + 8.0, 2)) * 0.5);  // bleached tops
+    // (sand and rock meet along a ragged, feathered line, the sand thinning over the rock at its edges, not a painted one)
     float rk = clamp(gSlickRock / (gSlickRock + gSlickSand), 0.0, 1.0);
-    vec3 sand = uSandLook * (0.9 + 0.2 * vnoise(p * 0.04 - 5.0)) * mix(1.0, shade, 0.6);
+    rk = smoothstep(0.1, 0.9, clamp(rk + 0.55 * (fbm(p * 0.35 + 1.3, 3) - 0.5) + 0.3 * (vnoise(p * 2.3) - 0.5), 0.0, 1.0));
+    vec3 sand = uSandLook * (0.82 + 0.3 * fbm(p * 0.05 - 5.0, 2)) * mix(1.0, shade, 0.6);
+    sand *= mix(vec3(1.0), vec3(1.06, 0.96, 0.88), vnoise(p * 0.6 + 3.0));          // (redder and paler grains)
+    sand *= 0.93 + 0.07 * sin(dot(p, vec2(2.1, 1.3)) + 3.0 * vnoise(p * 0.3));      // (faint wind ripples)
     vec3 recol = mix(sand, band * shade, rk);
     alb = mix(alb, recol, clamp(gSlickRock + gSlickSand, 0.0, 1.0));
   }

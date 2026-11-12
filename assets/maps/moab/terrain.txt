@@ -35,6 +35,9 @@ strata 1420 198 124 94
 strata 1500 196 136 104
 strata 1560 192 142 112
 strata 1700 184 136 108
+# The Moab fault zone runs NW-SE along the valley: south-west of it (Moab Rim, Poison Spider, Golden Spike, Gold Bar) the same beds
+# stand about 130 m higher than at Hell's Revenge (Navajo caps the rims at 1550-1650 m there, 1350-1450 m on the Sand Flats).
+strata_fault 38.545 -109.515 38.625 -109.640 130 300
 # Sand: the same rock ground up, redder (orange-red in the hollows between the domes).
 sand_look 176 96 62
 # The scanned boulders: the Namaqualand set and the sandstone talus (no grey granite), recoloured toward the sandstone.

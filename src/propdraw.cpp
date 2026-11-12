@@ -72,6 +72,14 @@ uniform int uRetint;
 uniform vec4 uRockLook;
 uniform vec4 uStrata[8];
 uniform int uStrataN;
+uniform vec4 uStrataFault;
+uniform vec2 uStrataShift;
+float propStrataShift(vec2 xz){
+  if (uStrataShift.x == 0.0) return 0.0;
+  vec2 a = uStrataFault.xy, d = uStrataFault.zw - a;
+  float side = (d.x * (xz.y - a.y) - d.y * (xz.x - a.x)) / max(length(d), 1e-3);
+  return uStrataShift.x * smoothstep(-0.5 * uStrataShift.y, 0.5 * uStrataShift.y, side);
+}
 vec3 propStrataAt(float y){
   vec3 c = uStrata[0].yzw;
   for (int i = 1; i < 8; i++) {
@@ -105,7 +113,7 @@ void main(){
   // in, its own photo kept as its light and shade. (Off everywhere else: uRockLook.w is 0.)
   if (uRetint == 1 && uRockLook.w > 0.0) {
     float l = dot(alb, vec3(0.2126, 0.7152, 0.0722));
-    vec3 c = uStrataN > 0 ? propStrataAt(vPos.y + 2.0 * (hash(floor(NP.xz * 0.2)) - 0.5)) : uRockLook.rgb;
+    vec3 c = uStrataN > 0 ? propStrataAt(vPos.y - propStrataShift(vPos.xz) + 2.0 * (hash(floor(NP.xz * 0.2)) - 0.5)) : uRockLook.rgb;
     c *= 0.9 + 0.2 * hash(floor(vPos.xz * 0.5 + vExtra.y));
     alb = mix(alb, c * clamp(l / 0.11, 0.25, 2.0), uRockLook.w);
   }

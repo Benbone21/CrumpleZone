@@ -7,7 +7,7 @@ for). Each patch is a GeoTIFF in degrees (NAD83), one pixel per map metre, int16
 (-32768) outside the corridors; the game (Spec::details) lays it over the coarse DEM, eased in over `feather` metres.
 
 Generic: any box, any sidecar. It reads the sidecar's centre and size, its trail lines (OSM ways or LAT LON lists) and
-obstacles, and writes the patches plus an include file of `detail` lines.
+obstacles, and writes the patches plus an include file of `lidar` lines.
 
   ~/venvs/rocm-torch/bin/python -I tools/hires_patches.py assets/maps/moab/terrain.txt SRC_DIR [SRC_DIR ...] \
       --out assets/maps/moab --trail-half 60 --obstacle-half 200 --min-rating 2
@@ -213,7 +213,7 @@ def main():
                 o.write(q, 1)
             sz = os.path.getsize(os.path.join(outdir, name))
             total += sz
-            inc.append(f"detail detail/{name} 0.01 {lo:g} {a.feather:g}")
+            inc.append(f"lidar detail/{name} 0.01 {lo:g} {a.feather:g}")
             print(f"{name}: {w}x{h}, {keep.sum() / 1e6:.2f} M cells, base {lo:g} m, {sz / 1e6:.2f} MB", flush=True)
     open(os.path.join(a.out, "detail.txt"), "w").write("\n".join(inc) + "\n")
     print(f"total {total / 1e6:.1f} MB, {len(inc) - 2} patches -> {os.path.join(a.out, 'detail.txt')}")

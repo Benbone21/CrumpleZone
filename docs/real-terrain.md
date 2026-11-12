@@ -153,7 +153,7 @@ rim 130                                              # how wide the rim that kee
 Slickrock country (all optional, per map; Moab uses them):
 
 ```
-detail detail/x+04038z-00058.tif 0.01 1265 24        # a lidar patch: FILE SCALE OFFSET FEATHER (tools/hires_patches.py writes these)
+lidar detail/x+04038z-00058.tif 0.01 1265 24         # a lidar patch: FILE SCALE OFFSET FEATHER (tools/hires_patches.py writes these)
 include detail.txt                                   # ...usually a file of them
 ledge_sharpen 0.8                                    # on the patches, steps steeper than round them pulled toward a stair (0..1)
 cover cover.tif                                      # ground cover from aerial photos: 1 rock, 2 sand, 3 brush (tools/naip_cover.py)
@@ -228,9 +228,18 @@ one survey over all of box D, so no seam where another begins) first, then `UT_S
 no data, over the trails, the obstacles and Hell's Revenge (38.560-38.600 N, 109.540-109.500 W). Every named obstacle is on it.
 The UGRC 2025 0.5 m DEM (Hell's Revenge core) states no licence, so nothing from it ships.
 
+Hard trails (rated 3, and bypasses) over the lidar level only about 3.6 m of tread, eased into the survey over 2.5 m, so a slot
+keeps its walls and its V. The patches are read with `loadGeoTiff`, not `loadDem`, so their NoData isn't filled in.
+
 **Obstacles on lidar.** Where a patch has its full weight over an obstacle's whole stretch, the land is taken to have the obstacle's
 real form: its authored walls, fins, pitch and camber are dropped, and only the ledges are added, cut into the land's own slope (up
-or down) with their faces as slabs; a crack or a pothole is still authored (the survey smooths them).
+or down) with their faces as slabs; a crack or a pothole is still authored (the survey smooths them). Its tread is at most 1.8 m
+either side, eased in over 2 m. The ledges (everywhere) are uneven: spacing jittered, rises varied up to about a fifth either way
+(adding up to what's authored); on lidar each is a shorter, off-centre lip, rounded over and dying into the slope at its ends.
+
+`strata_fault LAT LON LAT LON SHIFT WIDTH` offsets the bands across a fault: left of the line from the first point to the second they
+sit SHIFT m higher, eased over WIDTH (Moab: 130 m higher south-west of the valley, an approximation from the rims' heights, not a
+geologic map).
 
 ### Ground cover and the slickrock look
 `tools/naip_cover.py` classifies NAIP 2024 (USDA, 0.6 m, public domain) by colour: pale, low-saturation pixels are bare rock, the
@@ -259,8 +268,9 @@ osm.txt 0.3 MB). The tests are `tests/moab.cpp`. Credits: `assets/maps/moab/CRED
 **Memory** (Moab, box D, measured): the game peaks at 3.3 GB (4.7 GB before its scattered scanned rocks were made whole hulls:
 20 k rocks cut into convex pieces were 1.5 GB); the tool and the tests (code-made rocks) at 2.4 GB, so the tests build one Moab at a
 time. The 1 m grid is 1.6 GB of it (heights 4 bytes, surface and paint 1 each, 272 M cells): the ledge pass no longer copies it whole.
-With the lidar patches (25 M cells, kept as floats with their weights: about 200 MB) and the ground cover (68 MB of classes), the
-game's peak resident size measured offscreen at 1600x900 (VmHWM) is 3.49-3.52 GB, against 3.42-3.44 GB on the same runs before them.
+With the lidar patches (25 M cells, int16 heights and 8-bit weights: about 75 MB) and the ground cover (68 MB of classes), the
+game's peak resident size measured offscreen at 1600x900 (VmHWM, building the map) is 3.69-3.71 GB, against 3.42-3.44 GB on the same
+runs before them.
 
 ## Determinism, the cache and multiplayer
 

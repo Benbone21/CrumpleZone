@@ -220,9 +220,16 @@ void buildRockMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
     // (A real map with rock strata (Moab): its code-made rocks, the ledges' faces among them, in the colour of the band they're in.)
     const std::shared_ptr<const realterrain::Terrain> rt = world.map == MAP_REAL ? realterrain::active() : nullptr;
     const bool strata = rt && !rt->spec.strata.empty();
-    auto strataCol = [&](double y) {
+    double fax = 0, faz = 0, fbx = 1, fbz = 0;
+    if (strata && rt->spec.hasFault) rt->toMap(rt->spec.faultA, fax, faz), rt->toMap(rt->spec.faultB, fbx, fbz);
+    auto strataCol = [&](const V3& at) {
         const std::vector<realterrain::SpecStratum>& st = rt->spec.strata;
-        const double e = rt->realElevation(y);
+        double e = rt->realElevation(at.y);
+        if (rt->spec.hasFault) {  // (as the shader: the bands sit higher left of the fault)
+            const double dx = fbx - fax, dz = fbz - faz, L = std::max(1e-3, std::sqrt(dx * dx + dz * dz));
+            const double side = (dx * (at.z - faz) - dz * (at.x - fax)) / L;
+            e -= rt->spec.faultShift * smoothstep(-0.5 * rt->spec.faultWidth, 0.5 * rt->spec.faultWidth, side);
+        }
         auto lin = [](double c) { return c / 255.0; };  // (vertex colours are sRGB)
         V3 c(lin(st[0].r), lin(st[0].g), lin(st[0].b));
         for (size_t i = 1; i < st.size(); i++) {
@@ -235,7 +242,7 @@ void buildRockMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
         if (k.scan >= 0 && skip.rocks) continue;
         // The collider's own facets, each split into 16 and given a little relief, always
         // pushed inward (toward the middle), so nothing drawn sticks out past what a tire hits.
-        const V3 col = (strata ? strataCol(k.c.y) * 1.12 : V3(0.34, 0.32, 0.30)) * k.tint;
+        const V3 col = (strata ? strataCol(k.c) * 1.12 : V3(0.34, 0.32, 0.30)) * k.tint;
         const int mat = strata ? SM_SLAB : SM_ROCK;  // (sandstone: no moss)
         const bool snowy = world.surfaceAt(k.c.x, k.c.z) == SURF_SNOW;  // snow lies on its top
         const double relief = std::min(0.05, 0.035 * k.r);

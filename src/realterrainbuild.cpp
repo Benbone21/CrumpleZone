@@ -487,14 +487,25 @@ void World::buildReal() {
         const bool bare = tr.rating >= 2 || tr.bypass;
         const double halfW = tr.road ? 3.2 : bare ? 3.0 : 2.2, blend = tr.road ? 7 : bare ? 6 : 5;
         const double keepRough = 0;
+        // (A hard trail over the lidar, where rock rises beside it: only the tread a truck needs is levelled, about 4.4 m, eased into
+        // the survey over 3 m, so a slot keeps its walls and its deep V; elsewhere the full cut.)
+        const bool narrowOnLidar = !tr.road && (tr.rating >= 3 || tr.bypass) && !t.patches.empty();
         scanNear(pts, halfW + blend, [&](int id, double d, double k, double lat) {
-            const double ex = d - halfW;
+            const int i0 = (int)clampd(std::floor(k), 0, m - 2);
+            const double ty = y[i0] + (y[i0 + 1] - y[i0]) * clampd(k - i0, 0, 1);
+            double hw = halfW, bl = blend;
+            // (only where the rock rises beside the tread, a wall or a slot's side; where it falls away, a crest or a fin's top, the
+            // full width stays, so a truck has room on it)
+            if (narrowOnLidar && hgrid[id] > ty + 0.3) {
+                double py, pw = 0;
+                if (t.patchAt(X(id / hN), X(id % hN), py, pw) && pw > 0) hw += (1.2 - hw) * pw, bl += (3.0 - bl) * pw;
+                if (d > hw + bl) return;
+            }
+            const double ex = d - hw;
             if (edge[id] < ex) return;
             double under;
             if (!decks.empty() && deckAt(X(id / hN), X(id % hN), -1.5, under) && waterY[id] > -1e8f) return;  // (the river under a deck stays)
-            const int i0 = (int)clampd(std::floor(k), 0, m - 2);
-            const double ty = y[i0] + (y[i0 + 1] - y[i0]) * clampd(k - i0, 0, 1);
-            const double w = (ex < 1.0 ? 1.0 : smoothstep(blend, 1.0, ex)) * (1 - keepRough);
+            const double w = (ex < 1.0 ? 1.0 : smoothstep(std::max(bl, 1.01), 1.0, ex)) * (1 - keepRough);
             const bool wet = waterY[id] > -1e8f;
             double nh = hgrid[id] + (ty - hgrid[id]) * w;
             if (wet) nh = std::min(nh, (double)waterY[id] - 0.3);
@@ -549,17 +560,26 @@ void World::buildReal() {
         // and tilt are the measured ones, not authored. Only what a 1 m grid can't hold is added: the ledges' faces (as slabs, on
         // the land's own slope), and a crack or pothole the survey smooths.
         bool onLidar = !t.patches.empty();
+        double minW = 1;
+        int seen = 0;
         if (onLidar) {
             const std::vector<V3> Lp = realterrain::smoothLine(P.trails[po.trail].pts, 1.0);
             double acc = 0;
-            for (size_t k = 0; k < Lp.size() && onLidar; k++) {
+            for (size_t k = 0; k < Lp.size(); k++) {
                 acc += k ? std::hypot(Lp[k].x - Lp[k - 1].x, Lp[k].z - Lp[k - 1].z) : 0;
                 if (acc < po.from - 6 || acc > po.to + 6) continue;
                 double py, pw = 0;
-                if (!t.patchAt(Lp[k].x, Lp[k].z, py, pw) || pw < 0.98) onLidar = false;
+                seen++;
+                if (!t.patchAt(Lp[k].x, Lp[k].z, py, pw)) pw = 0;
+                minW = std::min(minW, pw);
             }
+            onLidar = seen > 0 && minW >= 0.98;
         }
-        if (onLidar) o.walls = 0, o.climbLen = 0, o.climbGrade = 0, o.camber = 0;
+        if (std::getenv("CZ_DEBUG_OBSTACLES"))
+            std::fprintf(stderr, "obstacle %s: %s (%d points, least weight %.2f, from %.0f to %.0f, %zu patches)\n", o.name.c_str(), onLidar ? "on lidar" : "authored", seen, minW, po.from, po.to, t.patches.size());
+        // (a notch on lidar keeps a narrow tread, so its walls stay the survey's; a fin or a climb keeps its width: a truck must
+        // stay on its crest)
+        if (onLidar) o.width = o.walls > 0 ? std::min(o.width, 2.2) : o.width, o.walls = 0, o.climbLen = 0, o.climbGrade = 0, o.camber = 0;
         const std::vector<V3> L = realterrain::smoothLine(P.trails[po.trail].pts, 1.0);
         const int m = (int)L.size();
         if (m < 4) continue;
@@ -607,11 +627,18 @@ void World::buildReal() {
         // (the ledges take their share of the pitch; with no pitch the treads follow the land, but never against the steps; on lidar
         // the ledges are cut into the land's own slope, up or down)
         const double treadRise = o.climbLen > 0 || onLidar ? pitch - stepSign * std::min(std::fabs(pitch), stepRise) : std::max(0.0, natural - stepRise);
-        std::vector<double> lips;  // (m along each step's face)
-        for (int k = 0; k < o.steps; k++) lips.push_back(s0 + Lo * (k + 0.5) / o.steps);
+        // (m along each step's face, and its rise: not evenly spaced nor all alike, as a real run of ledges isn't; the rises still add
+        // up to what's authored, none more than about a fifth over it)
+        std::vector<double> lips, riseK;
+        double riseSum = 0;
+        for (int k = 0; k < o.steps; k++) {
+            lips.push_back(s0 + Lo * (k + 0.5 + 0.32 * (roll01(500 + k) - 0.5)) / o.steps);
+            riseK.push_back(0.82 + 0.36 * roll01(600 + k)), riseSum += riseK.back();
+        }
+        for (double& r : riseK) r *= o.rise * o.steps / std::max(1e-9, riseSum);
         auto rel = [&](double sAt) {
             double y = treadRise * (sAt - s0) / Lo;
-            for (double lp : lips) y += stepSign * o.rise * smoothstep(lp - 0.45, lp + 0.45, sAt);
+            for (size_t k = 0; k < lips.size(); k++) y += stepSign * riseK[k] * smoothstep(lips[k] - 0.45, lips[k] + 0.45, sAt);
             return y;
         };
         // (its foot dug at most 1 m into the trail: the rest stands up out of it, a dome or a fin, the far side run out at 30%)
@@ -680,7 +707,7 @@ void World::buildReal() {
             }
             // (eased out over 3 m, or more where it stands well above or below the land: a slope, not a wall, to its sides)
             const double dev = std::fabs(profAt(sAt) - baseAt(sAt));
-            const double inner = o.walls != 0 ? W + 0.3 + wallRun + (o.walls > 2.5 ? 0.6 * o.walls : 0.0) : W + 0.5, outer = inner + std::max({o.walls != 0 ? 4.0 : o.steps > 0 ? 5.0 : 3.0, 1.6 * dev, (o.walls > 2.5 ? 4.0 : 1.2) * std::fabs(o.walls)});
+            const double inner = o.walls != 0 ? W + 0.3 + wallRun + (o.walls > 2.5 ? 0.6 * o.walls : 0.0) : W + 0.5, outer = inner + (onLidar ? std::max(2.5, 1.2 * dev) : std::max({o.walls != 0 ? 4.0 : o.steps > 0 ? 5.0 : 3.0, 1.6 * dev, (o.walls > 2.5 ? 4.0 : 1.2) * std::fabs(o.walls)}));
             const double w = along * (a <= inner ? 1.0 : smoothstep(outer, inner, a));
             if (w <= 0 && side <= 0) return;
             hgrid[id] = (float)(hgrid[id] + (target - hgrid[id]) * w + (o.walls > 2.5 ? wallH * side : 0.0));
@@ -700,11 +727,14 @@ void World::buildReal() {
             const double back = stepSign > 0 ? 1.4 : -1.4;
             // (The ledge runs on past the tread, as a bed of the rock does, dying out into the slope: each piece's top and foot are the
             // land as now built above and below the lip, and a piece where the step has faded under 0.15 m isn't laid.)
-            const double span = W + 0.6 + (o.walls > 0 ? 0.0 : 3.0);
-            const int pieces = std::max(3, (int)std::ceil(2 * span / 1.3));
+            // (On lidar, where the land is the survey's, a ledge is a shorter, off-centre lip that dies into the slope at its ends,
+            // well rounded over: it reads as the rock's own bed, not a stair.)
+            const double span = onLidar ? W * (0.6 + 0.4 * roll01(700 + (int)li)) : W + 0.6 + (o.walls > 0 ? 0.0 : 3.0);
+            const double off = onLidar ? 0.5 * W * (roll01(800 + (int)li) - 0.5) : 0.0;
+            const int pieces = std::max(onLidar ? 2 : 3, (int)std::ceil(2 * span / 1.3));
             for (int pc = 0; pc < pieces; pc++) {
                 // (each piece set back or forward a little and a little lower or higher: a broken, weathered lip, not a kerb)
-                const double v0 = -span + 2 * span * pc / pieces - 0.05, v1 = -span + 2 * span * (pc + 1) / pieces + 0.05;
+                const double v0 = off - span + 2 * span * pc / pieces - 0.05, v1 = off - span + 2 * span * (pc + 1) / pieces + 0.05;
                 const double setback = 0.26 * (roll01(rk++) - 0.5), drop = -0.07 * roll01(rk++);
                 const double sg = stepSign > 0 ? 1.0 : -1.0;
                 std::vector<V3> pts;
@@ -724,19 +754,25 @@ void World::buildReal() {
                     const double lowY = inTread ? lower + tanC * v : ground(sFace - sg * 0.7);
                     if (upperY - lowY < 0.15) weak = true;
                     const double jit = 0.08 * (roll01(rk++) - 0.5) + setback;
-                    const double topY = upperY + 0.02 + drop + 0.05 * (roll01(rk++) - 0.5), botY = lowY - 0.45;
-                    const double rise = std::max(0.2, topY - lowY);
+                    const double taper = onLidar ? 1 - smoothstep(0.45 * span, span, std::fabs(v - off)) : 1.0;
+                    const double topY = lowY + (upperY + 0.02 + drop + 0.05 * (roll01(rk++) - 0.5) - lowY) * taper, botY = lowY - 0.45;
+                    const double rise = std::max(0.1, topY - lowY);
                     const double fs = sFace + sg * jit;
+                    const double round = onLidar ? 1.6 : 1.0;  // (on lidar the lip rounds over further back)
                     pts.push_back(at(fs - sg * 0.04, botY));                   // (the face's foot, buried)
                     pts.push_back(at(fs - sg * 0.06, lowY + 0.25 * rise));     // (its lower face, a little undercut)
                     pts.push_back(at(fs, lowY + 0.6 * rise));
-                    pts.push_back(at(fs + sg * 0.05, topY - 0.22 * rise));     // (the lip, rounded over)
-                    pts.push_back(at(fs + sg * 0.16, topY - 0.06 * rise));
-                    pts.push_back(at(fs + sg * 0.34, topY));
+                    pts.push_back(at(fs + sg * 0.05 * round, topY - std::min(0.6, 0.22 * round) * rise));  // (the lip, rounded over)
+                    pts.push_back(at(fs + sg * 0.16 * round, topY - 0.06 * round * rise));
+                    pts.push_back(at(fs + sg * 0.34 * round, topY));
                     pts.push_back(at(sUp + back, std::min(topY, (inTread ? profAt(sUp + back) + tanC * v : ground(sUp + back)) - 0.03)));  // (back under the tread)
                     pts.push_back(at(sUp + back, botY));
                 }
                 if (weak) continue;
+                if (onLidar) {  // (a piece the taper has brought down to nothing isn't laid)
+                    const double vm = 0.5 * (v0 + v1);
+                    if (1 - smoothstep(0.45 * span, span, std::fabs(vm - off)) < 0.15) continue;
+                }
                 addHullRock(pts, hmix(oseed ^ (uint32_t)(li * 977 + pc * 131 + 7)), (float)(0.92 + 0.14 * roll01(rk++)));
             }
         }
@@ -973,7 +1009,7 @@ void World::buildReal() {
                 }
                 const int habitat = climate == realterrain::CLIMATE_DESERT ? HAB_DESERT : climate == realterrain::CLIMATE_ALPINE ? HAB_UPLAND : wood > 0.5 ? HAB_FOREST : HAB_MEADOW;
                 const bool covered = !t.cover.c.empty();
-                const int nbAll = covered ? count(eB * 2.5) : nb;  // (with a ground cover: bushes where the photos show brush)
+                const int nbAll = covered ? count(eB * 8.0) : nb;  // (with a ground cover: bushes where the photos show brush)
                 for (int q = 0; q < nbAll; q++) {
                     const double x = x0 + cellRoll(ci, cj, 2000 + 3 * q, seed) * cellM, z = z0 + cellRoll(ci, cj, 2001 + 3 * q, seed) * cellM;
                     if (!clear(x, z) || slopeAt(x, z) > 0.7) continue;

@@ -877,7 +877,7 @@ bool parseSpec(const std::string& text, const std::string& dir, Spec& s, std::st
         else if (key == "slickrock") {
             if (!need(2)) return false;
             s.slickLo = num(0), s.slickHi = num(1);
-        } else if (key == "detail") {
+        } else if (key == "lidar") {
             if (!need(1)) return false;
             SpecDetail d;
             d.file = a[0];
@@ -891,6 +891,10 @@ bool parseSpec(const std::string& text, const std::string& dir, Spec& s, std::st
             if (!need(4)) return false;
             for (int k = 0; k < 3; k++) s.rockLook[k] = clampd(num(k), 0, 255);
             s.rockLook[3] = clampd(num(3), 0, 1);
+        } else if (key == "strata_fault") {
+            if (!need(5)) return false;
+            s.hasFault = true, s.faultA = {num(0), num(1)}, s.faultB = {num(2), num(3)}, s.faultShift = num(4);
+            if (a.size() > 5) s.faultWidth = std::max(1.0, num(5));
         } else if (key == "sand_look") {
             if (!need(3)) return false;
             for (int k = 0; k < 3; k++) s.sandLook[k] = clampd(num(k), 0, 255);
@@ -1303,21 +1307,30 @@ std::shared_ptr<const Terrain> prepare(const Spec& spec, std::string* err) {
         for (const SpecDetail& sd : spec.details) {
             Dem g;
             std::string why;
-            if (!loadDem(sd.path, g, &why) || g.geo != Dem::GEO_DEGREES || g.w < 8 || g.h < 8) {
+            // (loadGeoTiff, not loadDem: its NoData must stay NoData, not be filled from the neighbours)
+            if (!loadGeoTiff(sd.path, g, &why) || g.geo != Dem::GEO_DEGREES || g.w < 8 || g.h < 8) {
                 std::printf("real terrain %s: no detail %s (%s)\n", spec.name.c_str(), sd.file.c_str(), why.empty() ? "not in degrees" : why.c_str());
                 continue;
             }
             Terrain::Patch p;
             p.w = g.w, p.h = g.h;
             frameOf(g, p.x0, p.z0, p.sx, p.sz);
-            p.v.assign(g.v.size(), 0.0f);
             std::vector<int> dist(g.v.size());
             const int big = 1 << 28;
+            double vlo = 1e30, vhi = -1e30;
             for (size_t k = 0; k < g.v.size(); k++) {
                 const bool none = g.hasNoData && g.v[k] == (float)g.noData;
                 dist[k] = none ? 0 : big;
-                if (!none) p.v[k] = (float)(((g.v[k] * sd.scale + sd.offset) - lo) * spec.exaggeration);
+                if (!none) {
+                    g.v[k] = (float)(((g.v[k] * sd.scale + sd.offset) - lo) * spec.exaggeration);
+                    vlo = std::min(vlo, (double)g.v[k]), vhi = std::max(vhi, (double)g.v[k]);
+                }
             }
+            if (vlo > vhi) continue;
+            p.vBase = std::floor(vlo), p.vStep = std::max(0.01, (vhi - p.vBase) / 32000.0);
+            p.v.assign(g.v.size(), 0);
+            for (size_t k = 0; k < g.v.size(); k++)
+                if (dist[k]) p.v[k] = (int16_t)std::lround((g.v[k] - p.vBase) / p.vStep);
             auto D = [&](int x, int y) { return x < 0 || y < 0 || x >= g.w || y >= g.h ? 0 : dist[(size_t)y * g.w + x]; };
             for (int y = 0; y < g.h; y++)
                 for (int x = 0; x < g.w; x++) {
@@ -1331,7 +1344,7 @@ std::shared_ptr<const Terrain> prepare(const Spec& spec, std::string* err) {
                 }
             p.wt.resize(g.v.size());
             const double px = 0.5 * (std::fabs(p.sx) + std::fabs(p.sz));
-            for (size_t k = 0; k < dist.size(); k++) p.wt[k] = (float)smoothstep(3.0, std::max(4.0, sd.feather / px), dist[k] / 3.0);
+            for (size_t k = 0; k < dist.size(); k++) p.wt[k] = (uint8_t)std::lround(255 * smoothstep(3.0, std::max(4.0, sd.feather / px), dist[k] / 3.0));
             t->patches.push_back(std::move(p));
         }
     // The ground cover.
@@ -1397,7 +1410,7 @@ bool Terrain::patchAt(double x, double z, double& y, double& w) const {
         const int ix = (int)fx, iy = (int)fy;
         const double tx = px - fx, ty = py - fy;
         const size_t k = (size_t)iy * p.w + ix;
-        const double pw = (p.wt[k] * (1 - tx) + p.wt[k + 1] * tx) * (1 - ty) + (p.wt[k + p.w] * (1 - tx) + p.wt[k + p.w + 1] * tx) * ty;
+        const double pw = ((p.wt[k] * (1 - tx) + p.wt[k + 1] * tx) * (1 - ty) + (p.wt[k + p.w] * (1 - tx) + p.wt[k + p.w + 1] * tx) * ty) / 255.0;
         if (pw <= 0) continue;
         // (a pixel lands on a grid cell: tx, ty are 0 but for the last bits, and Catmull-Rom gives the pixel back)
         auto w4 = [](double t, double* c) {
@@ -1409,7 +1422,7 @@ bool Terrain::patchAt(double x, double z, double& y, double& w) const {
         double s = 0;
         for (int j = 0; j < 4; j++) {
             double r = 0;
-            for (int i = 0; i < 4; i++) r += wx[i] * p.v[(size_t)(iy - 1 + j) * p.w + (ix - 1 + i)];
+            for (int i = 0; i < 4; i++) r += wx[i] * p.at((size_t)(iy - 1 + j) * p.w + (ix - 1 + i));
             s += wy[j] * r;
         }
         sy += pw * s, sw += pw, best = std::max(best, pw);
