@@ -257,6 +257,9 @@ osm.txt 0.3 MB). The tests are `tests/moab.cpp`. Credits: `assets/maps/moab/CRED
 **Memory** (Moab, box D, measured): the game peaks at 3.3 GB (4.7 GB before its scattered scanned rocks were made whole hulls:
 20 k rocks cut into convex pieces were 1.5 GB); the tool and the tests (code-made rocks) at 2.4 GB, so the tests build one Moab at a
 time. The 1 m grid is 1.6 GB of it (heights 4 bytes, surface and paint 1 each, 272 M cells): the ledge pass no longer copies it whole.
+With the lidar patches (9 M cells, kept as floats with their weights: about 70 MB) and the ground cover (68 MB of classes), the game's
+peak resident size measured offscreen at 1600x900 (VmHWM) is 3.44-3.45 GB from the world cache and 3.48 GB building the map fresh,
+against 3.42-3.44 GB on the same runs before them.
 
 ## Determinism, the cache and multiplayer
 
