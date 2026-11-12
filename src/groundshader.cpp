@@ -577,6 +577,10 @@ void main(){
     vec3 sand = uSandLook * (0.82 + 0.3 * fbm(p * 0.05 - 5.0, 2)) * mix(1.0, shade, 0.6);
     sand *= mix(vec3(1.0), vec3(1.06, 0.96, 0.88), vnoise(p * 0.6 + 3.0));          // (redder and paler grains)
     sand *= 0.93 + 0.07 * sin(dot(p, vec2(2.1, 1.3)) + 3.0 * vnoise(p * 0.3));      // (faint wind ripples)
+    // (a sand-filled hollow in bare rock is a lens of the rock's own grains, dulled by dust: less saturated and a little darker than
+    // the sidecar's colour in the open, where a pool of it otherwise glowed orange)
+    float sandL = dot(sand, vec3(0.2126, 0.7152, 0.0722));
+    sand = mix(sand, vec3(sandL), 0.22) * 0.92;
     vec3 recol = mix(sand, band * shade, rk);
     alb = mix(alb, recol, clamp(gSlickRock + gSlickSand, 0.0, 1.0));
   }
