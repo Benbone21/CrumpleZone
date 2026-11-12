@@ -262,7 +262,12 @@ slickrock (paint REDROCK) with four sandstone materials, bedded and streaked one
 faces, cracked and worn ones (`rock_boulder_cracked`, `worn_rock_natural_01`) on the tops, and its sand with `red_sand`. Their own
 colour is only light and shade: the colour is the band's at that height (noise-wobbled), with beds a metre or two thick, cross-bedding
 lines dipping one way in a patch and another in the next, desert varnish streaking down the faces and bleached tops. The scanned
-rocks and cliffs (`propdraw.cpp`, `uRetint`) and the code-made rocks (`scenery.cpp`) take the same bands. The faces get the
+rocks and cliffs (`propdraw.cpp`, `uRetint`) and the code-made rocks (`scenery.cpp`) take the same bands. On a steep face (any map) the
+noise that picks the materials is worked out on the face from its two sides, as its photo layers are, not from above (where it ran in
+stripes the height of a wall). With strata the faces also get level bedding: partings between beds of uneven thickness (about 2 m on
+average) that die out along the face here and there, each bed a little lighter or darker, a shaded recess under the harder ones'
+lips, all following the bands (the fault's offset included); the varnish hangs in curtains a few metres wide and tens long, and the
+cross-bedding is drawn across the face rather than from above. The faces get the
 Namaqualand cliff and the leaning, undercut `overhang_nama_02` slab instead of the grey lichened faces.
 
 ### Shipping a real map

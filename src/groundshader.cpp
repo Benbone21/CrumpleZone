@@ -83,6 +83,7 @@ float strataShift(vec2 xz){
   return uStrataShift.x * smoothstep(-0.5 * uStrataShift.y, 0.5 * uStrataShift.y, side);
 }
 float gSlickRock = 0.0, gSlickSand = 0.0, gFace = 0.0;
+float gWTop = 1.0;  // how much the top-down mapping counts here (1 on gentle ground; less up a steep face, which is seen from its sides)
 vec3 strataAt(float y){
   if (uStrataN <= 0) return vec3(0.5);
   vec3 c = uStrata[0].yzw;
@@ -283,6 +284,14 @@ vec4 sideTap(sampler2DArray s, float L, Side f, float scale){
 }
 
 
+// A face's desert varnish at h across it (m) and height y: curtains a few metres wide and tens long, and thin dribbles.
+float varnish(float h, float y){
+  float cur = smoothstep(0.52, 0.82, vnoise(vec2(h * 0.28, y * 0.015 + 0.6 * vnoise(vec2(h * 0.05, 1.0)))))
+            * smoothstep(0.2, 0.6, vnoise(vec2(h * 0.05 + 3.0, y * 0.008)));
+  float drib = smoothstep(0.70, 0.92, vnoise(vec2(h * 1.3, y * 0.04 + 11.0))) * smoothstep(0.35, 0.7, vnoise(vec2(h * 0.11 - 5.0, y * 0.02)));
+  return max(cur, 0.65 * drib);
+}
+
 void main(){
 #ifdef X_R0
   oCol = vec4(vPos * 0.001 + vNrm, 1.0); return;
@@ -298,6 +307,17 @@ void main(){
 #if GQ >= 2
   gNoiseA = fbm(p * 0.35 + 5.0, 3);
   gNoiseB = fbm(p * 0.55 - 3.0, 2);
+  // Up a steep face the pattern from above would run in stripes the height of it: there these two are worked out on the face
+  // instead, from its two sides (as its photo layers are), blended by the same weights.
+  gWTop = smoothstep(0.55, 0.93, N0.y);
+  sideFrames(N0, dPx, dPy);
+  if (gWTop < 0.999 && dist < 400.0) {
+    vec2 qx = vec2(NP.z, vPos.y), qz = vec2(NP.x, vPos.y);
+    float sa = sideX.w * fbm(qx * 0.35 + 5.0, 3) + sideZ.w * fbm(qz * 0.35 + 5.0, 3);
+    float sb = sideX.w * fbm(qx * 0.55 - 3.0, 2) + sideZ.w * fbm(qz * 0.55 - 3.0, 2);
+    gNoiseA = mix(sa, gNoiseA, gWTop);
+    gNoiseB = mix(sb, gNoiseB, gWTop);
+  }
 #endif
   gDry = smoothstep(0.6, 0.8, (lo == 1 ? fbmFew(p * 0.006 + 3.1, 1, 3) : fbm(p * 0.006 + 3.1, 3)));
   gBald = smoothstep(0.60, 0.80, (lo == 1 ? fbmFew(p * 0.30 + 9.0, 2, 3) : fbm(p * 0.30 + 9.0, 3)));
@@ -391,11 +411,8 @@ void main(){
 #endif
   // ---- Photo layers ----
   bool two = uGroundQ >= 2 && dist < 250.0;
-  float wTop = smoothstep(0.55, 0.93, N0.y);  // how much the top-down mapping counts on a slope
+  float wTop = smoothstep(0.55, 0.93, N0.y);  // how much the top-down mapping counts on a slope (gWTop)
   bool steepFace = uGroundQ >= 2 && wTop < 0.999 && dist < 400.0;
-#if GQ >= 2
-  sideFrames(N0, dPx, dPy);
-#endif
   vec4 A[4];
   float Lr[4]; float scl[4]; vec4 avgA[4];
   for (int k = 0; k < 4; k++) {
@@ -471,19 +488,52 @@ void main(){
     for (int k = 0; k < 4; k++) if (k < K && selW[k] > 0.0) { avgL += dot(avgA[k].rgb, vec3(0.2126, 0.7152, 0.0722)) * selW[k]; aw += selW[k]; }
     avgL = max(avgL / max(aw, 1e-4), 0.02);
     float shade = clamp(dot(alb, vec3(0.2126, 0.7152, 0.0722)) / avgL, 0.35, 1.7);
-    float yb = vPos.y - strataShift(vPos.xz) + 3.0 * (fbm(p * 0.008 + 4.0, 2) - 0.5) + 1.2 * (vnoise(p * 0.05) - 0.5);
+    float ybL = vPos.y - strataShift(vPos.xz) + 3.0 * (fbm(p * 0.008 + 4.0, 2) - 0.5);  // (level over a cliff: a metre or so in 100)
+    float yb = ybL + 1.2 * (vnoise(p * 0.05) - 0.5);
     vec3 band = strataAt(yb);
     band *= 0.88 + 0.24 * vnoise(vec2(yb * 0.45, 3.7) + p * 0.0015);           // beds a metre or two thick
     band *= 0.94 + 0.12 * vnoise(vec2(yb * 2.2, 9.1) + p * 0.004) ;            // and thinner ones within them
     // Cross-bedding (Navajo's old dunes): thin lines across the faces and swirling over the domes' tops, dipping one way in a
-    // patch and another in the next.
+    // patch and another in the next. On a face they're drawn on the face (h: across it, from each side), not from above, where
+    // they'd run up it in chevrons.
     float ang = 6.2831853 * vnoise(p * 0.004 + 31.0);
-    float ph = yb * 1.1 + 0.3 * dot(p, vec2(cos(ang), sin(ang))) + 2.5 * fbm(p * 0.015 + 2.0, 2);
-    float xb = smoothstep(0.40, 0.49, abs(fract(ph) - 0.5));
+    float swirl = 2.5 * fbm(p * 0.015 + 2.0, 2);
+    float xb = smoothstep(0.40, 0.49, abs(fract(yb * 1.1 + 0.3 * dot(p, vec2(cos(ang), sin(ang))) + swirl) - 0.5));
+    float streak = 0.0;
+    if (gFace > 0.001) {
+#if GQ >= 2
+      float dip = 0.45 * cos(ang);  // (the set's dip, seen across the face)
+      float xf = sideX.w * smoothstep(0.40, 0.49, abs(fract(yb * 1.1 + dip * NP.z + swirl) - 0.5))
+               + sideZ.w * smoothstep(0.40, 0.49, abs(fract(yb * 1.1 + dip * NP.x + swirl) - 0.5));
+      xb = mix(xb, xf, gFace);
+      // Desert varnish: dark curtains a few metres wide hanging tens of metres down the face, and thin dribbles between them.
+      streak = sideX.w * varnish(NP.z, vPos.y) + sideZ.w * varnish(NP.x, vPos.y);
+#else
+      float along = dot(p, vec2(0.7071, 0.7071));
+      streak = smoothstep(0.45, 0.85, vnoise(vec2(along * 1.3 + 17.0 * floor(along * 0.05), vPos.y * 0.07)) * (0.6 + 0.6 * vnoise(p * 0.03 + 2.0)));
+#endif
+    }
     band *= 1.0 - xb * mix(0.10, 0.16, gFace) * smoothstep(0.0, 0.3, fbm(p * 0.01 - 7.0, 2));
-    float along = dot(p, vec2(0.7071, 0.7071));
-    float streak = smoothstep(0.45, 0.85, vnoise(vec2(along * 1.3 + 17.0 * floor(along * 0.05), vPos.y * 0.07)) * (0.6 + 0.6 * vnoise(p * 0.03 + 2.0)));
     band = mix(band, band * vec3(0.30, 0.24, 0.21), streak * gFace * 0.75);   // desert varnish down the faces
+    // Bedding on the faces: level partings between beds of uneven thickness (half a metre to a few), each bed a little lighter or
+    // darker than the next, the harder ones standing out over a shaded recess. Gone where a bed is under a pixel or two.
+    if (gFace > 0.001) {
+      float u = ybL * 0.5 + 1.2 * vnoise(vec2(ybL * 0.17, 5.3));
+      float k = floor(u), fu = u - k, aa = max(fwidth(u), 1e-4);
+      float fade = 1.0 - smoothstep(0.12, 0.45, aa);
+      float tone = hash(vec2(k, 7.1)), deep = hash(vec2(k, 3.3));
+#if GQ >= 2
+      // (a parting dies out along the face here and there: a bed pinching out)
+      float run = sideX.w * vnoise(vec2(NP.z * 0.04, k * 1.7)) + sideZ.w * vnoise(vec2(NP.x * 0.04, k * 1.7));
+#else
+      float run = 0.6;
+#endif
+      float part = (1.0 - smoothstep(0.0, 0.04 + aa * 1.5, min(fu, 1.0 - fu))) * smoothstep(0.25, 0.55, run) * (0.35 + 0.65 * deep);
+      float lip = smoothstep(0.80, 1.0, fu) * step(0.65, tone) * smoothstep(0.3, 0.6, run);  // (the recess under a harder bed's lip)
+      float bed = (0.93 + 0.14 * tone) * (1.0 - 0.32 * part) * (1.0 - 0.2 * lip);
+      band *= mix(1.0, bed, gFace * fade);
+      ao *= 1.0 - 0.3 * (part + 0.5 * lip) * gFace * fade * clamp(gSlickRock / max(gSlickRock + gSlickSand, 1e-3), 0.0, 1.0);
+    }
     band = mix(band, band * 1.12 + 0.02, (1.0 - gFace) * smoothstep(0.55, 0.8, fbm(p * 0.02 + 8.0, 2)) * 0.5);  // bleached tops
     // (sand and rock meet along a ragged, feathered line, the sand thinning over the rock at its edges, not a painted one)
     float rk = clamp(gSlickRock / (gSlickRock + gSlickSand), 0.0, 1.0);
