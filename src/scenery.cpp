@@ -242,7 +242,7 @@ void buildRockMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
         if (k.scan >= 0 && skip.rocks) continue;
         // The collider's own facets, each split into 16 and given a little relief, always
         // pushed inward (toward the middle), so nothing drawn sticks out past what a tire hits.
-        const V3 col = (strata ? strataCol(k.c) * 1.12 : V3(0.34, 0.32, 0.30)) * k.tint;
+        const V3 col = (strata ? strataCol(k.c) * 1.0 : V3(0.34, 0.32, 0.30)) * k.tint;
         const int mat = strata ? SM_SLAB : SM_ROCK;  // (sandstone: no moss)
         const bool snowy = world.surfaceAt(k.c.x, k.c.z) == SURF_SNOW;  // snow lies on its top
         const double relief = std::min(0.05, 0.035 * k.r);

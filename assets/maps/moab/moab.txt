@@ -1,4 +1,6 @@
 # Moab's hand-authored part (included by terrain.txt): what OpenStreetMap's rules can't say. Docs: docs/plans/moab-trails.md.
+# `slabs O S` on the Staircase, the Golden Staircase, Double Whammy and Gold Bar's Waterfall: photos show thick tabular beds,
+# stacked and undercut, running on across the slope (traildamage.com Golden Spike and Gold Bar Rim trip reports).
 # OSM ids refer to osm.txt: (c) OpenStreetMap contributors, ODbL 1.0.
 
 place town | MOAB | 38.5733 -109.5498 | 90
@@ -64,7 +66,7 @@ obstacle MICKEY'S HOT TUB | pothole | node 8669825415 | MICKEY'S HOT TUB | bowl 
 # OSM's node is used; RR4W's KML waypoint 11 is 1.4 km away (38.5967, -109.5318): the research flags it, OSM's is on the OSM way.
 obstacle TIPOVER CHALLENGE | camber | node 8669825425 | TIPOVER CHALLENGE | climb 0.45 14 camber 20 crack 0.5 1.0 cross width 3.0
 # The Staircase: steep rock stairs, "a mini Hell's Gate" (research 2.1, order 8). Four 0.40 m steps up a 29-degree pitch.
-obstacle THE STAIRCASE | stairs | node 3181263994 | STAIRCASE | climb 0.55 10 steps 4 0.4 bypass STAIRCASE BYPASS
+obstacle THE STAIRCASE | stairs | node 3181263994 | STAIRCASE | climb 0.55 10 steps 4 0.4 slabs 0.25 4 bypass STAIRCASE BYPASS
 # Baby Lion's Back: the short open fin in Sand Flats that replaces the closed Lion's Back (research 2.1, 2.19). A 31-degree fin.
 obstacle BABY LION'S BACK | fin | node 1833332004 | BABY LION'S BACK | climb 0.6 14 walls -1.2 width 2.8
 # Golden Spike (RR4W 7), in RR4W's order from the Poison Spider end (research 2.5):
@@ -77,13 +79,13 @@ obstacle ZUKI HILL | climb | node 9675078727 | GOLDEN SPIKE | length 16 steps 3 
 # Golden Crack: a crack along the line to keep a wheel out of, the rock tipped toward it, a ledge out.
 obstacle GOLDEN CRACK | crack | node 1548727123 | GOLDEN SPIKE | length 16 crack 0.9 1.0 camber 10 steps 1 0.4
 # The Golden Steps (OSM: Golden Staircase): four 0.45 m (18 in) steps up.
-obstacle GOLDEN STAIRCASE | stairs | node 3445676626 | GOLDEN SPIKE | length 14 steps 4 0.45
+obstacle GOLDEN STAIRCASE | stairs | node 3445676626 | GOLDEN SPIKE | length 14 steps 4 0.45 slabs 0.3 5
 # Double Whammy: two big ledges one after the other; OSM has its bypass.
-obstacle DOUBLE WHAMMY | ledges | node 9509081700 | GOLDEN SPIKE | length 10 steps 2 0.6 bypass DOUBLE WHAMMY BYPASS
+obstacle DOUBLE WHAMMY | ledges | node 9509081700 | GOLDEN SPIKE | length 10 steps 2 0.6 slabs 0.3 5 bypass DOUBLE WHAMMY BYPASS
 # Body Snatcher: a tight, tipped squeeze between rock with a ledge in it.
 obstacle BODY SNATCHER | squeeze | node 9509081704 | GOLDEN SPIKE | length 14 steps 1 0.55 camber 14 walls 1.4 width 2.4
 # Gold Bar Rim's Waterfall: the big ledge across Gold Bar Canyon that sets the trail's rating; many need help; no bypass (research 2.6).
-obstacle THE WATERFALL | ledges | node 3445676597 | GOLD BAR RIM | length 10 steps 2 0.55 boulders 2
+obstacle THE WATERFALL | ledges | node 3445676597 | GOLD BAR RIM | length 10 steps 2 0.55 boulders 2 slabs 0.3 4
 # Metal Masher's end (RR4W 7, onX 8; research 2.13). Tailpipe Hill: a 0.5 m ledge to drag a tailpipe on (OSM node only).
 obstacle TAILPIPE HILL | climb | node 3444773886 | METAL MASHER | length 10 steps 1 0.5
 # Rock Chunker: the old standard route, now a playground for big rigs; OSM's short way past it is the bypass.

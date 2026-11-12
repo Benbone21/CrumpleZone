@@ -1021,6 +1021,13 @@ bool parseSpec(const std::string& text, const std::string& dir, Spec& s, std::st
                     else if (k == "cross") o.crackAcross = true;
                     else if (k == "bowl") o.bowlDepth = clampd(d(), 0, 4), o.bowlSize = clampd(d(), 2, 30);
                     else if (k == "boulders") o.boulders = (int)clampd(d(), 0, 40);
+                    else if (k == "slabs") {  // (OVERHANG [SPREAD]: the ledges are thick tabular beds; an optional second number)
+                        o.slabOverhang = clampd(d(), 0, 0.8);
+                        std::streampos at = ks.tellg();
+                        double sp;
+                        if (ks >> sp) o.slabSpread = clampd(sp, 0, 15);
+                        else ks.clear(), ks.seekg(at);
+                    }
                     else if (k == "bypass") {
                         std::string rest, w;
                         while (ks >> w) rest += (rest.empty() ? "" : " ") + w;  // (the rest of the field: a trail's name may have spaces)

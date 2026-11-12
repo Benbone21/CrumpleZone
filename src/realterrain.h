@@ -165,6 +165,7 @@ struct OsmNode {
 //   cross          ...or across it, diagonally (a tire drops in)
 //   bowl D R       a pothole D m deep and R m across the line (in and out over its lips)
 //   boulders N     N big scanned boulders in and beside the line to pick through
+//   slabs O [S]    the ledges are thick tabular beds, undercut O m, running S m past the tread either side
 //   bypass left|right|TRAIL   a way round it: authored on that side (laid as a trail), or a trail of the sidecar's (an OSM bypass)
 // What each is based on is said in a comment beside it in the sidecar.
 struct SpecObstacle {
@@ -178,6 +179,9 @@ struct SpecObstacle {
     bool crackAcross = false;
     double bowlDepth = 0, bowlSize = 0;
     int boulders = 0;
+    // slabs OVERHANG [SPREAD]: the ledges are thick tabular beds of rock (Golden Spike, the Staircase): each lip runs on SPREAD m past the
+    // tread either side (default 4) on the land as it is, undercut by OVERHANG m below a rounded lip, so the steps read from afar.
+    double slabOverhang = 0, slabSpread = 4;
 };
 // A point named over the land (`landmark NAME | node ID (or LAT LON)`): a tag shown near it, a cairn at it (a closed trail's sign).
 struct SpecLandmark {

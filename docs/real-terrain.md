@@ -236,6 +236,9 @@ real form: its authored walls, fins, pitch and camber are dropped, and only the 
 or down) with their faces as slabs; a crack or a pothole is still authored (the survey smooths them). Its tread is at most 1.8 m
 either side, eased in over 2 m. The ledges (everywhere) are uneven: spacing jittered, rises varied up to about a fifth either way
 (adding up to what's authored); on lidar each is a shorter, off-centre lip, rounded over and dying into the slope at its ends.
+An obstacle's `slabs O S` makes its ledges thick tabular beds instead: across the whole tread and S m past it either side, undercut O m
+under the lip; off the tread each bed stands 1.6x the step proud of the land as it is, broken into flat-topped blocks, each set back its
+own way with now and then a gap (Moab: the Staircase, the Golden Staircase, Double Whammy, Gold Bar's Waterfall).
 
 `strata_fault LAT LON LAT LON SHIFT WIDTH` offsets the bands across a fault: left of the line from the first point to the second they
 sit SHIFT m higher, eased over WIDTH (Moab: 130 m higher south-west of the valley, an approximation from the rims' heights, not a

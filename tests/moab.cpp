@@ -26,9 +26,9 @@ namespace rt = realterrain;
 
 namespace {
 // What the shipped files make (update with the files: a new crop, a changed terrain.txt or a change to the importer that moves the land).
-constexpr uint64_t kMoabFiles = 0x031a57740f20f689ull;  // the DEM's bytes, terrain.txt, moab.txt, osm.txt, the lidar patches and cover.tif (Spec::hash)
+constexpr uint64_t kMoabFiles = 0x5e7628aadda85961ull;  // the DEM's bytes, terrain.txt, moab.txt, osm.txt, the lidar patches and cover.tif (Spec::hash)
 constexpr uint64_t kMoabPlan = 0x675c14bcf4759c2eull;  // places, trails, obstacles and courses (planFingerprint)
-constexpr uint64_t kMoabLand = 0x5636615750541fafull;  // World::landHash, code-made rocks (Linux x86-64)
+constexpr uint64_t kMoabLand = 0x1dabe7d84d93fe3eull;  // World::landHash, code-made rocks (Linux x86-64)
 // A built Moab is about 2.3 GB (the 16.5 km grid): one at a time, whatever --jobs is (docs/real-terrain.md, memory).
 std::mutex gOneMoab;
 
