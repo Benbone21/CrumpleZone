@@ -3626,9 +3626,13 @@ void Renderer::drawTerrain(const M4& vp, const View& view, const std::function<v
 }
 
 // A loaded chunk's LOD seen from d m (render.h terrainErrLod_).
+static constexpr double kWallReach = 290;  // (render.cpp kWallFade1 and a little: the walls' carving shows inside it)
 int Renderer::terrainLod(const TerrainChunk& c, double d) const {
     const int base = terrainLodForDistance(d);
     if (!terrainErrLod_) return base;
+    // (a chunk with cliff walls drawn over it: its full mesh while they show, the surface their depth is set against)
+    const size_t k = (size_t)(&c - terrainChunks.data());
+    if (k < walls_.size() && walls_[k].count && d < kWallReach) return 0;
     // (the next LOD if it strays less than about 2 pixels' worth at 1600 x 900, else this one)
     const double tol = std::max(0.05, 0.002 * d);
     return c.err[base + 1] <= tol ? base + 1 : base;

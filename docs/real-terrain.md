@@ -291,7 +291,9 @@ surface-nets isosurface of the horizontal distance into the rock less the carvin
 collider: the carving only goes into the rock, only from 1.8 m above a wall's foot to 0.25 m below its rim, never on a shelf a
 truck could stand on, and any vertex the mesh would put outside the land is moved back into it (`moab/cliff-walls` checks every
 vertex along the named trails). Its fragments' depth is written as if they stood at the land's face (a little in front), so the
-terrain drawn after them stays hidden behind the hollows; their light and shadow are looked up at that face. Built on a background
+terrain drawn after them stays hidden behind the hollows, but never further toward the camera than where the line of sight leaves
+the rock (the land's surface or the terrain mesh's, from the terrain texture) plus 10 cm, so no vehicle beside a wall is hidden
+behind it (a chunk with walls keeps its full mesh within 290 m, the surface that test is made against); their light and shadow are looked up at that face. Built on a background
 thread for chunks within 300 m of the camera (dropped past 360 m), the carving eased back to the face from 200 to 285 m; at HIGH
 ground and up. `CZ_NO_CLIFFWALLS=1` leaves them off (for comparing).
 

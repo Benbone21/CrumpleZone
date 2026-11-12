@@ -298,6 +298,17 @@ vec4 sideTap(sampler2DArray s, float L, Side f, float scale){
 // in it's carved here (m), vCol.b: the face's outward direction. Its depth is written as if it stood at the land's face, a little
 // in front: the ground drawn after it is hidden behind it, hollows and all.
 uniform mat4 uVP;
+// The land's height at xz from the terrain texture's cells: the higher of World::height's bilinear surface (what the wheels hit)
+// and the terrain mesh's two triangles a cell (what's drawn, at full detail: render.cpp terrainLod keeps a walled chunk at it).
+float landAt(vec2 xz){
+  vec2 g = xz + (uTerrainN - 1.0) * 0.5;
+  ivec2 i = ivec2(floor(g));
+  vec2 f = g - vec2(i);
+  float a = terrainCell(i).r, b = terrainCell(i + ivec2(1, 0)).r, c = terrainCell(i + ivec2(0, 1)).r, d = terrainCell(i + ivec2(1, 1)).r;
+  float bil = mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  float tri = f.y >= f.x ? a + (d - c) * f.x + (c - a) * f.y : a + (b - a) * f.x + (d - b) * f.y;
+  return max(bil, tri);
+}
 #endif
 // A face's desert varnish at h across it (m) and height y: curtains a few metres wide and tens long, and thin dribbles.
 float varnish(float h, float y){
@@ -669,7 +680,21 @@ void main(){
   {
     vec3 toCam = normalize(uCam - vPos);
     float c = max(dot(wOut, toCam), 0.6);
-    vec4 cp = uVP * vec4(vPos + toCam * (wRec / c + 0.15 + 0.006 * dist), 1.0);
+    float pull = wRec / c + 0.15 + 0.006 * dist;
+    // (but never out past the land toward the camera, where a vehicle could be: only to where the line of sight leaves the rock,
+    // the land's or the terrain mesh's, whichever is further out, and 10 cm more)
+    float prev = 0.0;
+    for (int k = 1; k <= 16; k++) {
+      float t = pull * float(k) / 16.0;
+      vec3 q = vPos + toCam * t;
+      if (q.y > landAt(q.xz) + 0.02) {
+        vec3 m = vPos + toCam * (0.5 * (prev + t));
+        pull = min(pull, (m.y > landAt(m.xz) + 0.02 ? 0.5 * (prev + t) : t) + 0.1);
+        break;
+      }
+      prev = t;
+    }
+    vec4 cp = uVP * vec4(vPos + toCam * pull, 1.0);
     gl_FragDepth = clamp(cp.z / cp.w * 0.5 + 0.5, 0.0, 1.0);
   }
 #endif
