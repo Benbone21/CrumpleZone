@@ -728,6 +728,88 @@ void PropRenderer::layout(const World& w, int q, Layout& LO) const {
                         (float)(width * s));
             placed++;
         }
+        // A real map: more along its walls' rims and feet (cliffwalls.h's walls: drops of 6 m or more), out of reach. Each sits on
+        // the face (steeper than ~50 degrees all round it), none within 12 m of a trail; one at a foot only where the ground below
+        // it is a steep talus too, not a floor a truck could drive up to it on (they're scenery: the physics has the land).
+        if (w.map == MAP_REAL) {
+            const std::vector<int>& pool = slickPool.empty() ? cliffModels : slickPool;
+            const double st = 4.0, lim2 = w.halfSize() - 80;
+            const int cap2 = q >= 3 ? 12000 : q == 2 ? 8000 : 3000;
+            std::vector<Spot> wallSpots;
+                        for (double x = -lim2; x < lim2; x += st)
+                for (double z = -lim2; z < lim2; z += st) {
+                    const uint32_t h = hash32((uint32_t)(x * 3 + 90000) * 83492791u ^ (uint32_t)(z * 3 + 90000) * 19349663u ^ 0x5bd1e995u);
+                    const double jx = x + (hashf(h, 1) - 0.5) * st, jz = z + (hashf(h, 2) - 0.5) * st;
+                    const V3 n = w.normal(jx, jz);
+                    if (n.y > 0.64) continue;
+                    // (how high the wall is here, and where on it: 0 its foot, 1 its rim)
+                    const double gy = w.height(jx, jz);
+                    double lo = gy, hi = gy;
+                    for (int a = 0; a < 8; a++) {
+                        const double ang = a * M_PI / 4, y6 = w.height(jx + 6 * std::cos(ang), jz + 6 * std::sin(ang));
+                        lo = std::min(lo, y6), hi = std::max(hi, y6);
+                    }
+                    if (hi - lo < 6.0) continue;
+                    const double at = (gy - lo) / (hi - lo);
+                    const bool rim = at > 0.6, foot = at < 0.3;
+                    if (!rim && !foot) continue;
+                    // (its size, and so how far up and down the face it reaches: never up over the rim, where a truck on top could run
+                    // into it; and where its bottom is in reach of the ground below, that ground must be a steep talus, not a floor)
+                    const double r = 0.5 * (rim ? 8.0 + 6.0 * hashf(h, 3) : 6.0 + 3.0 * hashf(h, 3));
+                    if (gy + r > hi - 0.3) continue;
+                    const double hl = std::sqrt(n.x * n.x + n.z * n.z), ox = n.x / hl, oz = n.z / hl;
+                    if (gy - r < lo + 2.5) {
+                        bool talus = true;
+                        for (double t = 2; t <= r + 6 && talus; t += 2) talus = w.normal(jx + t * ox, jz + t * oz).y < 0.7;
+                        if (!talus) continue;
+                    }
+                    bool ok = !w.roadCell(jx, jz);
+                    for (int a = 0; a < 8 && ok; a++) {
+                        const double ang = a * M_PI / 4;
+                        ok = !w.roadCell(jx + 6 * std::cos(ang), jz + 6 * std::sin(ang)) && !w.roadCell(jx + 12 * std::cos(ang), jz + 12 * std::sin(ang));
+                    }
+                    if (!ok || w.waterLevel(jx, jz) > gy - 0.5) continue;
+                    // (the walls seen from the trails first: those within 150 m of one, then the rest)
+                    bool seen = false;
+                    for (int a = 0; a < 8 && !seen; a++)
+                        for (double r2 : {30.0, 70.0, 110.0, 150.0})
+                            if (w.roadCell(jx + r2 * std::cos(a * M_PI / 4), jz + r2 * std::sin(a * M_PI / 4))) { seen = true; break; }
+                    wallSpots.push_back({seen ? h >> 1 : (h >> 1) | 0x80000000u, jx, jz});
+                }
+            std::sort(wallSpots.begin(), wallSpots.end(), [](const Spot& a, const Spot& b) { return a.h < b.h; });
+            int more = 0;
+            for (const Spot& sp : wallSpots) {
+                if (more >= cap2) break;
+                const long long key = (long long)std::floor(sp.x / 7.0) * 1000003 + (long long)std::floor(sp.z / 7.0);
+                if (taken.count(key)) continue;
+                taken.insert(key);
+                const uint32_t h = sp.h;
+                const V3 n = w.normal(sp.x, sp.z);
+                const double gy = w.height(sp.x, sp.z);
+                double lo = gy, hi = gy;
+                for (int a = 0; a < 8; a++) {
+                    const double ang = a * M_PI / 4, y6 = w.height(sp.x + 6 * std::cos(ang), sp.z + 6 * std::sin(ang));
+                    lo = std::min(lo, y6), hi = std::max(hi, y6);
+                }
+                const bool rim = (gy - lo) / (hi - lo) > 0.6;
+                const int m = pool[hash32(h * 2654435761u + 7) % pool.size()];
+                const Model& md = models[m];
+                const V3 zM = md.faceNormal, xM = norm(cross(up, zM)), yM = cross(zM, xM);
+                const V3 zW = n, xW = norm(cross(up, zW)), yW = cross(zW, xW);
+                const double width = std::max(0.5f, md.bmax[0] - md.bmin[0]);
+                const double s = (rim ? 8.0 + 6.0 * hashf(h, 3) : 6.0 + 3.0 * hashf(h, 3)) / width;
+                const double roll = (hashf(h, 4) - 0.5) * 0.5;
+                const V3 xR = xW * std::cos(roll) + yW * std::sin(roll), yR = yW * std::cos(roll) - xW * std::sin(roll);
+                V3 ax[3];
+                const V3 e[3] = {V3(1, 0, 0), V3(0, 1, 0), V3(0, 0, 1)};
+                for (int a = 0; a < 3; a++) ax[a] = (xR * dot(e[a], xM) + yR * dot(e[a], yM) + zW * dot(e[a], zM)) * s;
+                const V3 mid((md.bmin[0] + md.bmax[0]) * 0.5, (md.bmin[1] + md.bmax[1]) * 0.5, (md.bmin[2] + md.bmax[2]) * 0.5);
+                const V3 origin = V3(sp.x, gy, sp.z) - n * 0.8 - (ax[0] * mid.x + ax[1] * mid.y + ax[2] * mid.z);
+                addInstance(LO.statics, m, ax, origin, (float)(0.85 + 0.2 * hashf(h, 5)), w.surfaceAt(sp.x, sp.z) == SURF_SNOW ? 1.0f : 0.0f, h, false, true,
+                            (float)(width * s));
+                more++;
+            }
+        }
     }
     // Static LO.cells.
     LO.cellN = (int)std::ceil(2 * w.halfSize() / kStaticCell) + 2;

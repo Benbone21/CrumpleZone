@@ -291,6 +291,13 @@ terrain drawn after them stays hidden behind the hollows; their light and shadow
 thread for chunks within 300 m of the camera (dropped past 360 m), the carving eased back to the face from 200 to 285 m; at HIGH
 ground and up. `CZ_NO_CLIFFWALLS=1` leaves them off (for comparing).
 
+**Cliff pieces on the walls** (`propdraw.cpp`): on a real map the scanned cliff pieces (with strata the Namaqualand cliff and the
+undercut slab, else every `cliff_*`) are also laid along its walls (drops of 6 m within 6 m), up to 3000 / 8000 / 12000 by props
+quality, those within 150 m of a trail first: 8-14 m pieces just under the rims (never reaching up over one, where a truck on top
+could meet them) and 6-9 m ones at the feet only where the ground below is a steep talus, each on a face steeper than ~50 degrees
+and none within 12 m of a trail's tread (`World::roadCell`: the older cliff-face pass asks `roadAt().near`, which on a real map,
+painted everywhere, is true everywhere, so it places almost none there). Scenery only, as all of them: the land is the collider.
+
 ### Shipping a real map
 `build/realterrain make SIDECAR --out DIR --int16 0.1 1000` writes the crop as int16 decimetres (LZW, horizontal predictor) and
 adds the `vertical_scale` and `vertical_offset` lines: a third of the float32 crop's size, and 10 cm steps are well under the
