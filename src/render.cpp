@@ -3074,6 +3074,30 @@ namespace {
 // range of mountains to the horizon.
 // A real terrain with a backdrop (realterrain.h): past the map, the real country round it, coarse; from the map's edge (its rim)
 // down onto the backdrop over the first 600 m.
+// A real map with rock strata (its sidecar's `strata`: Moab): the ground's slickrock and sand drawn as sandstone in those bands, and
+// the scanned rocks recoloured to match (groundshader.cpp, propdraw.cpp). Every other map: off (uSlick 0), as it always was.
+void setSlickrockUniforms(GLuint prog, int mapId) {
+    const std::shared_ptr<const realterrain::Terrain> rt = mapId == MAP_REAL ? realterrain::active() : nullptr;
+    if (!rt || rt->spec.strata.empty()) {
+        Uniform1f(uniformLocation(prog, "uSlick"), 0.0f);
+        Uniform1i(uniformLocation(prog, "uStrataN"), 0);
+        Uniform4f(uniformLocation(prog, "uRockLook"), 0, 0, 0, 0);
+        return;
+    }
+    auto lin = [](double c) { return (float)std::pow(c / 255.0, 2.2); };
+    float v[32] = {};
+    const int n = (int)std::min<size_t>(8, rt->spec.strata.size());
+    for (int i = 0; i < n; i++) {
+        const realterrain::SpecStratum& st = rt->spec.strata[i];
+        v[i * 4] = (float)rt->mapHeight(st.elev), v[i * 4 + 1] = lin(st.r), v[i * 4 + 2] = lin(st.g), v[i * 4 + 3] = lin(st.b);
+    }
+    Uniform1f(uniformLocation(prog, "uSlick"), 1.0f);
+    Uniform4fv(uniformLocation(prog, "uStrata"), 8, v);
+    Uniform1i(uniformLocation(prog, "uStrataN"), n);
+    Uniform3f(uniformLocation(prog, "uSandLook"), lin(rt->spec.sandLook[0]), lin(rt->spec.sandLook[1]), lin(rt->spec.sandLook[2]));
+    Uniform4f(uniformLocation(prog, "uRockLook"), lin(rt->spec.rockLook[0]), lin(rt->spec.rockLook[1]), lin(rt->spec.rockLook[2]), (float)rt->spec.rockLook[3]);
+}
+
 const realterrain::Terrain* realBackdrop(const World& world) {
     if (world.map != MAP_REAL) return nullptr;
     const std::shared_ptr<const realterrain::Terrain> t = realterrain::active();
@@ -6507,6 +6531,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         props.draw(vp, [&](GLuint prog) {
             setLighting(prog);
             Uniform1i(uniformLocation(prog, "uMap"), mapId);
+            setSlickrockUniforms(prog, mapId);
         });
     }
     passMark(FP_VEG);
@@ -6663,6 +6688,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             else if (mapId == MAP_PROCEDURAL) rs[0] = (float)proc::rules().alpine.treeLine, rs[1] = (float)proc::rules().alpine.snowDust;
             else rs[0] = 60.0f, rs[1] = 240.0f;
             Uniform2f(uniformLocation(prog, "uRockSnow"), rs[0], rs[1]);
+            setSlickrockUniforms(prog, mapId);
             // (The snow drawn on natural ground: over how many metres it comes in, how much of the ground it covers at most, and how much
             // lower it comes on a north face. The procedural world's is a dusting from its rules (its snowfields are painted on).)
             if (mapId == MAP_PROCEDURAL) {

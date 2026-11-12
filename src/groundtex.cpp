@@ -45,6 +45,12 @@ const char* const kGroundLayers[] = {
     "rocky_trail",          // 7 stones and gravel
     "sandy_gravel_02",      // 8 orange hardpan
     "snow_02",              // 9 snow
+    // Slickrock country (a real map with `strata`: Moab), recoloured by the shader to its rock's bands:
+    "cliff_side",           // 10 bedded sandstone cliff face
+    "rock_boulder_cracked", // 11 slickrock, its polygonal cracks
+    "worn_rock_natural_01", // 12 smooth worn sandstone
+    "red_sand",             // 13 fine sand
+    "acg_rock029",          // 14 streaked cliff rock (ambientCG Rock029)
 };
 const int kLayerCount = (int)(sizeof(kGroundLayers) / sizeof(kGroundLayers[0]));
 
