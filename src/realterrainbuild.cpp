@@ -544,7 +544,22 @@ void World::buildReal() {
     // tread with their tops at the upper tread (the 1 m grid can't make a square edge; the rocks are it). Bare rock, nothing grows on it.
     if (!P.obstacles.empty()) steps.next("real.obstacles");
     for (const realterrain::PlanObstacle& po : P.obstacles) {
-        const realterrain::SpecObstacle& o = po.spec;
+        realterrain::SpecObstacle o = po.spec;
+        // On lidar (a patch's full weight over its stretch) the land already has the obstacle's real form: its walls, fins, pitch
+        // and tilt are the measured ones, not authored. Only what a 1 m grid can't hold is added: the ledges' faces (as slabs, on
+        // the land's own slope), and a crack or pothole the survey smooths.
+        bool onLidar = !t.patches.empty();
+        if (onLidar) {
+            const std::vector<V3> Lp = realterrain::smoothLine(P.trails[po.trail].pts, 1.0);
+            double acc = 0;
+            for (size_t k = 0; k < Lp.size() && onLidar; k++) {
+                acc += k ? std::hypot(Lp[k].x - Lp[k - 1].x, Lp[k].z - Lp[k - 1].z) : 0;
+                if (acc < po.from - 6 || acc > po.to + 6) continue;
+                double py, pw = 0;
+                if (!t.patchAt(Lp[k].x, Lp[k].z, py, pw) || pw < 0.98) onLidar = false;
+            }
+        }
+        if (onLidar) o.walls = 0, o.climbLen = 0, o.climbGrade = 0, o.camber = 0;
         const std::vector<V3> L = realterrain::smoothLine(P.trails[po.trail].pts, 1.0);
         const int m = (int)L.size();
         if (m < 4) continue;
@@ -588,9 +603,10 @@ void World::buildReal() {
         const double Lo = std::max(1.0, s1 - s0), natural = base[i1] - base[i0];
         const double pitch = o.climbLen > 0 ? o.climbGrade * Lo : natural;
         const double stepRise = o.steps * o.rise;
-        const double stepSign = o.climbLen > 0 && o.climbGrade < 0 ? -1 : 1;
-        // (the ledges take their share of the pitch; with no pitch the treads follow the land, but never against the steps)
-        const double treadRise = o.climbLen > 0 ? pitch - stepSign * std::min(std::fabs(pitch), stepRise) : std::max(0.0, natural - stepRise);
+        const double stepSign = o.climbLen > 0 ? (o.climbGrade < 0 ? -1 : 1) : onLidar && natural < 0 ? -1 : 1;
+        // (the ledges take their share of the pitch; with no pitch the treads follow the land, but never against the steps; on lidar
+        // the ledges are cut into the land's own slope, up or down)
+        const double treadRise = o.climbLen > 0 || onLidar ? pitch - stepSign * std::min(std::fabs(pitch), stepRise) : std::max(0.0, natural - stepRise);
         std::vector<double> lips;  // (m along each step's face)
         for (int k = 0; k < o.steps; k++) lips.push_back(s0 + Lo * (k + 0.5) / o.steps);
         auto rel = [&](double sAt) {
