@@ -18,6 +18,28 @@ rock_size 1
 snow_line 3150
 tree_line 2900
 seed 1
+# Lidar where it matters (detail.txt, tools/hires_patches.py): USGS 3DEP 1 m DEMs round the named obstacles, along the rated trails and
+# over Hell's Revenge's domes, eased into the 10 m DEM; their steps sharpened where they stand out of the ground round them.
+include detail.txt
+ledge_sharpen 0.8
+# What the ground is (cover.tif, tools/naip_cover.py): bare rock, sand and brush from NAIP 2024's colours (USDA, public domain).
+cover cover.tif
+# The rock's colours by real elevation, after the formations round Moab (sRGB): Moenkopi and Chinle's dark red-brown in the valleys,
+# Wingate's orange-red cliffs, Kayenta's darker ledgy band, Navajo's salmon slickrock (Hell's Revenge)
+# paling to cream on the high rims (Golden Spike, Gold Bar).
+strata 1180 112 56 40
+strata 1250 172 84 50
+strata 1318 146 76 58
+strata 1345 190 112 84
+strata 1420 198 124 94
+strata 1500 196 136 104
+strata 1560 192 142 112
+strata 1700 184 136 108
+# Sand: the same rock ground up, redder (orange-red in the hollows between the domes).
+sand_look 176 96 62
+# The scanned boulders: the Namaqualand set and the sandstone talus (no grey granite), recoloured toward the sandstone.
+rock_scans nama_ sand_
+rock_look 176 104 70 0.8
 backdrop backdrop.tif
 # OpenStreetMap (osm.txt, tools/osm_extract.py): the trails and named points of the box by rules (any box would do the same) ...
 osm osm.txt

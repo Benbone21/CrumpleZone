@@ -1,6 +1,10 @@
 Moab, Utah (the REAL: MOAB map)
 
 Heights (dem.tif, backdrop.tif): USGS 3D Elevation Program, 1/3 and 1 arc-second DEMs, tile n39w110. Public domain.
+Lidar detail (detail/*.tif, detail.txt): USGS 3D Elevation Program 1 m DEMs, projects UT_Southern_QL1_2018, UT_FEMA_FS_FlamingGorge_2020_B20
+and UT_COUTAML_D24 (USGS, with the State of Utah, FEMA and the USFS), resampled by tools/hires_patches.py. Public domain.
+Ground cover (cover.tif): classified by tools/naip_cover.py from USDA NAIP 2024 imagery (USDA Farm Production and Conservation
+Business Center). Public domain.
 
 Trails, roads, the Colorado River's line and the named places and obstacles (osm.txt, and the way and node ids in moab.txt):
 (c) OpenStreetMap contributors. Available under the Open Database License 1.0, https://www.openstreetmap.org/copyright

@@ -1,0 +1,23 @@
+# Lidar detail patches (tools/hires_patches.py): USGS 3DEP 1 m DEMs (public domain) on the map's 1 m grid, int16 cm.
+# terrain.txt: trails rated 2+ 60 m either side, obstacles 400 m squares, box 38.560 -109.540 38.585 -109.500.
+detail detail/x-05069z-04823.tif 0.01 1395 24
+detail detail/x-04186z-05928.tif 0.01 1273 24
+detail detail/x-03689z-04186.tif 0.01 1297 24
+detail detail/x+01958z-02795.tif 0.01 1567 24
+detail detail/x+00081z-02138.tif 0.01 1305 24
+detail detail/x+03922z-01110.tif 0.01 1245 24
+detail detail/x+04006z-01110.tif 0.01 1246 24
+detail detail/x+06054z-01110.tif 0.01 1286 24
+detail detail/x+03569z-00090.tif 0.01 1246 24
+detail detail/x+04006z-00090.tif 0.01 1249 24
+detail detail/x+06054z-00090.tif 0.01 1402 24
+detail detail/x-07783z+02954.tif 0.01 1391 24
+detail detail/x-06234z+02934.tif 0.01 1368 24
+detail detail/x-03377z+02204.tif 0.01 1597 24
+detail detail/x-02138z+01958.tif 0.01 1547 24
+detail detail/x+03414z+01958.tif 0.01 1394 24
+detail detail/x+04006z+01958.tif 0.01 1395 24
+detail detail/x+06054z+01958.tif 0.01 1392 24
+detail detail/x-06196z+04006.tif 0.01 1448 24
+detail detail/x-04186z+04006.tif 0.01 1508 24
+detail detail/x-08110z+06215.tif 0.01 1578 24
