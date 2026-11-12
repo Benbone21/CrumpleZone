@@ -25,3 +25,32 @@ Overall: the "stupid looking rocks" are gone and the land near the obstacles is 
 Hell's Gate and the Escalator read like their photos in form; the ledge obstacles (Staircase, Waterfall, Golden Spike) now have
 visible stacked tabular beds (`slabs`), now rounded, broken into uneven runs and lightly varnished rather than crates. The long straight
 shading creases on steep terrain (Hell's Gate's foreground) are still there; not looked into this round.
+
+## Cliffs round (branch wip/moab-cliffs)
+
+Same cameras, 10:00, `--photo --adaptive 0`, 1600x900, offscreen, 240 frames (the cliff walls build in the background). `NN-*-cliffs.jpg`
+is this branch; compare with `NN-*-after.jpg` above (the slabs-polish build, b1619c1, which reproduces them). 56 and 57 are new: tall
+walls near trails, "before" from b1619c1. References are Wingate and Navajo walls as they look in photos: vertical, horizontally
+bedded, black varnish curtains from the rim, arched alcoves, hard ledges over shaded recesses.
+
+What changed: (1) on steep faces the ground's patterns are worked out on the face from its two sides, not from above, and with strata
+the faces get level bedding (partings, bed tones, shaded lips), varnish curtains and cross-bedding drawn across the face; (2) the
+ground is meshed at 1 m with LODs picked by each chunk's error, and the screen-space occlusion ignores folds under ~12 degrees, which
+is what the "long straight creases" were (the occlusion of the 2 m mesh's folds, not shadows or paint); (3) carved cliff walls drawn
+over the land's faces (undercut soft beds, a set-back cap under the rim, alcoves), out of every tire's reach; (4) scanned cliff pieces
+along rims and wall feet, off the trails.
+
+| Shot | Camera | Verdict |
+|---|---|---|
+| 50 domes wide | 4900,300,45,-42,-6 | Better at distance: the far cliffs read as walls with dark vertical varnish curtains and level bands instead of soft blotchy ramps. The plain in front is unchanged (as smooth as before). |
+| 51 Hell's Gate | 4264.7,4034.7,4,41.2,0.6 | The straight dark creases across the foreground are gone. The left wall's near face now reads as broken, bedded rock. The slot's walls are slickrock domes, not cliffs, so the carved walls barely touch it; the sand pool at the bottom is still too bright and too orange. |
+| 52 Escalator | 3896.7,2281.2,4,116.4,-1.5 | Little change; a few dark cliff pieces now sit on the distant rim at the right. No regressions. |
+| 53 The Staircase | 4291.3,1838.6,4,59.3,11.6 | Much better: the left wall had big triangular facets and creases; now it's a continuous bedded, varnished face with level partings. The upper slope still has a few chevron-shaped facets. |
+| 54 The Waterfall | -5988.3,4164.5,3,116.9,-24.7 | Small change: the ridge behind gets a broken caprock edge. The slabs are as before. |
+| 55 Golden Spike | -5005.7,4671.7,3,-22.3,2.4 | Small change: the rim on the skyline has a few more broken blocks. |
+| 56 Potash wall (new) | -2492,-4041,2,-112,15 | The best gain. Before: the wall was one stretched texture with vertical smears and a mesh-grid look. Now it's horizontally bedded with partings, deep shaded undercuts under harder beds, varnish curtains, a lumpy broken rim and an alcove on the left wall, which is close to a Wingate wall in a photo. Off: the scanned pieces on the face read as rounded boulder clusters stuck on the wall (the Namaqualand model is lumpy), the photo texture still visibly repeats every 4 m on the face, and the undercuts are too black and too even in depth. |
+| 57 Gold Bar Rim wall (new) | -4968,5130,45,90,22 | Better: the 90 m wall gains level bedding, two big arched alcoves upper left and a broken cap. Off: the face is still ribbed vertically (the 10 m DEM's grid, not lidar here), and the talus below keeps the `ledges` stair pass's waffle grid, which looks artificial. |
+
+Still wrong overall: the scanned cliff pieces look like stuck-on boulders rather than broken caprock; the 10 m DEM walls stay ribbed;
+the `ledges` stair pass leaves a criss-cross waffle on talus slopes; and the photo layer repeats on big faces. The carved walls only
+show within ~285 m (beyond, the land's face with the shader's bedding).
