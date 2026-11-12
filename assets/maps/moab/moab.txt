@@ -52,12 +52,12 @@ trail METAL MASHER CUTOFF | 3 0.6 | osm 982872546
 # Hell's Revenge's start fin above the entrance station, drops both sides (research 2.1, order 1). No OSM node: on the line 110 m in.
 obstacle HELL'S REVENGE FIN | fin | 38.57627 -109.52330 | HELL'S REVENGE | climb 0.45 10 walls -1.6 width 3.0
 # Hell's Gate: optional steep notch climb near the north end; pushes the trail toward an 8 (research 2.1, order 6). A 39-degree pitch up
-# a notch (about 7 m high), two 22 in (0.55 m) ledges, the slickrock walls 7 m up either side (photos: a V between two
-# smooth cross-bedded walls taller than a Jeep), tipped a little. Bypass: the main trail (OSM's own one-way way).
-obstacle HELL'S GATE | notch | node 8623737727 | HELL'S GATE | climb 0.8 9 steps 2 0.55 walls 7 width 2.6 camber 8
-# The Escalator (RR4W "Escalator to Hell", 8): optional, extreme, a steep ledge climb. 40 degrees, about 8.5 m high, three 0.45 m ledges,
-# up a chute between two slickrock domes (photos: the domes stand well over head height either side), walls 3.5 m.
-obstacle ESCALATOR | climb | node 8669825398 | ESCALATOR | climb 0.85 10 steps 3 0.45 width 3.0 walls 3.5
+# a notch (about 7 m high), two 22 in (0.55 m) ledges, the rock 2.5 m up either side, tipped a little. (On the lidar, as it is now,
+# its walls, pitch and tilt are the survey's; only the ledges' faces are added.) Bypass: the main trail (OSM's own one-way way).
+obstacle HELL'S GATE | notch | node 8623737727 | HELL'S GATE | climb 0.8 9 steps 2 0.55 walls 2.5 width 2.6 camber 8
+# The Escalator (RR4W "Escalator to Hell", 8): optional, extreme, a steep ledge climb. 40 degrees, about 8.5 m high, three 0.45 m ledges.
+# (On the lidar its chute between the domes is the survey's; only the ledges' faces are added.)
+obstacle ESCALATOR | climb | node 8669825398 | ESCALATOR | climb 0.85 10 steps 3 0.45 width 3.0
 # Mickey's Hot Tub: the one pothole open to vehicles, extreme caution (research 2.1, order 4). In and out of a 1.5 m bowl 10 m across.
 obstacle MICKEY'S HOT TUB | pothole | node 8669825415 | MICKEY'S HOT TUB | bowl 1.5 10 width 3.2
 # The Tip-Over Challenge: a crack across its middle lifts a tyre, off-camber at the top where you turn (research 2.1, order 9).
