@@ -25,6 +25,9 @@ nama_stone_b 0
 nama_stone_c 0
 nama_stone_d 0
 nama_stone_e 0
+talus_02 0
+talus_06 0
 cliff_face_01 3
 cliff_face_02 3
 cliff_nama_01 3
+overhang_nama_02 3
