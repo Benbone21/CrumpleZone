@@ -1233,12 +1233,6 @@ RoadInfo World::roadAt(double x, double z) const {
     return r;
 }
 
-bool World::roadCell(double x, double z) const {
-    if (!std::isfinite(x) || !std::isfinite(z) || roadNear.empty()) return false;
-    const int i = (int)std::lround((x + half) / kRes), j = (int)std::lround((z + half) / kRes);
-    return i >= 0 && j >= 0 && i < hN && j < hN && roadNear[i * hN + j];
-}
-
 Surface World::surfaceAt(double x, double z) const {
     if (!std::isfinite(x) || !std::isfinite(z)) return SURF_PAVED;
     if (!surf.empty()) {

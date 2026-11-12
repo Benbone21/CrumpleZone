@@ -446,8 +446,6 @@ public:
     double height(double x, double z) const;  // terrain only (baked grid, bilinear)
     V3 normal(double x, double z) const;
     RoadInfo roadAt(double x, double z) const;
-    // On or by a road or trail's tread (its own cells, not just painted ground: on a real map every cell is painted).
-    bool roadCell(double x, double z) const;
     Surface surfaceAt(double x, double z) const;
     // The proving ground's surface course: which strip (x, z) is on (-1 none), and where
     // a strip starts (its west end, facing east).

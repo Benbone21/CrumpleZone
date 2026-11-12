@@ -360,6 +360,72 @@ void build(const World& world, const Beds& beds, int i0, int j0, int w, int h, f
     verts.resize(o);
     for (size_t k = 0; k < idx.size(); k++)
         if (idx[k] >= base) idx[k] = (unsigned)(base + remap[idx[k] - base]);
+
+    // Broken caprock: angular, flat-topped blocks of a bed breaking out of the face just under a tall wall's rim (now and then
+    // one lower down, a harder bed standing proud), each set back into the rock behind and standing out at most 1.3 m. Only where
+    // no tire reaches: under the rim's top by 0.3 m or more, 2.5 m or more above the wall's foot, and over a drop of 2 m or more
+    // straight below its front. (c[0] 0.25 marks them: they're the one thing here that stands out of the land.)
+    for (int a = kAround + 1; a < kAround + 1 + w; a++)
+        for (int b = kAround + 1; b < kAround + 1 + h; b++) {
+            if (!face[(size_t)a * ch + b]) continue;
+            const int i = ci0 + a, j = cj0 + b;
+            const double hc = hash2(i * 0.731 + 0.5, j * 1.173 - 0.5);
+            if (hc > 0.035) continue;
+            const double cx = -half + i + 0.5, cz = -half + j + 0.5;
+            const double foot = bil(lo, cx, cz), top = bil(hi, cx, cz), wallH = top - foot;
+            if (wallH < 8) continue;
+            double gx = H(cx + 1, cz) - H(cx - 1, cz), gz = H(cx, cz + 1) - H(cx, cz - 1);
+            const double gl = std::sqrt(gx * gx + gz * gz);
+            if (gl < 2.0) continue;
+            const double ox = -gx / gl, oz = -gz / gl;  // (outward: down the face)
+            const double h1 = hash1(hc * 977.0 + 3.0), h2 = hash1(hc * 571.0 + 7.0), h3 = hash1(hc * 313.0 + 11.0), h4 = hash1(hc * 131.0 + 5.0);
+            const bool high = h4 < 0.75;
+            const double thick = 0.9 + 1.4 * h1, wide = 2.0 + 3.5 * h2, out = 0.5 + 0.8 * h3, back = 1.2;
+            const double topY = high ? top - 0.4 - 0.8 * h3 : foot + 3.0 + thick + h4 * std::max(0.0, wallH - 8.0);
+            const double botY = topY - thick;
+            if (topY > top - 0.3 || botY < foot + 2.5) continue;
+            // (the face at the block's top: the last point going out where the land is still higher than the top)
+            double t0 = -3.0;
+            while (t0 < 3.0 && H(cx + ox * t0, cz + oz * t0) > topY) t0 += 0.1;
+            const double fx = cx + ox * t0, fz = cz + oz * t0;  // (on the face at topY)
+            if (H(fx + ox * (out + 0.5), fz + oz * (out + 0.5)) > botY - 2.0) continue;
+            // (its corners: a box along the face, a little skewed and leaning, its top tipped a few degrees)
+            const double ax = -oz, az = ox;  // (along the face)
+            const double lean = (h1 - 0.5) * 0.12, tip = (h2 - 0.5) * 0.1;
+            V3 c[8];
+            for (int q = 0; q < 8; q++) {
+                const double u = (q & 1) ? 0.5 : -0.5, v = (q & 2) ? out : -back, top1 = (q & 4) ? 1 : 0;
+                const double jit = 0.12 * (hash1(hc * 37.0 + q * 3.1) - 0.5);
+                const double along = u * wide * (1 + jit) + (v > 0 ? 0.25 * (hash1(hc * 53.0 + q) - 0.5) : 0);
+                const double outw = v * (1 + jit);
+                const double y = (top1 ? topY + tip * u * wide : botY + 0.25 * (hash1(hc * 71.0 + q) - 0.5)) + lean * outw;
+                c[q] = V3(fx + ax * along + ox * outw, y, fz + az * along + oz * outw);
+            }
+            // (every corner well under the highest ground round it and well over the lowest)
+            bool fits = true;
+            for (int q = 0; q < 8 && fits; q++) fits = c[q].y <= bil(hi, c[q].x, c[q].z) - 0.3 && c[q].y >= bil(lo, c[q].x, c[q].z) + 2.4;
+            if (!fits) continue;
+            static const int F[6][4] = {{0, 1, 3, 2}, {4, 6, 7, 5}, {0, 2, 6, 4}, {1, 5, 7, 3}, {0, 4, 5, 1}, {2, 3, 7, 6}};
+            const V3 mid = (c[0] + c[7]) * 0.5;
+            for (const auto& f : F) {
+                V3 n = cross(c[f[1]] - c[f[0]], c[f[2]] - c[f[0]]);
+                if (dot(n, (c[f[0]] + c[f[2]]) * 0.5 - mid) < 0) n = -n;
+                n = norm(n);
+                const unsigned v0 = (unsigned)verts.size();
+                for (int k = 0; k < 4; k++) {
+                    const V3& P = c[f[k]];
+                    Vert vv{};
+                    vv.p[0] = (float)P.x, vv.p[1] = (float)P.y, vv.p[2] = (float)P.z;
+                    vv.n[0] = (float)n.x, vv.n[1] = (float)n.y, vv.n[2] = (float)n.z;
+                    vv.c[0] = 0.25f, vv.c[1] = 0, vv.c[2] = (float)std::atan2(oz, ox), vv.c[3] = material;
+                    verts.push_back(vv);
+                }
+                // (wound to face out)
+                const V3 fn = cross(c[f[1]] - c[f[0]], c[f[2]] - c[f[0]]);
+                if (dot(fn, n) > 0) idx.insert(idx.end(), {v0, v0 + 1, v0 + 2, v0, v0 + 2, v0 + 3});
+                else idx.insert(idx.end(), {v0, v0 + 2, v0 + 1, v0, v0 + 3, v0 + 2});
+            }
+        }
 }
 
 }  // namespace cliffwalls

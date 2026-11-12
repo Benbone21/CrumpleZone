@@ -293,12 +293,14 @@ terrain drawn after them stays hidden behind the hollows; their light and shadow
 thread for chunks within 300 m of the camera (dropped past 360 m), the carving eased back to the face from 200 to 285 m; at HIGH
 ground and up. `CZ_NO_CLIFFWALLS=1` leaves them off (for comparing).
 
-**Cliff pieces on the walls** (`propdraw.cpp`): on a real map the scanned cliff pieces (with strata the Namaqualand cliff and the
-undercut slab, else every `cliff_*`) are also laid along its walls (drops of 6 m within 6 m), up to 3000 / 8000 / 12000 by props
-quality, those within 150 m of a trail first: 8-14 m pieces just under the rims (never reaching up over one, where a truck on top
-could meet them) and 6-9 m ones at the feet only where the ground below is a steep talus, each on a face steeper than ~50 degrees
-and none within 12 m of a trail's tread (`World::roadCell`: the older cliff-face pass asks `roadAt().near`, which on a real map,
-painted everywhere, is true everywhere, so it places almost none there). Scenery only, as all of them: the land is the collider.
+**Caprock** (`cliffwalls.cpp`, with the walls): angular, flat-topped blocks of a bed breaking out of a tall wall's face, most
+just under its rim, a few lower (a harder bed standing proud): 2-5.5 m along the face, 0.9-2.3 m thick, standing out 0.5-1.3 m and
+set 1.2 m back into the rock, a little skewed and tipped, on about one face cell in thirty. They're the one part of the walls
+that stands out of the land, so only where nothing reaches them: every corner 0.3 m or more under the highest ground within 4 m
+and 2.4 m or more over the lowest, and 2 m or more of drop straight under the block's front (`moab/cliff-walls` checks them).
+(An earlier pass laid the scanned Namaqualand cliff pieces along rims and feet; they read as lumpy boulder clusters stuck on the
+walls and were taken out. The older generic cliff-face pass asks `roadAt().near`, true on every cell of a painted real map, so it
+lays almost none there.)
 
 ### Shipping a real map
 `build/realterrain make SIDECAR --out DIR --int16 0.1 1000` writes the crop as int16 decimetres (LZW, horizontal predictor) and

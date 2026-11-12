@@ -372,7 +372,7 @@ double distToLine(const std::vector<V3>& L, const V3& p) {
 }
 }  // namespace
 
-SCENARIO(moabCliffWalls, "moab/cliff-walls", "Moab's cliff walls (cliffwalls.h) along its trails: carved into the rock, never out past the land a tire hits (no vertex outside it), the same every build") {
+SCENARIO(moabCliffWalls, "moab/cliff-walls", "Moab's cliff walls (cliffwalls.h) along its trails: carved into the rock, never out past the land a tire hits (no vertex outside it but the caprock blocks', high on the faces), the same every build") {
     std::lock_guard<std::mutex> one(gOneMoab);
     auto t = loadMoab();
     ctx.check("the shipped map loads", t != nullptr);
@@ -395,7 +395,7 @@ SCENARIO(moabCliffWalls, "moab/cliff-walls", "Moab's cliff walls (cliffwalls.h) 
     std::vector<std::pair<int, int>> pick;
     for (size_t k = 0; k < list.size(); k += 7) pick.push_back(list[k]);
     cliffwalls::Beds beds;
-    size_t verts = 0, withWalls = 0, outside = 0, reachable = 0;
+    size_t verts = 0, withWalls = 0, outside = 0, reachable = 0, blocks = 0, badBlocks = 0;
     double worst = 0, deepest = 0;
     for (const auto& c : pick) {
         std::vector<cliffwalls::Vert> v;
@@ -405,6 +405,14 @@ SCENARIO(moabCliffWalls, "moab/cliff-walls", "Moab's cliff walls (cliffwalls.h) 
         for (const cliffwalls::Vert& q : v) {
             const double x = q.p[0], y = q.p[1], z = q.p[2], out = y - w->height(x, z);
             deepest = std::max(deepest, (double)q.c[1]);
+            if (q.c[0] > 0.2) {  // (a caprock block: it stands out of the face, but high above the lowest ground round it, under the rim)
+                blocks++;
+                double low = 1e9, high = -1e9;
+                for (int a = -4; a <= 4; a++)
+                    for (int b = -4; b <= 4; b++) low = std::min(low, w->height(x + a, z + b)), high = std::max(high, w->height(x + a, z + b));
+                if (out > 0.005 && (y - low < 2.0 || y > high + 0.05)) badBlocks++;
+                continue;
+            }
             if (out <= 0.005) continue;
             outside++, worst = std::max(worst, out);
             // (outside the land: then it's up a steep face, well above the lowest ground round it)
@@ -420,6 +428,8 @@ SCENARIO(moabCliffWalls, "moab/cliff-walls", "Moab's cliff walls (cliffwalls.h) 
     ctx.metric("deepest carving", deepest, "m", 1.0, 4.0);
     ctx.metric("worst outside the land", worst, "m", 0, 0.05);
     ctx.metric("vertices outside the land where a tire could be", (double)reachable, "", 0, 0);
+    ctx.metric("caprock blocks' corners", (double)blocks, "", 8, 1e9);
+    ctx.metric("...within 2 m of the ground round them, or over the rim", (double)badBlocks, "", 0, 0);
     ctx.note(std::to_string(verts) + " vertices, " + std::to_string(outside) + " outside the land");
     // The same every build.
     if (!pick.empty()) {
