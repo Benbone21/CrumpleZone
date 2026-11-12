@@ -320,7 +320,9 @@ void main(){
   gNoiseB = fbm(p * 0.55 - 3.0, 2);
   // Up a steep face the pattern from above would run in stripes the height of it: there these two are worked out on the face
   // instead, from its two sides (as its photo layers are), blended by the same weights.
-  gWTop = smoothstep(0.55, 0.93, N0.y);
+  // (Slickrock country: the sides only take over on a real face. On a talus or a dome's flank their two axis-aligned projections,
+  // crossing, drew the rock's joints as a grid of x and z lines, a waffle; from above, a 45 degree slope is only stretched by 1.4.)
+  gWTop = uSlick > 0.5 ? smoothstep(0.30, 0.68, N0.y) : smoothstep(0.55, 0.93, N0.y);
   sideFrames(N0, dPx, dPy);
   if (gWTop < 0.999 && dist < 400.0) {
     vec2 qx = vec2(NP.z, vPos.y), qz = vec2(NP.x, vPos.y);
@@ -422,7 +424,7 @@ void main(){
 #endif
   // ---- Photo layers ----
   bool two = uGroundQ >= 2 && dist < 250.0;
-  float wTop = smoothstep(0.55, 0.93, N0.y);  // how much the top-down mapping counts on a slope (gWTop)
+  float wTop = gWTop;  // how much the top-down mapping counts on a slope
   bool steepFace = uGroundQ >= 2 && wTop < 0.999 && dist < 400.0;
   vec4 A[4];
   float Lr[4]; float scl[4]; vec4 avgA[4];

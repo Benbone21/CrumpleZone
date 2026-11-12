@@ -267,7 +267,9 @@ noise that picks the materials is worked out on the face from its two sides, as 
 stripes the height of a wall). With strata the faces also get level bedding: partings between beds of uneven thickness (about 2 m on
 average) that die out along the face here and there, each bed a little lighter or darker, a shaded recess under the harder ones'
 lips, all following the bands (the fault's offset included); the varnish hangs in curtains a few metres wide and tens long, and the
-cross-bedding is drawn across the face rather than from above. The faces get the
+cross-bedding is drawn across the face rather than from above. On slickrock maps the side projections only take over on a real face (normal's y under ~0.68; elsewhere from 0.93): on a talus
+or a dome's flank their two crossing, axis-aligned projections drew the texture's joints as a grid of x and z lines (the "waffle"
+under Gold Bar Rim's wall, which was not the ledges pass, whose stairs there are irregular already). The faces get the
 Namaqualand cliff and the leaning, undercut `overhang_nama_02` slab instead of the grey lichened faces.
 
 **The drawn ground** (`render.cpp` prepareTerrain): a real map is meshed at 1 m, its lidar's grid (2 m before). Each 64 m chunk
