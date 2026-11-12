@@ -223,12 +223,14 @@ wins). The game (`Terrain::patchAt`) lays them over the DEM bicubically, eased i
 NoData: integers, the same everywhere), without the made-up fine bumps (`landAt`); the contour ledges skip them, and `ledge_sharpen`
 pulls their risers toward a stair where a step is much steeper than the ground round it. The patches are hashed into `Spec::hash`.
 
-Moab: 21 patches, 9 M cells, 12.8 MB (`assets/maps/moab/detail/`), from `UT_Southern_QL1_2018` (x62y427, x62y428, x63y427) first, then
-`UT_FEMA_FS_FlamingGorge_2020_B20` (x61y427, x61y428, x63y428) and `UT_COUTAML_D24`. Hell's Gate, the Escalator, Mickey's Hot Tub, the
-east end of Golden Spike (Launching Pad, Narrow Ravine, Zuki Hill), Devil's Crack, the Moab Rim dome and the Poison Spider Waterfall
-fall in gaps of the tiles on disk (the 2018 survey's edge runs diagonally through Hell's Revenge; FlamingGorge's x62y427, x62y428 and
-x63y427 weren't fetched): they keep the 10 m DEM. The UGRC 2025 0.5 m DEM (Hell's Revenge core) states no licence, so nothing from it
-ships.
+Moab: 28 patches, 25 M cells, 25.4 MB (`assets/maps/moab/detail/`), from `UT_FEMA_FS_FlamingGorge_2020_B20` (x61..x63, y427..y428:
+one survey over all of box D, so no seam where another begins) first, then `UT_Southern_QL1_2018` and `UT_COUTAML_D24` where it has
+no data, over the trails, the obstacles and Hell's Revenge (38.560-38.600 N, 109.540-109.500 W). Every named obstacle is on it.
+The UGRC 2025 0.5 m DEM (Hell's Revenge core) states no licence, so nothing from it ships.
+
+**Obstacles on lidar.** Where a patch has its full weight over an obstacle's whole stretch, the land is taken to have the obstacle's
+real form: its authored walls, fins, pitch and camber are dropped, and only the ledges are added, cut into the land's own slope (up
+or down) with their faces as slabs; a crack or a pothole is still authored (the survey smooths them).
 
 ### Ground cover and the slickrock look
 `tools/naip_cover.py` classifies NAIP 2024 (USDA, 0.6 m, public domain) by colour: pale, low-saturation pixels are bare rock, the
@@ -257,9 +259,8 @@ osm.txt 0.3 MB). The tests are `tests/moab.cpp`. Credits: `assets/maps/moab/CRED
 **Memory** (Moab, box D, measured): the game peaks at 3.3 GB (4.7 GB before its scattered scanned rocks were made whole hulls:
 20 k rocks cut into convex pieces were 1.5 GB); the tool and the tests (code-made rocks) at 2.4 GB, so the tests build one Moab at a
 time. The 1 m grid is 1.6 GB of it (heights 4 bytes, surface and paint 1 each, 272 M cells): the ledge pass no longer copies it whole.
-With the lidar patches (9 M cells, kept as floats with their weights: about 70 MB) and the ground cover (68 MB of classes), the game's
-peak resident size measured offscreen at 1600x900 (VmHWM) is 3.44-3.45 GB from the world cache and 3.48 GB building the map fresh,
-against 3.42-3.44 GB on the same runs before them.
+With the lidar patches (25 M cells, kept as floats with their weights: about 200 MB) and the ground cover (68 MB of classes), the
+game's peak resident size measured offscreen at 1600x900 (VmHWM) is 3.49-3.52 GB, against 3.42-3.44 GB on the same runs before them.
 
 ## Determinism, the cache and multiplayer
 
