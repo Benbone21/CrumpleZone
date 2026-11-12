@@ -280,7 +280,16 @@ void sideFrames(vec3 g, vec3 dPx, vec3 dPy){
   sideZ.uv = vec2(dot(NP, sideZ.R), -vPos.y); sideZ.gx = vec2(dot(dPx, sideZ.R), -dPx.y); sideZ.gy = vec2(dot(dPy, sideZ.R), -dPy.y);
 }
 vec4 sideTap(sampler2DArray s, float L, Side f, float scale){
-  return textureGrad(s, vec3(f.uv * scale, L), f.gx * scale, f.gy * scale);
+  vec4 t = textureGrad(s, vec3(f.uv * scale, L), f.gx * scale, f.gy * scale);
+  // (Slickrock country: a tall face showed the photo repeating every few metres. Patches of it, ten to twenty metres across, take
+  // the same photo shifted, or at 2.4 times the size, instead, blended over a few metres: no period to see.)
+  if (uSlick > 0.5) {
+    float m1 = smoothstep(0.35, 0.65, vnoise(f.uv * 0.07 + 3.3)), m2 = smoothstep(0.4, 0.7, vnoise(f.uv * 0.045 - 8.1));
+    if (m1 > 0.001) t = mix(t, textureGrad(s, vec3(f.uv * scale + vec2(0.37, 0.61), L), f.gx * scale, f.gy * scale), m1);
+    float s2 = scale * 0.41;
+    if (m2 > 0.001) t = mix(t, textureGrad(s, vec3(f.uv * s2 + vec2(0.13, 0.29), L), f.gx * s2, f.gy * s2), m2);
+  }
+  return t;
 }
 
 
