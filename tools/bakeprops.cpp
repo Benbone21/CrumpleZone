@@ -1003,7 +1003,7 @@ const Unit kUnits[] = {
     {"rock_face_02", 0, "cliff_face_02", props::KIND_CLIFF, true, {3000, 900, 250}, {1024, 512, 256}},
     {"namaqualand_cliff_01", 0, "cliff_nama_01", props::KIND_CLIFF, true, {3500, 1000, 280}, {1024, 512, 256}},
     // A leaning, undercut slab (20 m): slickrock country's overhangs (only where a map's strata ask: propdraw.cpp).
-    {"namaqualand_cliff_02", 0, "overhang_nama_02", props::KIND_CLIFF, true, {4000, 1100, 300}, {1024, 512, 256}},
+    {"namaqualand_cliff_02", 0, "overhang_nama_02", props::KIND_CLIFF, true, {3500, 1000, 280}, {1024, 512, 256}},
     // Stumps, logs, branches.
     {"tree_stump_01", 0, "stump_01", props::KIND_STUMP, true, {1800, 500, 120}, {512, 256, 128}},
     {"tree_stump_02", 0, "stump_02", props::KIND_STUMP, true, {1800, 500, 120}, {512, 256, 128}},
