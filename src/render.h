@@ -361,6 +361,25 @@ private:
     uint64_t streamGen_ = 0;
     void dropStreamJobs();
     BgWork bg_{true};
+    // A real map's cliff walls (cliffwalls.h): each terrain chunk's carved faces, built on wallBg_ for the chunks within kWallIn of
+    // the camera (a few at a go, nearest first), dropped past kWallOut, drawn at HIGH ground and up (drawWalls) with the ground
+    // shader's wall build (groundshader.cpp WALL). wallGen_ changes with the land (as streamGen_).
+    struct WallMesh {
+        GLuint vao = 0, vbo = 0, ibo = 0;
+        unsigned count = 0;
+        RenderBounds bounds;
+        int state = 0;  // 0 not built, 1 being built, 2 built (count 0: no wall in it)
+    };
+    struct WallJob;
+    std::vector<WallMesh> walls_;
+    std::shared_ptr<WallJob> wallJob_;
+    uint64_t wallGen_ = 0;
+    GLuint progWall_[4] = {0, 0, 0, 0};
+    BgWork wallBg_{true};
+    void streamWalls(const World& world, const V3& eye);
+    void dropWalls();
+    GLuint wallProgram(int tier);
+    void drawWalls(const M4& vp, const std::function<void(GLuint, bool)>& setup, int tier);
 public:
     // Waits for the streaming's background work and drops it, and for any other that reads the world (the autopilot's replans,
     // bgwork.h waitWorldReaders): before the world is replaced.

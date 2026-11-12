@@ -35,6 +35,7 @@ static void noteRT(const char* name, const char* fmt, int w, int h, int bytesPer
 #include "treefade.h"
 #include "font.h"
 #include "groundtex.h"
+#include "cliffwalls.h"
 #include "fx.h"
 #include "platform.h"
 #include <cstring>
@@ -4218,6 +4219,7 @@ void Renderer::dropStreamJobs() {
     texJob_.reset(), chunkJob_.reset();
     texMoving_ = false;
     streamGen_++;
+    dropWalls();  // (built again from the land as it is now)
     streamEye_ = V3(1e9, 0, 1e9), streamPending_ = true;
 }
 
@@ -4376,6 +4378,155 @@ void Renderer::buildTerrain(const World& world) {
     while (!pumpUpload(1e9)) {}
     adoptTerrain(*p);
     pending_ = std::move(waiting);
+}
+
+// ---- Cliff walls (cliffwalls.h, render.h walls_) ----
+
+namespace {
+constexpr double kWallIn = 300, kWallOut = 360;      // m from the camera: a chunk's walls are built inside, dropped outside
+constexpr float kWallFade0 = 200, kWallFade1 = 285;   // ...and their carving eased away (back to the land's face) over these
+constexpr int kWallsPerJob = 6;                       // chunks built at a go
+static_assert(sizeof(Vtx) == sizeof(cliffwalls::Vert), "cliffwalls::Vert is laid out as Vtx");
+// The wall build's vertex shader: kLitVS, but a vertex's carving (aCol.g, along the outward direction aCol.b) is eased away with
+// distance, back toward the land's face, so the walls don't pop in.
+const char* kWallVS = R"(#version 330 core
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNrm;
+layout(location=2) in vec4 aCol;
+uniform mat4 uVP; uniform mat4 uModel; uniform mat4 uLightVP;
+uniform vec3 uCam;
+uniform vec2 uWallFade;
+out vec3 vPos; out vec3 vNrm; centroid out vec4 vCol; out vec4 vLight; out vec3 vLocal;
+void main(){
+  vec3 o = vec3(cos(aCol.b), 0.0, sin(aCol.b));
+  float k = 1.0 - smoothstep(uWallFade.x, uWallFade.y, length(aPos - uCam));
+  vec3 p = aPos + o * aCol.g * (1.0 - k);
+  vPos = p; vNrm = aNrm; vCol = vec4(aCol.r, aCol.g * k, aCol.b, aCol.a); vLocal = aPos;
+  vLight = uLightVP * vec4(p, 1.0);
+  gl_Position = uVP * vec4(p, 1.0);
+})";
+}  // namespace
+
+struct Renderer::WallJob {
+    const World* world = nullptr;
+    uint64_t stamp = 0, gen = 0;
+    std::vector<int> chunks;
+    std::vector<std::vector<cliffwalls::Vert>> verts;
+    std::vector<std::vector<unsigned>> idx;
+    std::atomic<bool> done{false};
+};
+
+void Renderer::dropWalls() {
+    for (WallMesh& m : walls_) {
+        if (m.vbo) DeleteBuffers(1, &m.vbo);
+        if (m.ibo) DeleteBuffers(1, &m.ibo);
+        if (m.vao) DeleteVertexArrays(1, &m.vao);
+    }
+    walls_.clear();
+    wallJob_.reset();
+    wallGen_++;
+}
+
+void Renderer::streamWalls(const World& world, const V3& eye) {
+    static const bool off = std::getenv("CZ_NO_CLIFFWALLS") != nullptr;  // (for comparing)
+    if (off || !terrainErrLod_ || groundTier(std::min(std::max(settings.ground, 0), 3)) < 2) {
+        if (!walls_.empty()) dropWalls();
+        return;
+    }
+    int mapChunks = 0;
+    while (mapChunks < (int)terrainChunks.size() && !terrainChunks[mapChunks].backdrop) mapChunks++;
+    if ((int)walls_.size() != mapChunks) dropWalls(), walls_.resize(mapChunks);
+    // What a job built: onto the GPU (or, if the land changed meanwhile, back to be built again).
+    if (wallJob_ && wallJob_->done.load(std::memory_order_acquire)) {
+        WallJob& j = *wallJob_;
+        const bool good = j.world == &world && j.stamp == world.stamp && j.gen == wallGen_;
+        for (size_t q = 0; q < j.chunks.size(); q++) {
+            WallMesh& m = walls_[j.chunks[q]];
+            if (!good) { m.state = 0; continue; }
+            m.state = 2, m.count = (unsigned)j.idx[q].size(), m.bounds = RenderBounds();
+            if (!m.count) continue;
+            for (const cliffwalls::Vert& v : j.verts[q]) m.bounds.add(V3(v.p[0], v.p[1], v.p[2]));
+            GenVertexArrays(1, &m.vao);
+            GenBuffers(1, &m.vbo);
+            GenBuffers(1, &m.ibo);
+            setupVtxVao(m.vao, m.vbo);
+            BindBuffer(GL_ARRAY_BUFFER, m.vbo);
+            BufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(j.verts[q].size() * sizeof(Vtx)), j.verts[q].data(), GL_STATIC_DRAW);
+            BindVertexArray(m.vao);
+            BindBuffer(GL_ELEMENT_ARRAY_BUFFER, m.ibo);
+            BufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)(j.idx[q].size() * sizeof(unsigned)), j.idx[q].data(), GL_STATIC_DRAW);
+            BindVertexArray(0);
+        }
+        wallJob_.reset();
+    }
+    // Far ones out; near ones queued, nearest first.
+    std::vector<std::pair<double, int>> want;
+    for (int k = 0; k < mapChunks; k++) {
+        WallMesh& m = walls_[k];
+        const double d = terrainChunks[k].bounds.distance(eye);
+        if (m.state == 2 && d > kWallOut) {
+            if (m.vbo) DeleteBuffers(1, &m.vbo);
+            if (m.ibo) DeleteBuffers(1, &m.ibo);
+            if (m.vao) DeleteVertexArrays(1, &m.vao);
+            m = WallMesh();
+        } else if (m.state == 0 && d < kWallIn) want.push_back({d, k});
+    }
+    if (wallJob_ || want.empty()) return;
+    std::sort(want.begin(), want.end());
+    auto job = std::make_shared<WallJob>();
+    job->world = &world, job->stamp = world.stamp, job->gen = wallGen_;
+    for (int q = 0; q < (int)want.size() && q < kWallsPerJob; q++) job->chunks.push_back(want[q].second), walls_[want[q].second].state = 1;
+    std::vector<std::array<int, 4>> rect;
+    for (int k : job->chunks) rect.push_back({terrainChunks[k].i0, terrainChunks[k].j0, terrainChunks[k].w, terrainChunks[k].h});
+    // (the beds' offset across the strata's fault, as the ground shader has it)
+    cliffwalls::Beds beds;
+    if (const std::shared_ptr<const realterrain::Terrain> rt = realterrain::active()) {
+        const realterrain::Spec& sp = rt->spec;
+        if (sp.hasFault) {
+            rt->toMap(sp.faultA, beds.ax, beds.az), rt->toMap(sp.faultB, beds.bx, beds.bz);
+            beds.shift = sp.faultShift * sp.exaggeration, beds.width = sp.faultWidth;
+        }
+    }
+    wallJob_ = job;
+    wallBg_.post([job, rect = std::move(rect), beds] {
+        const int n = (int)rect.size();
+        job->verts.resize(n), job->idx.resize(n);
+        parallelRowsCap = std::max(1, (int)std::thread::hardware_concurrency() / 2);  // (leave the frame and the physics their cores)
+        parallelRows(n, [&](int q) {
+            cliffwalls::build(*job->world, beds, rect[q][0], rect[q][1], rect[q][2], rect[q][3], (float)SM_TERRAIN, job->verts[q], job->idx[q]);
+        }, 1);
+        job->done.store(true, std::memory_order_release);
+    });
+}
+
+GLuint Renderer::wallProgram(int tier) {
+    GLuint& slot = progWall_[std::min(std::max(tier, 0), 3)];
+    if (slot || groundFailed) return slot;
+    std::string xd = "#define GQ " + std::to_string(tier) + "\n#define WALL\n";
+    std::string err;
+    slot = linkProgram(kWallVS, "#version 330 core\n#define PCF_EARLY\n" + xd + kCommonFS + kLitIns + kTerrainProcFS + kGroundShaderFS, err);
+    if (!slot) std::fprintf(stderr, "cliff wall shader: %s\n", err.c_str());
+    return slot;
+}
+
+// The cliff walls, before the ground: their fragments' depth is set in front of the land's own face (groundshader.cpp WALL), so
+// the ground drawn after them doesn't show through their hollows.
+void Renderer::drawWalls(const M4& vp, const std::function<void(GLuint, bool)>& setup, int tier) {
+    if (walls_.empty()) return;
+    GLuint prog = 0;
+    for (const WallMesh& m : walls_)
+        if (m.count && m.bounds.visible(vp)) {
+            if (!prog) {
+                prog = wallProgram(tier);
+                if (!prog) return;
+                setup(prog, false);
+                Uniform2f(uniformLocation(prog, "uWallFade"), kWallFade0, kWallFade1);
+            }
+            BindVertexArray(m.vao);
+            DrawElements(GL_TRIANGLES, (GLsizei)m.count, GL_UNSIGNED_INT, nullptr);
+            geometryStats_.terrainTriangles += m.count / 3;
+        }
+    BindVertexArray(0);
 }
 
 // ---- A map switch without a frozen frame (render.h: prepareWorld) ----
@@ -6117,6 +6268,7 @@ void Renderer::drawCarModels(GLuint prog) {
 void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effects* effects) {
     static const bool noOcclusion = std::getenv("CZ_NO_OCCLUSION") != nullptr;  // (the reference render of the pixel test)
     streamTerrain(sim.world, view.eye);  // (a big map: the full meshes round the camera)
+    streamWalls(sim.world, view.eye);    // (a real map: its cliff walls round the camera)
     sceneEye_ = view.eye;
     occl_.enable(!noOcclusion);
     occl_.refresh();
@@ -6777,6 +6929,10 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     } else {
         UseProgram(progLit);
         uniformM4(progLit, "uModel", m4identity());  // (the wheels moved it)
+    }
+    if (gq && groundTier(gq) >= 2 && !walls_.empty()) {
+        drawWalls(vp, groundSetup, groundTier(gq));
+        groundSetup(progTerrain, false);
     }
     drawTerrain(vp, view, groundSetup, noProcProg, progTerrain, farProg);
     if (effects) {

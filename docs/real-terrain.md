@@ -278,6 +278,19 @@ its occlusion samples every 4 m, as at 2 m. On a real map the ambient occlusion 
 pixel's plane: the folds between the 1 m facets (a few degrees each) had each drawn a dark line, the "long straight creases"
 across the near ground at Hell's Gate, which were the screen-space occlusion of the mesh's folds, not the shadows or the paint.
 
+**Cliff walls** (`cliffwalls.h`, `render.cpp` streamWalls/drawWalls, `groundshader.cpp` WALL): where the land drops more than
+4 m (cells whose corners differ by 1.5 m or more), each 64 m chunk's faces are drawn again, carved into the rock: the softer beds
+(about half, 2-3 m thick, level across the face and offset across the strata's fault) weathered back up to 1.5 m under the harder
+ones, whose lips then overhang; the face set back under the rim's caprock on a tall wall; arched, flat-floored alcoves 10-24 m
+across, 3.5-9 m high and up to 3.3 m deep here and there up a tall face; a rough skin over the 1 m grid's facets. The mesh is a
+surface-nets isosurface of the horizontal distance into the rock less the carving, on a 0.5 m lattice. The land stays the
+collider: the carving only goes into the rock, only from 1.8 m above a wall's foot to 0.25 m below its rim, never on a shelf a
+truck could stand on, and any vertex the mesh would put outside the land is moved back into it (`moab/cliff-walls` checks every
+vertex along the named trails). Its fragments' depth is written as if they stood at the land's face (a little in front), so the
+terrain drawn after them stays hidden behind the hollows; their light and shadow are looked up at that face. Built on a background
+thread for chunks within 300 m of the camera (dropped past 360 m), the carving eased back to the face from 200 to 285 m; at HIGH
+ground and up. `CZ_NO_CLIFFWALLS=1` leaves them off (for comparing).
+
 ### Shipping a real map
 `build/realterrain make SIDECAR --out DIR --int16 0.1 1000` writes the crop as int16 decimetres (LZW, horizontal predictor) and
 adds the `vertical_scale` and `vertical_offset` lines: a third of the float32 crop's size, and 10 cm steps are well under the

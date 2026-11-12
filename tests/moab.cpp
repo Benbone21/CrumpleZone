@@ -4,7 +4,9 @@
 // obstacles at OpenStreetMap's points; and each course is shown completable start to finish through every gate (the hard ones by a
 // set-up Bronco, taking the bypasses the real trails have; the easy one by a stock 4Runner). That check proves a course can be done;
 // it doesn't judge how it plays (docs/terrain-generator-handoff.md).
+#include <algorithm>
 #include <cmath>
+#include <set>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -13,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "../src/cliffwalls.h"
 #include "../src/level.h"
 #include "../src/places.h"
 #include "../src/platform.h"
@@ -368,6 +371,66 @@ double distToLine(const std::vector<V3>& L, const V3& p) {
     return best;
 }
 }  // namespace
+
+SCENARIO(moabCliffWalls, "moab/cliff-walls", "Moab's cliff walls (cliffwalls.h) along its trails: carved into the rock, never out past the land a tire hits (no vertex outside it), the same every build") {
+    std::lock_guard<std::mutex> one(gOneMoab);
+    auto t = loadMoab();
+    ctx.check("the shipped map loads", t != nullptr);
+    if (!t) return;
+    std::unique_ptr<World> w = buildMoab(t);
+    const double half = w->halfSize();
+    // The terrain chunks (64 m) within 120 m of the named trails, every 40 m along them.
+    std::set<std::pair<int, int>> chunks;
+    for (const rt::PlanTrail& tr : t->plan().trails) {
+        if (tr.name.empty()) continue;
+        for (size_t k = 0; k < tr.pts.size(); k += 40)
+            for (int dx = -120; dx <= 120; dx += 60)
+                for (int dz = -120; dz <= 120; dz += 60) {
+                    const int i = (int)std::floor((tr.pts[k].x + dx + half) / 64), j = (int)std::floor((tr.pts[k].z + dz + half) / 64);
+                    if (i >= 0 && j >= 0 && (i + 1) * 64 < w->gridSize() && (j + 1) * 64 < w->gridSize()) chunks.insert({i, j});
+                }
+    }
+    std::vector<std::pair<int, int>> list(chunks.begin(), chunks.end());
+    // (a spread of them: every 7th)
+    std::vector<std::pair<int, int>> pick;
+    for (size_t k = 0; k < list.size(); k += 7) pick.push_back(list[k]);
+    cliffwalls::Beds beds;
+    size_t verts = 0, withWalls = 0, outside = 0, reachable = 0;
+    double worst = 0, deepest = 0;
+    for (const auto& c : pick) {
+        std::vector<cliffwalls::Vert> v;
+        std::vector<unsigned> idx;
+        cliffwalls::build(*w, beds, c.first * 64, c.second * 64, 64, 64, 7, v, idx);
+        verts += v.size(), withWalls += !idx.empty();
+        for (const cliffwalls::Vert& q : v) {
+            const double x = q.p[0], y = q.p[1], z = q.p[2], out = y - w->height(x, z);
+            deepest = std::max(deepest, (double)q.c[1]);
+            if (out <= 0.005) continue;
+            outside++, worst = std::max(worst, out);
+            // (outside the land: then it's up a steep face, well above the lowest ground round it)
+            double low = 1e9;
+            for (int a = -4; a <= 4; a++)
+                for (int b = -4; b <= 4; b++) low = std::min(low, w->height(x + a, z + b));
+            const double gx = w->height(x + 0.5, z) - w->height(x - 0.5, z), gz = w->height(x, z + 0.5) - w->height(x, z - 0.5);
+            if (y - low < 1.5 || gx * gx + gz * gz < 1.0) reachable++;
+        }
+    }
+    ctx.metric("chunks looked at", (double)pick.size(), "", 50, 1e9);
+    ctx.metric("chunks with walls", (double)withWalls, "", 10, 1e9);
+    ctx.metric("deepest carving", deepest, "m", 1.0, 4.0);
+    ctx.metric("worst outside the land", worst, "m", 0, 0.05);
+    ctx.metric("vertices outside the land where a tire could be", (double)reachable, "", 0, 0);
+    ctx.note(std::to_string(verts) + " vertices, " + std::to_string(outside) + " outside the land");
+    // The same every build.
+    if (!pick.empty()) {
+        const auto c = pick[pick.size() / 2];
+        std::vector<cliffwalls::Vert> a, b;
+        std::vector<unsigned> ia, ib;
+        cliffwalls::build(*w, beds, c.first * 64, c.second * 64, 64, 64, 7, a, ia);
+        cliffwalls::build(*w, beds, c.first * 64, c.second * 64, 64, 64, 7, b, ib);
+        ctx.check("built twice, the same mesh", ia == ib && a.size() == b.size() && (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(a[0])) == 0));
+    }
+}
 
 SCENARIO(moabTrails, "moab/osm-trails", "Moab's famous trails are on OpenStreetMap's lines (credited, ODbL): each trail's laid line within a few metres of its OSM ways where they're on the map; Lion's Back left off (closed, private)") {
     auto t = loadMoab();

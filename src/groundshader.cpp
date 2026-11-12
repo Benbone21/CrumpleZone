@@ -284,6 +284,12 @@ vec4 sideTap(sampler2DArray s, float L, Side f, float scale){
 }
 
 
+#ifdef WALL
+// The cliff walls' build (render.cpp drawWalls, cliffwalls.h): the face carved into the rock behind the land's own. vCol.g: how far
+// in it's carved here (m), vCol.b: the face's outward direction. Its depth is written as if it stood at the land's face, a little
+// in front: the ground drawn after it is hidden behind it, hollows and all.
+uniform mat4 uVP;
+#endif
 // A face's desert varnish at h across it (m) and height y: curtains a few metres wide and tens long, and thin dribbles.
 float varnish(float h, float y){
   float cur = smoothstep(0.52, 0.82, vnoise(vec2(h * 0.28, y * 0.015 + 0.6 * vnoise(vec2(h * 0.05, 1.0)))))
@@ -300,6 +306,11 @@ void main(){
   vec2 p = NP.xz, pr = vPos.xz;  // (patterns follow the world, the terrain's texels the window: kCommonFS uNoiseOff)
   vec3 dPx = dFdx(vPos), dPy = dFdy(vPos);
   float dist = length(vPos - uCam);
+#ifdef WALL
+  float wRec = max(vCol.g, 0.0);
+  vec3 wOut = vec3(cos(vCol.b), 0.0, sin(vCol.b));
+  vec3 wQ = vPos + wOut * wRec;  // (the land's face in front of this point: where its light and shadow are looked up)
+#endif
 
   // ---- Environment noise (shared by every paint; one tap a layer, LOW, takes fewer octaves of it) ----
   int lo = uGroundQ <= 1 ? 1 : 0;
@@ -477,6 +488,9 @@ void main(){
   if (wsum > 0.0) { alb /= wsum; rough /= wsum; ao /= wsum; nrm = normalize(nrm); }
   else { alb = vec3(0.1); rough = 0.9; ao = 1.0; nrm = N0; }
   ao = mix(1.0, ao, distFade * 0.9 + 0.1);
+#ifdef WALL
+  ao *= 1.0 - 0.55 * smoothstep(0.05, 1.6, wRec);  // (deep in a hollow, little of the sky)
+#endif
 
 #ifdef X_R4
   oCol = vec4(alb + nrm + vec3(rough + ao), 1.0); return;
@@ -555,7 +569,11 @@ void main(){
   float ruts = (1.0 - smoothstep(0.15, 0.4, trk)) * step(0.5, vCol.r);
   alb *= 1.0 - 0.30 * ruts * min(gTrail, 1.0);
   rough = mix(rough, rough * 0.8, ruts * min(gTrail, 1.0));
-  if (gSnow > 0.0 && vCol.b > 0.5) {  // (only where it's snow: the noise is the cost)
+#ifdef WALL
+  if (false) {
+#else
+  if (gSnow > 0.0 && vCol.b > 0.5) {
+#endif  // (only where it's snow: the noise is the cost)
     float sruts = (1.0 - smoothstep(0.2, 0.5, abs(abs(vCol.g) - 0.85))) * (0.75 + 0.25 * vnoise(p * 3.0));
     alb *= mix(vec3(1.0), vec3(0.70, 0.74, 0.80), sruts * 0.85 * min(gSnow, 1.0));
   }
@@ -598,7 +616,11 @@ void main(){
 #else
   // (Turned from the light, the sun's term is nothing anyway: no shadow lookups. A lee slope, now the ground casts, is the
   // dear part of a low sun's picture: the edges of its shade want every PCF tap.)
+#ifdef WALL
+  float sh = NL > 0.0 ? shadowAt(wQ, mix(N0, wOut, smoothstep(0.05, 0.4, wRec))) : 1.0;
+#else
   float sh = NL > 0.0 || gProc > 0.001 ? shadowAt(vPos, N0) : 1.0;
+#endif
 #endif
   vec3 V = normalize(uCam - vPos);
   vec3 H = normalize(V + uSun);
@@ -627,5 +649,13 @@ void main(){
   }
   if (gProc > 0.001) col += pow(max(dot(n, H), 0.0), procP) * procK * sh * 2.0 * kSunSpec * clamp(gProc, 0.0, 1.0);
   oCol = finishColor(col, vPos, 1.0);
+#ifdef WALL
+  {
+    vec3 toCam = normalize(uCam - vPos);
+    float c = max(dot(wOut, toCam), 0.6);
+    vec4 cp = uVP * vec4(vPos + toCam * (wRec / c + 0.15 + 0.006 * dist), 1.0);
+    gl_FragDepth = clamp(cp.z / cp.w * 0.5 + 0.5, 0.0, 1.0);
+  }
+#endif
 }
 )";
