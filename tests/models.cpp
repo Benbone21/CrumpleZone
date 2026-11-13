@@ -19,6 +19,7 @@ namespace {
 size_t budgetFor(const std::string& id) {
     static const std::map<std::string, size_t> b = {
         {"tree_pine", 700}, {"tree_broadleaf", 420}, {"tree_snag", 220}, {"tree_dryland", 520}, {"bush", 130}, {"stump", 80},
+        {"tree_gen", 6500}, {"shrub_gen", 1100},  // (the generated plants: their full models, drawn within 30 m and 11 m; tests/procplants.cpp has every far copy's budget)
         {"marker_post", 100}, {"cairn", 250}, {"trail_sign", 400}, {"person", 2500},
         {"repair_shed", 12000}, {"fire_tower", 12000}, {"sign_gantry", 12000}, {"race_gate", 12000},
         {"cabin", 6500}, {"timber_bridge", 12000}, {"garage", 6000}, {"ranger_station", 12000}, {"mine_headframe", 12000}, {"chain_bundle", 2600}, {"crate_engine_v8", 3600}, {"crate_engine_v8_dohc", 3600}, {"crate_engine_v6", 3600}, {"crate_engine_i4", 3600}, {"crate_engine_i3", 3600}, {"crate_engine_flat4", 3600}, {"wreck_pickup", 10000}, {"ore_cart", 5000}, {"mine_portal", 6000}, {"jersey_barrier", 6000}, {"guardrail", 6000},

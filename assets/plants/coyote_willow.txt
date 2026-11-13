@@ -6,7 +6,7 @@ id 9
 form wand
 replaces bush coyote_willow
 size 0.8 1.7
-stems 10 14
+stems 11 14
 stem_spread 12
 orders 2
 count 1
@@ -20,14 +20,16 @@ leaf_order 0
 leaf_from 0.3
 leaf_step 0.1
 cards 2
-card 0.12 0.03
+card 0.1 0.022
 scatter 0.02
 align 0.55
 droop 0.1
 width 0.4
-bark 0.42 0.28 0.16
-bark2 0.56 0.44 0.22
+bark 0.40 0.30 0.18
+bark2 0.50 0.42 0.24
 leaf 0.30 0.40 0.20
 leaf2 0.44 0.52 0.30
 leaf_dry 0.62 0.56 0.28
-stem_base 0.22
+stem_base 0.28
+trunk_radius 0.007
+twig 0.004

@@ -7,7 +7,7 @@ id 9
 form multistem
 replaces dryland 3
 size 2.5 5.5
-stems 5 8
+stems 6 9
 stem_spread 36
 stem_base 0.05
 trunk_len 0.85
@@ -21,12 +21,12 @@ gnarl 0.08 0.12
 segs 5 3
 leaf_order 0
 leaf_from 0.35
-leaf_step 0.1
-cards 2
-card 0.11 0.036
-scatter 0.02
-align 0.8
-droop 0.1
+leaf_step 0.06
+cards 4
+card 0.14 0.045
+scatter 0.03
+align 0.85
+droop 0.15
 trunk_radius 0.02
 flare 1.1
 width 0.45
@@ -36,4 +36,4 @@ leaf 0.276 0.345 0.230
 leaf2 0.414 0.471 0.322
 flower 0.72 0.50 0.55
 flower_share 0.1
-puff 0.055 1.5
+puff 0 1

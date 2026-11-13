@@ -19,14 +19,18 @@ std::vector<ModelDef> make() {
             if (c == ':' || c == ',') c = ' ';
         v.blurb = s.blurb;
         v.params = {seedParam(1), choice("lod", "DETAIL", 0, {"FULL", "NEAR", "FAR", "FARTHEST"})};
+        v.params.push_back(num("scale", "SIZE", 1, 0.25, 1.5, 0.05));  // (the proving ground's yard shows the trees small, so they fit)
         if (s.tree) v.params.push_back(choice("snow", "SNOW", 0, {"CLEAR", "SNOWY"})), v.params.push_back(choice("season", "SEASON", 0, {"SUMMER", "LATE SUMMER", "AUTUMN"}));
         else v.params.push_back(choice("dry", "DRY", 0, {"GREEN", "DRY"}));
         v.build = [sp](B& b, const P& p) {
             plantgen::Options o;
             o.seed = (uint32_t)std::max(1, p.i("seed")), o.lod = p.i("lod"), o.snow = p.i("snow") != 0, o.dry = p.i("dry"), o.season = p.i("season");
             plantgen::generate(*sp, o, b.out());
-            for (MVert& q : b.out().v)
+            const float k = p.has("scale") ? (float)p("scale") : 1.0f;
+            for (MVert& q : b.out().v) {
                 if (q.mat == LEAFCUT) q.mat = FOLIAGE;  // (the kit's renderers don't cut leaf cards: plain foliage here)
+                for (float& c : q.p) c *= k;
+            }
         };
         (s.tree ? trees : shrubs).variants.push_back(std::move(v));
     }

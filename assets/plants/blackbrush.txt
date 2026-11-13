@@ -6,15 +6,15 @@ id 2
 form shrub
 replaces bush blackbrush
 size 0.35 0.8
-stems 6 8
-stem_spread 58
-count 2 2
-angle 42 45
+stems 8 10
+stem_spread 64
+count 2
+angle 45
 gnarl 0.2 0.25 0.25
-dead 0.25
-leaf_order 1
-leaf_from 0.35
-leaf_step 0.24
+dead 0.3
+leaf_order 0
+leaf_from 0.45
+leaf_step 0.25
 cards 1
 card 0.13 0.085
 scatter 0.05
@@ -27,3 +27,5 @@ leaf 0.16 0.18 0.12
 leaf2 0.25 0.26 0.17
 leaf_dry 0.33 0.30 0.22
 puff 0.1 0.7
+orders 2
+length 0.5

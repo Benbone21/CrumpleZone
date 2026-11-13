@@ -647,6 +647,7 @@ void World::buildModelYard() {
         if (id == "race_gate") return {{"width", 10}};
         if (id == "guardrail") return {{"length", 8}};
         if (id == "jersey_barrier") return {{"length", 6}};
+        if (id == "tree_gen") return {{"scale", 0.3}};  // (a species a design: a dozen 10 m trees in a row would run off the pad)
         return {};
     };
     auto see = [](const std::string& id) { return id != "fp_hand" && id != "lug_nut" && id != "waterfall" && id != "timber_bridge" && (id.rfind("wreck_", 0) != 0 || id == "wreck_pickup"); };  // (the falls: drawn by the water pass, on rivers; the bridges span rivers, 10-40 m: the procedural world's)

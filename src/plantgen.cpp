@@ -318,7 +318,7 @@ struct Woody {
         double top = 0.05, wide = 0.01;
         const double margin = sp.v("cards") > 0 ? sp.v("card", 0) * 0.8 + sp.v("scatter") : 0;
         for (const Br& b : br)
-            for (const V3& q : b.p) top = std::max(top, q.y + (b.dead ? 0 : margin)), wide = std::max(wide, std::sqrt(q.x * q.x + q.z * q.z) + margin);
+            for (const V3& q : b.p) top = std::max(top, q.y + (b.snapped ? sp.v("trunk_radius") * 1.1 : b.dead ? 0 : margin)), wide = std::max(wide, std::sqrt(q.x * q.x + q.z * q.z) + margin);
         const double k = 1 / top;
         double kx = k;
         if (sp.v("width") > 0) kx = k * std::min(1.7, std::max(0.6, sp.v("width") / (wide * k)));
@@ -495,7 +495,7 @@ void card(Out& out, const V3& c, const V3& a, const V3& s, double L, double w, c
 // A puff: a small lumpy solid (a five-sided double pyramid, every corner pushed in or out so no two have the same outline),
 // shaded round and from the crown, lighter on top.
 void puff(Out& out, const V3& c, const V3& axis, double r, double tall, const Crown& cr, const V3& col, const V3& top, Rng& r_) {
-    const V3 a = norm(UP + axis * 0.6 + r_.unit() * 0.45), u = perp(a), w = cross(a, u);
+    const V3 a = norm(UP * 0.5 + axis * 0.5 + r_.unit() * 0.9), u = perp(a), w = cross(a, u);
     const double turn = r_.u() * 2 * kPi;
     V3 v[7], n[7], k[7];
     v[0] = a * (r * (0.75 + 0.5 * r_.u())), v[1] = a * (-r * (0.6 + 0.4 * r_.u()));
@@ -509,7 +509,7 @@ void puff(Out& out, const V3& c, const V3& axis, double r, double tall, const Cr
         v[i] = c + d;
         const V3 fromCrown = norm(V3((v[i].x - cr.c.x) / cr.r.x, (v[i].y - cr.c.y) / cr.r.y, (v[i].z - cr.c.z) / cr.r.z));
         n[i] = norm(norm(d) * 0.5 + fromCrown * 0.5 + UP * 0.1);
-        k[i] = vmix(col * 0.8, top, clamp01(0.5 + 0.5 * d.y / std::max(1e-9, r * tall)));
+        k[i] = vmix(col * 0.86, top, clamp01(0.5 + 0.5 * d.y / std::max(1e-9, r * tall)));
     }
     for (int i = 0; i < 5; i++) {
         const int p = 2 + i, q = 2 + (i + 1) % 5;
@@ -544,11 +544,13 @@ void woody(const Species& sp, const Options& o, Out& out, double scale) {
             if (!sp.tree && !bare && b.order >= 1) continue;
         } else if (lod == 2) {
             if (b.order >= 2) continue;
-            if (b.order == 1 && (!bare || (!sp.tree && (i % 2)) || (b.dead && !leafless && (i % 2)))) continue;
+            // (a tree keeps its thick limbs: a trunk that stopped at the fork stood as a spike under a floating crown)
+            const bool thick = sp.tree && orders > 3 && b.r[0] > R0 * 0.3;
+            if (b.order == 1 && !thick && (!bare || (!sp.tree && (i % 2)) || (b.dead && !leafless && (i % 2)))) continue;
             if (!sp.tree && stem && i > 0 && (i % 2) && !leafless && !green) continue;
         } else if (lod == 3) {
             if (b.order >= 2) continue;
-            if (b.order == 1 && !(leafless && sp.tree && !(i % 3))) continue;
+            if (b.order == 1 && !(leafless && sp.tree && !(i % 3)) && !(sp.tree && orders > 3 && b.r[0] > R0 * 0.45)) continue;
             if (stem && i > 0 && (i % 3)) continue;
         }
         const double rr = b.r[0] / std::max(1e-9, R0);
