@@ -54,3 +54,20 @@ along rims and wall feet, off the trails.
 Still wrong overall: the scanned cliff pieces look like stuck-on boulders rather than broken caprock; the 10 m DEM walls stay ribbed;
 the `ledges` stair pass leaves a criss-cross waffle on talus slopes; and the photo layer repeats on big faces. The carved walls only
 show within ~285 m (beyond, the land's face with the shader's bedding).
+
+## Cliffs round 2 (same branch)
+
+Same cameras and settings; `NN-*-cliffs2.jpg`, compared with round 1 (`NN-*-cliffs.jpg`, and `56/57-*-after.jpg`).
+
+| Shot | Verdict |
+|---|---|
+| 50 domes wide | Same form as round 1; the open sand is a little duller (the sand-pool fix is map-wide), still clearly sand against the rock. |
+| 51 Hell's Gate | The sand pool at the slot's floor is no longer a glowing orange: duller and closer to the photo's dusty sand over rock. The walls are as in round 1. |
+| 52-55 | No visible change beyond the sand tone. |
+| 56 Potash wall | Better: the boulder clusters stuck on the face are gone; a few angular caprock blocks sit at the rim; the undercuts are brown shaded recesses that come and go, not black slots; the photo's 4 m repeat is broken up. Off: the caprock is sparse at this camera, the undercuts read a little soft, and the bed partings are still very regular. |
+| 57 Gold Bar Rim wall | Much better: the criss-cross waffle on the talus is gone (it was the two side projections crossing on a 35-55 degree slope, not the ledges pass), and the 10 m data's vertical ribs are cut back to a smoother bedded face. Off: some ribbing remains at the right where the face turns, and the alternating orange and brown bands are bolder than Wingate in photos. |
+
+Also: the walls' depth no longer pulls in front of where a vehicle could be (only to where the line of sight leaves the rock,
+plus 10 cm and 0.3% of the distance). Still wrong: the bed partings are too regular and evenly spaced, there are few alcoves at
+these two cameras, the talus under Gold Bar is plain where real talus is blocky, and beyond ~285 m the walls are the land's face
+with the shader's bedding only.
