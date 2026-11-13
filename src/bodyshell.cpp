@@ -743,6 +743,48 @@ bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge) {
             if (rest.size() == 3) tri(rest[0], rest[1], rest[2]);
             continue;
         }
+        // A tail with a gate in it (liftgate, swing gate, tailgate): the gate's face, the body beside
+        // and under it and the bumper cover are different panels. Fanned from a centre, the lines
+        // between them ran along the fan's spokes: zig-zag seams radiating across the back of the
+        // car (plain to see on the Civic's hatch, under the spare on the others). Laid in level
+        // strips instead, cut at the gate's sides, so every seam is a level or an upright line.
+        const char* gate = box.count("LIFTGATE") ? "LIFTGATE" : box.count("TAILGATE") ? "TAILGATE" : nullptr;
+        bool strips = end < 0 && gate;
+        for (int j = 0; strips && j + 1 < NS; j++)
+            if (pos[vid(i, j + 1, 1)].y < pos[vid(i, j, 1)].y - 1e-6) strips = false;  // (an outline that doubles back: the fan)
+        if (strips) {
+            const double gz = box[gate].second.z;
+            std::vector<int> inP(NS, -1), inN(NS, -1);  // a row's points at the gate's two sides, where the row is wider than it
+            for (int j = 0; j < NS; j++) {
+                const V3 q = pos[vid(i, j, 1)];
+                if (q.z <= gz + 0.02) continue;
+                inP[j] = (int)pos.size(), pos.push_back(V3(q.x, q.y, gz)), seg.push_back(SEG_SIDE);
+                inN[j] = (int)pos.size(), pos.push_back(V3(q.x, q.y, -gz)), seg.push_back(SEG_SIDE);
+            }
+            auto tri = [&](int a, int b, int c) {
+                if (a == b || b == c || a == c) return;
+                const V3 nrm = cross(pos[b] - pos[a], pos[c] - pos[a]);
+                if (len(nrm) < 1e-10) return;
+                raw.push_back(nrm.x * end < 0 ? RawFace{{a, c, b, b}, SEG_SIDE, true, end} : RawFace{{a, b, c, c}, SEG_SIDE, true, end});
+            };
+            auto quad = [&](int a, int b, int c, int d) { tri(a, b, c), tri(a, c, d); };
+            for (int j = 0; j + 1 < NS; j++) {
+                const int l0 = vid(i, j, -1), r0 = vid(i, j, 1), l1 = vid(i, j + 1, -1), r1 = vid(i, j + 1, 1);
+                const bool w0 = inP[j] >= 0, w1 = inP[j + 1] >= 0;
+                if (w0 && w1) {
+                    quad(l0, inN[j], inN[j + 1], l1);
+                    quad(inN[j], inP[j], inP[j + 1], inN[j + 1]);
+                    quad(inP[j], r0, r1, inP[j + 1]);
+                } else if (w0) {
+                    tri(l0, inN[j], l1), quad(inN[j], inP[j], r1, l1), tri(inP[j], r0, r1);
+                } else if (w1) {
+                    tri(l0, inN[j + 1], l1), quad(l0, r0, inP[j + 1], inN[j + 1]), tri(r0, r1, inP[j + 1]);
+                } else {
+                    quad(l0, r0, r1, l1);
+                }
+            }
+            continue;
+        }
         V3 c;
         for (int v : loop) c += pos[v];
         c = c / (double)loop.size();
