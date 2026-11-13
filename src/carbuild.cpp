@@ -2274,6 +2274,91 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             for (int i = 0; i < bodyNodes; i++)
                 if (roomy(i)) nodes[i].m *= before / after;  // (same total)
         }
+        // Height: the lending also moves weight up or down (the stiff, light nodes that borrow
+        // are a low car's roof and pillars, a truck's frame brackets and axle seats): the Jesko's
+        // center of gravity came out 68 mm higher than its parts put it, the Civic's 55 mm, the
+        // Blazer's 40 mm lower. Put the height back where the spec's masses put it, with the
+        // fore-aft and sideways balance held where it is now: body nodes give up weight they can
+        // spare (never below what they need to step stably) and others take it, the least change
+        // that does it. (Where the stiff nodes need more weight up high than that leaves, it goes
+        // as far as it can.)
+        if (!isProp && !getenv("CZ_NO_CG_HEIGHT")) {
+            V3 cgNow;
+            double Mnow = 0;
+            for (size_t i = 0; i < nodes.size(); i++) cgNow += local[i] * nodes[i].m, Mnow += nodes[i].m;
+            cgNow = cgNow / Mnow;
+            std::vector<double> floorM(bodyNodes), m0(bodyNodes);
+            for (int i = 0; i < bodyNodes; i++) floorM[i] = std::min(nodes[i].m, (getenv("CZ_FL") ? atof(getenv("CZ_FL")) : 1.25) * L[i] / target), m0[i] = nodes[i].m;
+            // One attempt at a height: true if it got there with the balance held.
+            auto shiftTo = [&](double y) {
+                const V3 want(cgNow.x, y, cgNow.z);
+                for (int i = 0; i < bodyNodes; i++) nodes[i].m = m0[i];
+                std::vector<char> pinned(bodyNodes, 0);  // down at its floor: it gives no more
+                for (int it = 0; it < 60; it++) {
+                    // Residuals: total mass and the three first moments about where the CG should be.
+                    double r[4] = {Mnow, 0, 0, 0};
+                    for (size_t i = 0; i < nodes.size(); i++) {
+                        const V3 d = local[i] - want;
+                        r[0] -= nodes[i].m, r[1] -= nodes[i].m * d.x, r[2] -= nodes[i].m * d.y, r[3] -= nodes[i].m * d.z;
+                    }
+                    if (std::fabs(r[0]) < 1e-7 * Mnow && std::fabs(r[1]) < 2e-5 * Mnow && std::fabs(r[2]) < 2e-5 * Mnow && std::fabs(r[3]) < 2e-5 * Mnow) return true;
+                    // Each body node's change is its weight times a plane (a + b . d): solve the plane.
+                    double A[4][5] = {};
+                    auto weight = [&](int i) { return pinned[i] ? 0.0 : nodes[i].m; };
+                    for (int i = 0; i < bodyNodes; i++) {
+                        const V3 d = local[i] - want;
+                        const double f[4] = {1, d.x, d.y, d.z}, w = weight(i);
+                        for (int j = 0; j < 4; j++)
+                            for (int k = 0; k < 4; k++) A[j][k] += w * f[j] * f[k];
+                    }
+                    for (int j = 0; j < 4; j++) A[j][4] = r[j];
+                    for (int c = 0; c < 4; c++) {
+                        int pv = c;
+                        for (int j = c + 1; j < 4; j++)
+                            if (std::fabs(A[j][c]) > std::fabs(A[pv][c])) pv = j;
+                        if (std::fabs(A[pv][c]) < 1e-12) return false;
+                        for (int k = 0; k < 5; k++) std::swap(A[c][k], A[pv][k]);
+                        for (int j = 0; j < 4; j++) {
+                            if (j == c) continue;
+                            const double f = A[j][c] / A[c][c];
+                            for (int k = c; k < 5; k++) A[j][k] -= f * A[c][k];
+                        }
+                    }
+                    const double la[4] = {A[0][4] / A[0][0], A[1][4] / A[1][1], A[2][4] / A[2][2], A[3][4] / A[3][3]};
+                    for (int i = 0; i < bodyNodes; i++) {
+                        const V3 d = local[i] - want;
+                        const double dm = weight(i) * (la[0] + la[1] * d.x + la[2] * d.y + la[3] * d.z);
+                        if (nodes[i].m + dm <= floorM[i]) pinned[i] = 1;
+                        nodes[i].m = std::max(floorM[i], nodes[i].m + dm);
+                    }
+                }
+                return false;
+            };
+            // All the way if the body has the weight to spare; otherwise the furthest it can go
+            // (to within 1/64 of the way).
+            if (!shiftTo(cgBefore.y)) {
+                double lo = 0, hi = 1;
+                for (int k = 0; k < 6; k++) {
+                    const double mid = (lo + hi) / 2;
+                    (shiftTo(cgNow.y + (cgBefore.y - cgNow.y) * mid) ? lo : hi) = mid;
+                }
+                if (lo <= 0 || !shiftTo(cgNow.y + (cgBefore.y - cgNow.y) * lo))
+                    for (int i = 0; i < bodyNodes; i++) nodes[i].m = m0[i];
+            }
+            // (Exactly the weight it had: the floors above can leave a few grams over.)
+            double M = 0, Mb = 0;
+            for (size_t i = 0; i < nodes.size(); i++) M += nodes[i].m;
+            for (int i = 0; i < bodyNodes; i++) Mb += nodes[i].m;
+            const double k = 1 + (Mnow - M) / std::max(Mb, 1e-9);
+            for (int i = 0; i < bodyNodes; i++) nodes[i].m *= k;
+        }
+        if (getenv("CZ_CG")) {
+            V3 cg;
+            double M = 0;
+            for (size_t i = 0; i < nodes.size(); i++) cg += local[i] * nodes[i].m, M += nodes[i].m;
+            cg = cg / M;
+            std::printf("CG %s: before (%.4f, %.4f, %.4f) after (%.4f, %.4f, %.4f) M %.1f\n", vs.name, cgBefore.x, cgBefore.y, cgBefore.z, cg.x, cg.y, cg.z, M);
+        }
         if (getenv("CZ_DEBUG"))
             for (size_t i = 0; i < nodes.size(); i++)
                 if (L[i] / nodes[i].m > target) std::printf("%s: node %zu (%.2f, %.2f, %.2f; %.1f kg; %d of %d body) still stiff for its mass (%.2f)\n", vs.name, i, local[i].x, local[i].y, local[i].z, nodes[i].m, (int)(i < (size_t)bodyNodes), bodyNodes, L[i] / nodes[i].m);
