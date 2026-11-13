@@ -9,7 +9,7 @@ prints what matters. They're kept so the next person doesn't have to write them 
     build/trace/main/rltrace ledge 3
 
 Vehicle indices (vehicleCatalog()): 0 Civic, 1 Jesko, 2 Bronco, 3 4Runner, 4 rock buggy,
-5 UTV, 6 Tacoma. Most read their options from argv and environment variables; read the top of
+5 UTV, 6 Tacoma, 7 Blazer, 8 Baja Bug. Most read their options from argv and environment variables; read the top of
 `main()`. Several used temporary `CZ_*` environment switches in the physics code (CZ_LT,
 CZ_UP, CZ_PAN2, CZ_PANMIR, CZ_BORROW, ...) that were removed before commit: those options
 do nothing now. The `.sh` files are the sweeps that drove them (run from anywhere).
@@ -63,6 +63,8 @@ against the current code; kept for the idea).
 | `main/keyhold.cpp` | handling/key-hold-130 traced: sideslip, steer, each wheel's load, slip angle and toe (rear axle steer). |
 | `main/landflow.cpp` | A jump landing (axle-landing "1.5 m at 40 km/h"): which frame members flow, and how far. |
 | `main/launchtrace.cpp` | Trace a full-throttle launch: gear, rpm, engine torque, tcCut, wheel omega*R vs speed. |
+| `main/bead.cpp` | tires/debead replica: peak bead load at each wheel against the load that rolls the tire off (vehicle, psi, steer). |
+| `main/hop.cpp` | Axle hop under power (vehicle, throttle, seconds): the strongest 6-30 Hz line of the rear wheel loads and hub height, per half second. |
 | `main/ledge.cpp` | Nose off a 1.2 m ledge (rock-hits #3): where does the frame take a set, and when. |
 | `main/linkgeo.cpp` | (no notes: see main()) |
 | `main/links.cpp` | (no notes: see main()) |
