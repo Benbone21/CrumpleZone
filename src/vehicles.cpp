@@ -548,7 +548,12 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.tirePsi = 35;
         // Wheels that come off and a spare to swap on (tires.h): the trucks have it so far.
         bronco.wheelLoss = true;
-        bronco.lugShear = 120000;  // six 14 mm studs (above every hit in the suite: see docs/handoff.md)  // six 14 mm studs
+        // The studs, as the sideways force at the tread that tears the wheel off its hub face: every
+        // stud at its tensile strength, levered about the bolt circle's far side (6 x r of lever in
+        // all), over the tire's radius. Six M14x1.5 class 10.9 (125 mm^2 x 1,040 MPa = 130 kN each)
+        // on a 139.7 mm circle: 130 x 0.42 / 0.415 = ~130 kN. (ESTIMATE: preload and the hub pilot
+        // are left out.) A kerb can't do that: the arms and ball joints let go first (tires/shear).
+        bronco.lugShear = 130000;
         bronco.tireType = TIRE_ALL_TERRAIN;
         bronco.tireGrip = 0.98;  // all-terrain tires: brake well, but the tall tread squirms in corners
         bronco.lateralGrip = 0.76;
@@ -696,7 +701,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.swayDisconnect = 2;  // quick-disconnect end links: pull the pins, stopped
         runner.tirePsi = 35;
         runner.wheelLoss = true;
-        runner.lugShear = 100000;      // heavy-duty studs on the 4Runner
+        runner.lugShear = 85000;       // six M12x1.5 (88 mm^2: 92 kN each) on 139.7 mm: 92 x 0.42 / 0.445 on the 35s (99 kN on the factory 31s: the big tires lever harder)
         runner.beadlock = false;
         runner.tireType = TIRE_ALL_TERRAIN;
         runner.tireGrip = 0.95;       // KO2: good on the brakes, soft-blocked in corners
@@ -1163,7 +1168,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         tacoma.tirePsi = 30;
         tacoma.wheelLoss = true;
         tacoma.spareFlat = true;   // full-size, winched up under the bed
-        tacoma.lugShear = 110000;
+        tacoma.lugShear = 100000;  // six M12x1.5 on 139.7 mm: 92 x 0.42 / 0.389
         tacoma.tireType = TIRE_ALL_TERRAIN;
         tacoma.tireGrip = 0.95;
         tacoma.lateralGrip = 0.78;
@@ -1315,7 +1320,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         blazer.tirePsi = 32;
         blazer.wheelLoss = true;
         blazer.spareFlat = false;
-        blazer.lugShear = 105000;      // eight 1/2 in studs
+        blazer.lugShear = 85000;       // six 7/16-20 studs (77 mm^2, grade 8: 79 kN each) on a 5.5 in circle: 79 x 0.42 / 0.385
         blazer.tireType = TIRE_ALL_TERRAIN;
         blazer.tireGrip = 0.90;        // bias-ply-era tread
         blazer.lateralGrip = 0.74;     // ~0.63 g on the skidpad: 1970s light-truck tires

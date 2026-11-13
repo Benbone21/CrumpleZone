@@ -224,30 +224,55 @@ SCENARIO(tireWrongSize, "tires/wrong-size", "A 35 in wheel off the 4Runner bolte
     ctx.metric("drives 30 m: sideways wander", wander, "m", 0, 2.0);
 }
 
-SCENARIO(tireShear, "tires/shear", "A Bronco sliding sideways into a curb at 45 km/h shears a wheel off; at 15 km/h it doesn't") {
-    for (double kmh : {15.0, 45.0}) {
+// What takes a wheel off. The studs hold a sideways shove at the tread of ~130 kN on the Bronco
+// (vehicles.cpp: six M14 studs), far more than a kerb can put into a tire: sliding sideways into
+// a 25 cm kerb the tire rides up it and the studs see ~30 kN, at 15 km/h or at 45. A wheel comes
+// off when the hit is one a wheel can't ride over, a ledge taller than its hub at highway speed,
+// and then whichever gives first lets it go, the studs or the arms and ball joints behind them.
+// (Until 2026-11 this expected the 45 km/h kerb slide to shear the studs, which neither the real
+// hardware nor the 120 kN the spec gave them would do.) The studs' own limit is checked directly:
+// the same slide with studs a kerb can break.
+SCENARIO(tireShear, "tires/shear", "A Bronco sliding sideways: a 25 cm kerb at 15 and 45 km/h leaves every wheel on (the studs at a fraction of what they hold); a 45 cm ledge at 70 km/h takes a wheel off; studs weaker than the kerb's shove shear") {
+    struct Hit {
+        double kmh, tall, studs;  // (studs: N they hold; 0 = the Bronco's own)
+        bool comesOff;
+    };
+    int row = 0;
+    for (const Hit& hit : {Hit{15, 0.25, 0, false}, Hit{45, 0.25, 0, false}, Hit{70, 0.45, 0, true}, Hit{45, 0.25, 15000, true}}) {
         ctx.sim.cars.clear();
         ctx.sim.looseWheels.clear();
         ctx.sim.player = 0;
         World& w = ctx.sim.world;
-        const double z = kmh < 20 ? -50 : 40;
-        w.addBox(V3(-100, w.height(-100, z + 6) + 0.125, z + 6), V3(8, 0.125, 0.3), 0, 0, 0, V3(0.5, 0.5, 0.5));
+        const double z = -50 + 45 * row++;
+        w.addBox(V3(-100, w.height(-100, z + 6) + hit.tall / 2, z + 6), V3(8, hit.tall / 2, 0.3), 0, 0, 0, V3(0.5, 0.5, 0.5));
         w.boxes.back().rock = true;
         w.buildGrid();
-        Car& c = ctx.add(bronco(), -100, z, 0);
+        static const VehicleSpec weak = [] {  // (kept: a car points at its spec)
+            VehicleSpec s = bronco();
+            s.lugShear = 15000;
+            return s;
+        }();
+        Car& c = ctx.add(hit.studs > 0 ? weak : bronco(), -100, z, 0);
         ctx.focus(c);
         ctx.run(1.0);
-        for (Node& n : c.nodes) n.v = V3(0, 0, kmh / 3.6);
+        for (Node& n : c.nodes) n.v = V3(0, 0, hit.kmh / 3.6);
         double peak = 0;
         ctx.run(3.0, [&] {
             for (const Wheel& wh : c.wheels) peak = std::max(peak, (double)wh.studLoad);
         });
         int off = 0;
         for (const Wheel& wh : c.wheels) off += !wh.mounted;
-        const std::string tag = std::to_string((int)kmh) + " km/h";
-        ctx.metric(tag + ": peak load on the studs", peak / 1000, "kN", 0, 1000);
-        if (kmh < 20) ctx.check(tag + ": every wheel stays on", off == 0, std::to_string(off));
-        else ctx.check(tag + ": a wheel comes off", off >= 1 && !ctx.sim.looseWheels.empty(), std::to_string(off));
+        const std::string tag = std::to_string((int)hit.kmh) + " km/h, " + std::to_string((int)std::lround(hit.tall * 100)) + " cm" + (hit.studs > 0 ? ", 15 kN studs" : "");
+        if (hit.studs > 0) {
+            ctx.check(tag + ": the studs shear and the wheel rolls away", off >= 1 && !ctx.sim.looseWheels.empty(), std::to_string(off));
+        } else if (hit.comesOff) {
+            ctx.metric(tag + ": peak load on the studs", peak / 1000, "kN", 0, 1000);
+            ctx.check(tag + ": a wheel comes off", off >= 1, std::to_string(off));
+        } else {
+            // (Under half of what the studs hold: a kerb is nowhere near shearing them.)
+            ctx.metric(tag + ": peak load on the studs", peak / 1000, "kN", 0, c.spec->lugShear / 2000);
+            ctx.check(tag + ": every wheel stays on", off == 0, std::to_string(off));
+        }
     }
 }
 
