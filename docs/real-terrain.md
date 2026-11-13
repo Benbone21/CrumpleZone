@@ -285,6 +285,12 @@ Species are the code-made models: the trees `pine`, `broadleaf`, `snag`, `grey_s
 tree kind 3: `juniper`, `pinyon`, `cottonwood`, `tamarisk`); the shrubs are the plant kinds (`plants.h`), among them the ones only
 palettes grow: `blackbrush`, `mormon_tea`, `rabbitbrush`, `saltbush`, `prickly_pear`, `bunchgrass`, `coyote_willow`.
 
+With the line `plants procedural` (before any zone) a name is first looked up among the plant generator's species
+(`assets/plants/NAME.txt`, `docs/procedural-plants.md`): a tree is then kind 4 with its species' id as its design, grown from
+the species' rules with a real trunk and limbs (its `Pole` as thick as the grown stem); a shrub's kind is 1000 + its species' id
+and its size the species' own. Names the generator doesn't have stay the classic models (`reeds`, `tumbleweed`).
+`colorado_plateau_desert` is procedural.
+
 `colorado_plateau_desert` (Moab): juniper, some pinyon and grey snags over blackbrush on the benches and mesas (from 1330 m, whole by
 1560 m); saltbush, rabbitbrush and sage on the lower ground; cottonwood only along the water and on the valley floor (under 1262 m);
 tamarisk and coyote willow along the Colorado; sand nearly bare; slickrock bare. `build/realterrain make DIR` prints the census.

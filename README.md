@@ -37,6 +37,7 @@ make
 | `--name NAME` | Your name in multiplayer |
 | `--password PASSWORD` | The password of the game you host, and the one you offer when you join (also the PASSWORD field on the Multiplayer page) |
 | `--time HOURS` | Hold the clock at a time of day, e.g. `--time 21.5` (for screenshots) |
+| `--proc-plants` | Draw the classic maps' trees and bushes with the generated plants ([docs/procedural-plants.md](docs/procedural-plants.md)); also `CZ_PROC_PLANTS=1`. A look only: the world and its colliders are the same |
 
 **Hot reload (Linux):** leave the game running while you rebuild (`make`). When the new
 `./crumplezone` lands, the HUD says NEW BUILD READY; press F5 (always on; or F12 → TOOLS → RELOAD) and the game restarts on
