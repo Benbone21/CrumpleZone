@@ -831,8 +831,12 @@ void buildExtras(const Car& car, PartBuilder& pb) {
         pb.box(V3(x + 0.2, y + 0.035, 0), V3(0.004, 0.022, 0.22), V3(0.01, 0.01, 0.01), SM_MATTE);
     }
     if (vs.extras & EXTRA_SKID_PLATE) {
-        const double x = xAt(1.2);
-        pb.box(V3(x, vs.layerY[0] - 0.03, 0), V3(0.45, 0.01, W * 0.3), V3(0.25, 0.25, 0.27), SM_METAL);
+        // Under the nose and the front axle line. Its front edge stays behind the nose (and on a
+        // tube chassis, behind where the nose's underside sweeps up): on the UTV, the buggy and the
+        // Baja Bug, whose front overhangs are short, it stuck out ahead of the bodywork as a flat
+        // shelf, up to 0.2 m.
+        const double half = 0.45, front = std::min(xAt(1.2) + half, L / 2 - 0.04 - (vs.openFrame ? 2.0 * vs.bumperLift : 0.0));
+        pb.box(V3(front - half, vs.layerY[0] - 0.03, 0), V3(half, 0.01, W * 0.3), V3(0.25, 0.25, 0.27), SM_METAL);
     }
     if (vs.extras & EXTRA_BAJA) {
         // The Baja kit, in 1.75 in black tube: a push bar on the nose with two round driving
@@ -2076,6 +2080,35 @@ void buildRunningGear(const Car& car, std::vector<Vtx>& out) {
                 tube(out, a + d * 0.09, b - d * 0.09, 0.028 * sz, 8, kMetal, SM_METAL);
                 tube(out, a + d * 0.3, a + d * 0.42, 0.045 * sz, 8, kMetal, SM_METAL);  // pinion housing
             }
+        }
+    }
+    // A tube chassis on link-located live axles (the rock buggy): each link's chassis end hangs
+    // under the frame on a bracket, which is only beams in the physics. Drawn here as the tabs
+    // they'd be: tubes from the link's rod end up to the frame nodes it's welded to (it stood in
+    // mid-air under the car, the link's end 23 cm below the nearest tube).
+    if (vs.openFrame && car.ladder.empty() && (vs.frontSusp == SOLID_AXLE || vs.rearSusp == SOLID_AXLE)) {
+        const V3 tubeCol(0.03, 0.03, 0.035);
+        for (const SuspLink& l : car.links) {
+            if (l.kind != LINK_TRAILING && l.kind != LINK_PANHARD) continue;
+            const Beam& lb = car.beams[l.beam];
+            const int n = lb.a < car.frameNodes ? lb.a : lb.b;
+            if (n < car.bodyNodes || n >= car.frameNodes) continue;
+            // The nearest four chassis nodes it's welded to.
+            int best[4] = {-1, -1, -1, -1};
+            double bd[4] = {1e9, 1e9, 1e9, 1e9};
+            for (const Beam& b : car.beams) {
+                if (b.a != n && b.b != n) continue;
+                const int o = b.a == n ? b.b : b.a;
+                if (o >= car.bodyNodes || b.broken) continue;
+                double d = len(P(o) - P(n));
+                int oo = o;
+                for (int k = 0; k < 4; k++)
+                    if (d < bd[k]) std::swap(d, bd[k]), std::swap(oo, best[k]);
+            }
+            int drawn = 0;
+            for (int k = 0; k < 4; k++)
+                if (best[k] >= 0 && bd[k] > 0.06) tube(out, P(n), P(best[k]), 0.019, 6, tubeCol, SM_MATTE), drawn++;
+            if (drawn) blob(out, P(n), 0.032, tubeCol, SM_MATTE);
         }
     }
     // (Prop shafts, half shafts and the differentials are models too: carparts.h.)
