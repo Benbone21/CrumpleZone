@@ -2327,10 +2327,34 @@ double Car::shaftStiffness() const { return spec->shaftLimit > 0 ? 3.0 * spec->s
 
 void Car::integrate(double h) {
     double maxV2 = 0;
-    for (Node& n : nodes) {
-        n.v += n.f * (n.invm * h);
-        n.p += n.v * h;
-        maxV2 = std::max(maxV2, dot(n.v, n.v));
+    if (wrapDampers.empty()) {
+        for (Node& n : nodes) {
+            n.v += n.f * (n.invm * h);
+            n.p += n.v * h;
+            maxV2 = std::max(maxV2, dot(n.v, n.v));
+        }
+    } else {
+        for (Node& n : nodes) n.v += n.f * (n.invm * h);
+        // The wind-up dampers, implicitly: each takes out c h / (m + c h) of its two ends' closing
+        // speed along the beam (m their reduced mass). It can only slow them toward each other's
+        // speed, never past it, whatever c and h are.
+        for (const WrapDamper& wd : wrapDampers) {
+            const Beam& b = beams[wd.beam];
+            if (b.broken) continue;
+            Node &na = nodes[b.a], &nb = nodes[b.b];
+            const V3 d = nb.p - na.p;
+            const double L2 = dot(d, d), wsum = na.invm + nb.invm;
+            if (L2 < 1e-8 || wsum <= 0) continue;
+            const double vrel = dot(nb.v - na.v, d) / L2;  // (closing speed along d, per unit d)
+            const double ch = wd.c * h * wsum;
+            const V3 dv = d * (vrel * ch / (1 + ch) / wsum);
+            na.v += dv * na.invm;
+            nb.v -= dv * nb.invm;
+        }
+        for (Node& n : nodes) {
+            n.p += n.v * h;
+            maxV2 = std::max(maxV2, dot(n.v, n.v));
+        }
     }
     bool spinning = false;
     for (const Wheel& wh : wheels) spinning |= std::fabs(wh.omega) > 0.2;

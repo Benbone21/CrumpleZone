@@ -137,6 +137,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     panels.clear();
     quadPanel.clear();
     links.clear();
+    wrapDampers.clear();
     frameBeams.clear();
     ladder.clear();
     ladderStations = 0;
@@ -1561,16 +1562,19 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 // (Leaves clamped along the seat: stiff against wind-up, though they do wrap a
                 // few degrees under a hard launch, and they spring back rather than bend.)
                 const int wrap = link(nullptr, dbot, axleUpperPick[ax], BEAM_ARM, LINK_BUSHING, -1);
-                // (Interleaf friction damps the wrap. At 6x the link's own damping, a loss factor of
-                // ~0.09 at the wrap's 16 Hz, the axle hopped by itself under steady power: at half
-                // throttle and 5 % wheel slip the Tacoma's rear wheel loads swung +-1,500 N, a third
-                // of their weight, growing all the way up first gear. A real pack only tramps with
-                // the wheels spinning. 15x (~0.23) more than halves it: +-650 N there, +-110 N flat
-                // out. 30x holds it under +-120 N everywhere, but the link's end nodes then need
-                // ~17 kg each to step stably, and the weight the build lends them comes off the
-                // nose: the Tacoma's front axle share fell to 52.5 % and the Blazer stopped
-                // settling. tools/trace/main/hop.cpp measures it.)
-                if (wrap >= 0) beams[wrap].yieldStrain = 0.25, beams[wrap].c *= 15;
+                // (Interleaf friction damps the wrap. With only the link's own damper at 6x, a
+                // loss factor of ~0.09 at the wrap's 16 Hz, the axle hopped by itself under
+                // steady power: at half throttle and 5 % wheel slip the Tacoma's rear wheel loads
+                // swung +-1,500 N, a third of their weight, growing all the way up first gear. A
+                // real pack only tramps with the wheels spinning. It takes ~5x that to stop it, and
+                // an explicit damper that strong needs ~17 kg on each of the link's end nodes to
+                // step stably, which the build could only take off the nose (Tacoma 52.5 % front,
+                // the Blazer no longer settling). So the rest is a damper stepped implicitly
+                // (Car::integrate): it needs no mass. tools/trace/main/hop.cpp measures the hop.)
+                if (wrap >= 0) {
+                    beams[wrap].yieldStrain = 0.25, beams[wrap].c *= 6;
+                    wrapDampers.push_back({wrap, beams[wrap].c * 4.0});
+                }
                 as.links.push_back(wrap);
                 as.links.push_back(link(nullptr, seat[0], panhardFrame[ax], BEAM_ARM, LINK_BUSHING, -1));
             } else {
