@@ -117,7 +117,7 @@ std::string setsNear(const Car& c, const Wheel& wh, const std::vector<double>& L
 }
 
 enum HitKind { CURB, ROCK, CORNER, DROP, FIELD };
-const char* const kHitName[] = {"curb 15cm", "rock 30cm", "wall corner", "drop m", "rock field"};
+const char* const kHitName[] = {"curb 15cm", "rock 30cm", "wall corner", "drop m", "rock field"};  // ("rock 30cm": or 0.75 of the tire's radius, see runHit)
 
 // One hit on a fresh car on flat ground, what it left, and what a field repair put back.
 struct Outcome {
@@ -157,7 +157,13 @@ Outcome runHit(const VehicleSpec& spec, HitKind kind, double v) {
     const size_t boxes0 = w.boxes.size();
     const V3 grey(0.5, 0.5, 0.5);
     if (kind == CURB) w.addBox(V3(gx, 0.075, hub.z), V3(0.25, 0.075, 0.35), 0, 0, 0, grey);  // a square-edged 15 cm curb under one wheel
-    if (kind == ROCK) w.addBox(V3(gx, 0.15, hub.z), V3(0.25, 0.15, 0.2), 0, 0, 0, grey);     // a 30 cm step of rock
+    // A 30 cm step of rock, or three quarters of the tire's radius if that is less (22 cm for the
+    // Civic, 27 for the Jesko, 29 for the Blazer): 30 cm is 0.72 of a 33 in tire's radius, a rock
+    // a truck drives at, but it stands over the Civic's hub (28.9 cm), where a square step is a
+    // wall and what it does to the corner turns on a millimetre (WD_SWEEP: at 29-41 km/h the
+    // Civic's toe after the repair came out anywhere from 0.3 to 3 degrees).
+    const double rockH = std::getenv("WD_ROCK") ? std::atof(std::getenv("WD_ROCK")) : std::min(0.30, 0.75 * wh.R);
+    if (kind == ROCK) w.addBox(V3(gx, rockH / 2, hub.z), V3(0.25, rockH / 2, 0.2), 0, 0, 0, grey);
     if (kind == CORNER) w.addBox(V3(gx + 1.5, 1.0, hub.z + 0.65), V3(0.5, 1.0, 1.0), 0, 0, 0, grey);  // a wall overlapping the nose 35 cm in from that side
     if (kind == FIELD) {  // a 25 m strip of loose rocks, 16-44 cm tall
         unsigned sd = 12345;
