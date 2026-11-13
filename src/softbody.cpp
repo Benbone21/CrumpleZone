@@ -1983,11 +1983,15 @@ void Car::wheelStep(double h, const World& w) {
                 // Slip work heats the tread (about a third of it: the rest goes into the ground).
                 heatW += 0.35 * std::fabs(fx * slipX + fy * slipY);
                 // Aired right down, a hard sideways load rolls the bead off the rim (unless a
-                // beadlock clamps it): past ~0.75 g of side load at 8 psi, ~0.95 g at 12.
+                // beadlock clamps it).
                 if (tire && spec->wheelLoss && !wh.popped && !spec->beadlock && tirePsi < 14 && std::fabs(vx) > 3) {
-                    const double side = std::fabs(fy) / std::max(N, 1.0);
+                    // (As a share of the side force this tire can make at all, on dry pavement: a
+                    // fixed 0.75 of the load at 8 psi was more than an all-terrain's cornering grip
+                    // (0.70 at best on the 4Runner's), so it could never roll one off. 85 % of the
+                    // tire's limit at 8 psi, 97 % at 12, never from 13 up.)
+                    const double side = std::fabs(fy) / std::max(N, 1.0) / std::max(0.2, spec->tireMu() * spec->lateralGrip);
                     wh.beadLoad += (float)((side - wh.beadLoad) * std::min(1.0, h / 0.06));
-                    if (wh.beadLoad > 0.35 + tirePsi / 20) wh.shed = 2;
+                    if (wh.beadLoad > 0.61 + 0.03 * tirePsi) wh.shed = 2;
                 } else {
                     wh.beadLoad = 0;
                 }

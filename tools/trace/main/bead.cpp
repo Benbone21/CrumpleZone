@@ -1,5 +1,5 @@
 // tires/debead replica: the 4Runner (or argv[1]) at argv[2] psi flung into the test's turn; prints
-// the peak bead load each wheel saw against the load that rolls it off (0.35 + psi / 20).
+// the peak bead load each wheel saw against the load that rolls it off (0.61 + 0.03 * psi).
 #define private public
 #define protected public
 #include "../../../tests/harness.h"
@@ -26,5 +26,5 @@ int main(int argc, char** argv) {
     });
     int off = 0;
     for (const Wheel& wh : c.wheels) off += wh.debeaded;
-    std::printf("%s %g psi steer %.2f: bead load peaks %.2f %.2f %.2f %.2f (rolls off past %.2f), peak lateral %.2f g, %d off, end %.0f km/h\n", c.spec->name, psi, steer, peak[0], peak[1], peak[2], peak[3], 0.35 + psi / 20, latG, off, len(c.frame().vel) * 3.6);
+    std::printf("%s %g psi steer %.2f: bead load peaks %.2f %.2f %.2f %.2f (rolls off past %.2f), peak lateral %.2f g, %d off, end %.0f km/h\n", c.spec->name, psi, steer, peak[0], peak[1], peak[2], peak[3], 0.61 + 0.03 * psi, latG, off, len(c.frame().vel) * 3.6);
 }
