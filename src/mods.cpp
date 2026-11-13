@@ -29,7 +29,6 @@ using Curve = std::vector<TorquePoint>;
 void engine(VehicleSpec& s, const char* name, const Curve& torque, double redline, double turboLag) {
     s.engineName = name;
     s.torque = torque;
-    for (TorquePoint& tp : s.torque) tp.nm *= 1.15;  // (as the stock engines: see vehicleCatalog)
     s.redline = redline;
     s.turboLag = turboLag;
 }
