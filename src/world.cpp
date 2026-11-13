@@ -653,7 +653,7 @@ void World::buildModelYard() {
     // Things to walk through or round rather than bump into.
     auto ghost = [](const std::string& id) {
         return id == "repair_shed" || id == "fire_tower" || id == "race_gate" || id == "sign_gantry" || id == "mine_portal" || id == "tent" ||
-               id == "person" || id == "campfire" || id == "tree_saver" || id == "ground_anchor" || id.rfind("tree_", 0) == 0 || id == "bush" ||
+               id == "person" || id == "campfire" || id == "tree_saver" || id == "ground_anchor" || id.rfind("tree_", 0) == 0 || id == "bush" || id == "shrub_gen" ||
                id == "lamp_post" || id == "marker_post" || id == "trail_sign" || id == "map_board";
     };
     struct Design {

@@ -3,6 +3,7 @@
 #include "detsort.h"
 
 #include "biome.h"
+#include "plantgen.h"
 #include "plants.h"
 #include "visibility.h"
 
@@ -16,7 +17,7 @@
 namespace forest {
 
 const char* modelId(int kind) {
-    static const char* const ids[kKinds] = {"tree_pine", "tree_broadleaf", "tree_snag", "tree_dryland"};
+    static const char* const ids[kKinds] = {"tree_pine", "tree_broadleaf", "tree_snag", "tree_dryland", "tree_gen"};
     return ids[std::clamp(kind, 0, kKinds - 1)];
 }
 double modelHeight(int kind) { return kind == 2 ? 8.0 : 10.0; }
@@ -27,6 +28,11 @@ double lodReach(int lod) {
 }
 
 int designFor(int kind, uint32_t seed, double x, double z, double height) {
+    if (kind == kGenKind) {  // (a palette names each one's species; none named: the first there is)
+        for (const plantgen::Species& s : plantgen::all())
+            if (s.tree) return s.id;
+        return 0;
+    }
     const mk::ModelDef* d = mk::findModel(modelId(kind));
     if (!d) return 0;
     if (d->variants.size() < 3 || kind >= 3) return mk::variantFor(*d, (uint32_t)seed);  // (the dry-country trees: a palette names each one's design)
@@ -48,8 +54,28 @@ int designFor(int kind, uint32_t seed, double x, double z, double height) {
 }
 
 namespace {
+const char* const kClassic[4] = {"pine", "broadleaf", "snag", "dryland"};
+// The generated species a look is (null: a classic model).
+const plantgen::Species* speciesOf(const Look& lk) { return lk.design >= kGenDesign ? plantgen::treeById(lk.design - kGenDesign) : nullptr; }
+// The look's design for a tree: its species' if it is a generated one, or stands in for the classic one.
+int lookDesign(int kind, int design) {
+    if (kind == kGenKind) return plantgen::treeById(design) ? kGenDesign + design : 0;
+    if (plantgen::everywhere() && kind >= 0 && kind < 4)
+        if (const plantgen::Species* s = plantgen::replacing(std::string(kClassic[kind]) + " " + std::to_string(design)); s && s->tree) return kGenDesign + s->id;
+    return design;
+}
+double classicBreast(int kind, int design);
+
 mk::Mesh buildModel(const Look& lk, int lod = 0) {
     mk::Mesh m;
+    if (const plantgen::Species* s = speciesOf(lk)) {
+        plantgen::Options o;
+        o.seed = (uint32_t)lk.seed, o.lod = lod, o.snow = lk.snow;
+        if (lk.kind != kGenKind) o.breast = classicBreast(lk.kind, lk.classic);  // (the classic tree's collider is kept: the trunk drawn to it)
+        plantgen::generate(*s, o, m);
+        return m;
+    }
+    if (lk.kind == kGenKind) return m;
     if (const mk::ModelDef* d = mk::findModel(modelId(lk.kind))) {
         const int v = std::clamp(lk.design, 0, std::max(0, (int)d->variants.size() - 1));
         mk::P p = mk::pickedParams(*d, v);
@@ -104,9 +130,41 @@ Profile measure(const mk::Mesh& m) {
     }
     return pr;
 }
+double classicBreast(int kind, int design) {
+    static std::mutex lock;
+    static std::map<std::pair<int, int>, double> cache;
+    std::lock_guard<std::mutex> lk(lock);
+    auto it = cache.find({kind, design});
+    if (it == cache.end()) {
+        Look l;
+        l.kind = kind, l.design = design, l.seed = 1;
+        // (the classic model's trunk where a 12 m tree's Pole is measured, 1.2 m up; in the generated model's units, 10 tall, that is
+        // 1 unit up, and as much thicker as the classic model is shorter: a snag is built 8 tall)
+        const double mh = modelHeight(kind);
+        it = cache.emplace(std::make_pair(kind, design), measure(buildModel(l)).at(0.1 * mh) * plantgen::kTreeHeight / mh).first;
+    }
+    return it->second;
+}
 }  // namespace
 
 double trunkRadius(int kind, int design, double height) {
+    if (kind == kGenKind) {
+        static std::mutex glock;
+        static std::map<int, std::vector<double>> gcache;  // per species: its main stem's radius every 0.25 up (model units)
+        const double k = std::max(0.05, height / plantgen::kTreeHeight), y = std::min(6.0, 1.2 / k);
+        std::lock_guard<std::mutex> lk(glock);
+        auto it = gcache.find(design);
+        if (it == gcache.end()) {
+            std::vector<double> r;
+            if (const plantgen::Species* s = plantgen::treeById(design))
+                for (int i = 0; i <= 24; i++) r.push_back(plantgen::trunkRadius(*s, i * 0.25));
+            it = gcache.emplace(design, std::move(r)).first;
+        }
+        if (it->second.empty()) return 0.2;
+        const double f = y / 0.25;
+        const int i = std::min(23, (int)f);
+        return std::clamp((it->second[i] + (it->second[i + 1] - it->second[i]) * (f - i)) * k, 0.06, 0.9);
+    }
     static std::mutex lock;
     static std::map<std::pair<int, int>, Profile> cache;
     const Profile* pr;
@@ -208,7 +266,10 @@ void build(const World& w, bool skipPines, bool skipSnags, Set& out) {
         if (t.kind < 0 || t.kind >= kKinds || (t.kind == 0 && skipPines) || (t.kind == 2 && skipSnags)) continue;
         Look lk;
         lk.kind = t.kind;
-        lk.design = t.design >= 0 ? t.design : designFor(t.kind, (uint32_t)seed, t.base.x, t.base.z, t.height);
+        lk.classic = t.design >= 0 ? t.design : designFor(t.kind, (uint32_t)seed, t.base.x, t.base.z, t.height);
+        lk.design = lookDesign(t.kind, lk.classic);
+        const bool gen = lk.design >= kGenDesign;
+        if (t.kind == kGenKind && !gen) continue;  // (a species this build doesn't know)
         lk.seed = 1 + seed % 6;
         lk.snow = w.surfaceAt(t.base.x, t.base.z) == SURF_SNOW;
         const auto key = std::make_tuple(lk.kind, lk.design, lk.seed, lk.snow ? 1 : 0);
@@ -218,14 +279,14 @@ void build(const World& w, bool skipPines, bool skipSnags, Set& out) {
             Shape s;
             s.look = lk;
             for (int l = 0; l < kLods - 1; l++) s.lod[l] = buildModel(lk, l);
-            s.lod[kLods - 1] = simplify(s.lod[kLods - 2], kFarCell);
+            s.lod[kLods - 1] = gen ? buildModel(lk, kLods - 1) : simplify(s.lod[kLods - 2], kFarCell);
             measureShape(s);
             out.shapes.push_back(std::move(s));
         }
         Inst in;
         in.x = (float)t.base.x, in.y = (float)t.base.y, in.z = (float)t.base.z;
         in.yaw = (float)(latticeHash(seed, 7) * 6.2832);
-        in.scale = (float)(t.height / modelHeight(t.kind));
+        in.scale = (float)(t.height / (gen ? plantgen::kTreeHeight : modelHeight(t.kind)));
         in.tint = (float)(0.85 + 0.15 * t.tint);
         in.warm = (float)((latticeHash(seed, 13) - 0.5) * 1.2);
         in.shape = it->second, in.tree = (int)i;
@@ -237,23 +298,44 @@ void buildBushes(const World& w, Set& out) {
     out = Set();
     const mk::ModelDef* d = mk::findModel("bush");
     if (!d) return;
+    out.lodAt[0] = kBushLodAt[0], out.lodAt[1] = kBushLodAt[1];  // (the generated shrubs' far copies; a classic bush has only its one model)
     std::map<std::tuple<int, int, int>, int> index;
+    std::map<int, const plantgen::Species*> standIn;  // per classic kind: the species drawn for it (plantgen::everywhere())
     int seed = 0;
     for (size_t i = 0; i < w.bushes.size(); i++) {
         const Bush& b = w.bushes[i];
         seed++;  // (as the baked bushes had it: a bush keeps its look)
         if (w.map == MAP_PROCEDURAL) seed = worldSeed(w, b.p.x, b.p.z);
-        const int kind = plantKindOf(b.kind), sd = 1 + seed % 6, dry = seed % 7 == 0 ? 1 : 0;
+        const int sd = 1 + seed % 6, dry = seed % 7 == 0 ? 1 : 0;
+        const plantgen::Species* gs = nullptr;
+        if (b.kind >= plantgen::kShrubKindBase) {
+            gs = plantgen::shrubById(b.kind - plantgen::kShrubKindBase);
+            if (!gs) continue;  // (a species this build doesn't know)
+        } else if (plantgen::everywhere()) {
+            auto si = standIn.find(plantKindOf(b.kind));
+            if (si == standIn.end()) {
+                const plantgen::Species* r = plantgen::replacing(std::string("bush ") + plantKindName(b.kind));
+                si = standIn.emplace(plantKindOf(b.kind), r && !r->tree ? r : nullptr).first;
+            }
+            gs = si->second;
+        }
+        const int kind = gs ? plantgen::kShrubKindBase + gs->id : plantKindOf(b.kind);
         const auto key = std::make_tuple(kind, sd, dry);
         auto it = index.find(key);
         if (it == index.end()) {
             it = index.emplace(key, (int)out.shapes.size()).first;
             Shape s;
             s.look.kind = kind, s.look.design = kind, s.look.seed = sd;
-            const int v = std::min(kind, std::max(0, (int)d->variants.size() - 1));
-            mk::P p = mk::pickedParams(*d, v);
-            p.v["seed"] = sd, p.v["dry"] = dry;
-            mk::build(*d, v, p, s.lod[0]);
+            if (gs) {
+                plantgen::Options o;
+                o.seed = (uint32_t)sd, o.dry = dry;
+                for (int l = 0; l < 3; l++) o.lod = l, plantgen::generate(*gs, o, s.lod[l]);
+            } else {
+                const int v = std::min(kind, std::max(0, (int)d->variants.size() - 1));
+                mk::P p = mk::pickedParams(*d, v);
+                p.v["seed"] = sd, p.v["dry"] = dry;
+                mk::build(*d, v, p, s.lod[0]);
+            }
             measureShape(s);
             out.shapes.push_back(std::move(s));
         }

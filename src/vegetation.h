@@ -11,6 +11,9 @@
 //   slope TREES SHRUBS            the steepest ground (rise over run) each grows on
 //   open SHARE                    where the map has no ground cover from photos: the share of the ground that carries plants
 //   sand_water SHARE              the riparian and wash densities on bare sand (bars and banks; cover says sand)
+//   plants procedural             species named below are the plant generator's (assets/plants/NAME.txt, plantgen.h) where it has
+//                                 one of that name, the classic models otherwise (the default, `plants classic`: classic only).
+//                                 Before any zone.
 //   crown CELLS                   trees only where this many of the 5 cover samples round the spot are brush (a crown-sized patch)
 //   zone NAME TREES SHRUBS        rock | sand | lowland | upland | riparian | wash, a hectare of ground that carries plants
 //     tree SPECIES WEIGHT HMIN HMAX [crown R] [above E] [below E]   (the zone above's; heights in m; R: its crown's radius
@@ -36,7 +39,8 @@ struct TreeSpec {
 };
 struct ShrubSpec {
     std::string species;
-    int kind = 0;                // PlantKind
+    int kind = 0;                // PlantKind, or plantgen::kShrubKindBase + a generated species' id
+    double rMin = 0.4, rMax = 1.0;  // its half-width (m)
     double weight = 1, size = 1;
     double above = -1e9, below = 1e9;
 };
@@ -57,6 +61,7 @@ struct Palette {
     double open = 0.12;
     double sandWater = 0.25;
     int crown = 4;
+    bool procedural = false;   // `plants procedural`: species are the plant generator's (plantgen.h) where it has one of that name
     ZoneRule zone[Z_COUNT];
     double maxTrees() const;   // the densest zone's (a hectare)
     double maxShrubs() const;

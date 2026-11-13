@@ -11,10 +11,16 @@
 
 namespace forest {
 
-constexpr int kKinds = 4;       // World::Tree::kind: 0 pine, 1 broadleaf, 2 dead snag, 3 dry-country (its design says which: below)
+constexpr int kKinds = 5;       // World::Tree::kind: 0 pine, 1 broadleaf, 2 dead snag, 3 dry-country (its design says which: below), 4 generated
+// A generated tree (plantgen.h): World::Tree::design is its species' id. A vegetation palette with `plants procedural` grows them.
+constexpr int kGenKind = 4;
+// A Look whose design is this or more is a generated species (design - kGenDesign its id): every kind-4 tree, and with
+// plantgen::everywhere() the classic trees whose design a species `replaces` (the look keeps the tree's own kind, so the far forest
+// still finds the pines' pictures).
+constexpr int kGenDesign = 100;
 // The dry-country model's designs (kind 3: a vegetation palette names them, vegetation.h).
 enum DrylandDesign { DRY_JUNIPER, DRY_PINYON, DRY_COTTONWOOD, DRY_TAMARISK };
-const char* modelId(int kind);  // tree_pine, tree_broadleaf, tree_snag, tree_dryland
+const char* modelId(int kind);  // tree_pine, tree_broadleaf, tree_snag, tree_dryland, tree_gen
 double modelHeight(int kind);   // what a model is built to (10 m; a snag 8): a tree's scale is its height over this
 
 // The design (the model's variant) a tree of `kind` gets: the one picked in the model lab, with some of
@@ -32,6 +38,7 @@ double lodReach(int lod);  // a tree nearer than this draws at `lod` (else a coa
 struct Look {
     int kind = 0, design = 0, seed = 1;
     bool snow = false;
+    int classic = 0;  // (a generated look standing in for a classic tree: that tree's design)
 };
 struct Shape {
     Look look;
@@ -57,7 +64,10 @@ struct Set {
 void build(const World& w, bool skipPines, bool skipSnags, Set& out);
 // The bushes and small plants (World::bushes, the "bush" model) as instances: a model for each kind, seed
 // and dry or not (they're a few dozen triangles: no far copies). Each is drawn out to a reach by its size.
+// A generated shrub (a kind from plantgen::kShrubKindBase up, or with plantgen::everywhere() a kind a species `replaces`) has more
+// to it, and two plainer copies for further off (kBushLodAt).
 void buildBushes(const World& w, Set& out);
+constexpr float kBushLodAt[2] = {11, 30};  // a generated shrub nearer than these (m, at detail 1): its full model, its near copy; further its far one
 // A plainer copy of a mesh: its corners within `cell` of each other (by material) drawn together into one,
 // the triangles left with no size dropped.
 mk::Mesh simplify(const mk::Mesh& m, double cell);

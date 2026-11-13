@@ -1157,7 +1157,7 @@ void World::buildReal() {
                         Bush bu;
                         bu.p = V3(x, height(x, z), z);
                         bu.kind = ss->kind;
-                        bu.r = plantRadius(ss->kind, cellRoll(ci, cj, 2002 + 3 * q, seed)) * ss->size;
+                        bu.r = (ss->rMin + (ss->rMax - ss->rMin) * cellRoll(ci, cj, 2002 + 3 * q, seed)) * ss->size;
                         bu.tint = (float)(0.8 + 0.4 * cellRoll(ci, cj, 2900 + q, seed));
                         bushes.push_back(bu);
                     }

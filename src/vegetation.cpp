@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "forest.h"
+#include "plantgen.h"
 #include "plants.h"
 
 namespace veg {
@@ -34,12 +35,7 @@ std::string lower(std::string s) {
     return s;
 }
 // A plant kind's name as a palette writes it: lower case, underscores.
-std::string shrubName(int kind) {
-    std::string s = lower(plantInfo(kind).name);
-    for (char& c : s)
-        if (c == ' ') c = '_';
-    return s;
-}
+std::string shrubName(int kind) { return plantKindName(kind); }
 bool fail(std::string* err, const std::string& why) {
     if (err) *err = why;
     return false;
@@ -164,6 +160,10 @@ bool parse(const std::string& text, Palette& out, std::string* err) {
         } else if (key == "crown") {
             if (!need(1)) return false;
             out.crown = std::min(5, std::max(0, (int)num(0)));
+        } else if (key == "plants") {
+            if (!need(1)) return false;
+            if (lower(a[0]) != "procedural" && lower(a[0]) != "classic") return fail(err, at + "plants is procedural or classic");
+            out.procedural = lower(a[0]) == "procedural";
         } else if (key == "zone") {
             if (!need(3)) return false;
             zone = -1;
@@ -179,8 +179,16 @@ bool parse(const std::string& text, Palette& out, std::string* err) {
             const TreeModel* m = nullptr;
             for (const TreeModel& k : kTrees)
                 if (t.species == k.name) m = &k;
-            if (!m) return fail(err, at + "no tree called " + a[0]);
-            t.kind = m->kind, t.design = m->design, t.crown = m->crown;
+            // (`plants procedural`: a generated species of that name first, plantgen.h; a classic model's name still works)
+            const plantgen::Species* gs = out.procedural ? plantgen::find(t.species) : nullptr;
+            if (gs && !gs->tree) gs = nullptr;
+            if (gs) {
+                t.kind = forest::kGenKind, t.design = gs->id;
+                t.crown = gs->v("width") > 0 ? gs->v("width") : m ? m->crown : 0.3;
+            } else {
+                if (!m) return fail(err, at + "no tree called " + a[0]);
+                t.kind = m->kind, t.design = m->design, t.crown = m->crown;
+            }
             if (!options(a, 4, t, &t.crown, nullptr, err, at)) return false;
             t.weight = std::max(0.0, num(1)), t.hMin = std::max(0.5, num(2)), t.hMax = std::max(t.hMin, num(3));
             out.zone[zone].trees.push_back(t);
@@ -191,7 +199,11 @@ bool parse(const std::string& text, Palette& out, std::string* err) {
             s.species = lower(a[0]), s.kind = -1;
             for (int k = 0; k < BUSH_KIND_COUNT; k++)
                 if (s.species == shrubName(k)) s.kind = k;
-            if (s.kind < 0) return fail(err, at + "no shrub called " + a[0]);
+            const plantgen::Species* gs = out.procedural ? plantgen::find(s.species) : nullptr;
+            if (gs && gs->tree) gs = nullptr;
+            if (gs) s.kind = plantgen::kShrubKindBase + gs->id, s.rMin = gs->v("size", 0), s.rMax = std::max(s.rMin, gs->v("size", 1));
+            else if (s.kind < 0) return fail(err, at + "no shrub called " + a[0]);
+            else s.rMin = plantInfo(s.kind).rMin, s.rMax = plantInfo(s.kind).rMax;
             s.weight = std::max(0.0, num(1));
             if (!options(a, 2, s, nullptr, &s.size, err, at)) return false;
             out.zone[zone].shrubs.push_back(s);

@@ -95,6 +95,7 @@
 #include "net.h"
 #include "pilotsense.h"
 #include "people.h"
+#include "plantgen.h"
 #include "platform.h"
 #include "props.h"
 #include "carframe.h"
@@ -417,6 +418,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--grass") o.grass = std::atoi(next().c_str());
         else if (a == "--adaptive") o.adaptive = std::atoi(next().c_str());
         else if (a == "--photo") o.photo = true;
+        else if (a == "--proc-plants") plantgen::setEverywhere(true);  // (classic maps drawn with the generated plants: plantgen.h)
         else if (a == "--debug-screen") o.debugScreen = 1;
         else if (a == "--bench") {  // N[,WARM]
             const std::string v = next();

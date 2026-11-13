@@ -1,7 +1,10 @@
 #include "plants.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <string>
+#include <vector>
 
 namespace {
 const PlantInfo kInfo[BUSH_KIND_COUNT] = {
@@ -40,6 +43,19 @@ const int kMix[HAB_COUNT][2][BUSH_KIND_COUNT] = {
 }  // namespace
 
 const PlantInfo& plantInfo(int kind) { return kInfo[plantKindOf(kind)]; }
+
+const char* plantKindName(int kind) {
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> v;
+        for (const PlantInfo& p : kInfo) {
+            std::string s = p.name;
+            for (char& c : s) c = c == ' ' ? '_' : (char)std::tolower((unsigned char)c);
+            v.push_back(s);
+        }
+        return v;
+    }();
+    return names[plantKindOf(kind)].c_str();
+}
 
 int plantKindFor(int habitat, bool edge, double u) {
     const int* w = kMix[std::min(std::max(habitat, 0), (int)HAB_COUNT - 1)][edge ? 1 : 0];

@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "../src/forest.h"
+#include "../src/plantgen.h"
 #include "../src/plants.h"
 #include "../src/loadprof.h"
 #include "../src/props.h"
@@ -145,7 +146,11 @@ void preview(const World& w, const rt::Terrain& t, const std::string& path) {
     };
     // (the dry-country trees by species: juniper and pinyon dark, cottonwood bright and bigger, tamarisk dusty pink)
     for (const Tree& tr : w.trees) {
-        if (tr.kind != 3) dot2(tr.base.x, tr.base.z, 0, 30, 70, 30);
+        const plantgen::Species* gs = tr.kind == forest::kGenKind ? plantgen::treeById(tr.design) : nullptr;
+        if (gs && gs->key == "cottonwood") dot2(tr.base.x, tr.base.z, 1, 60, 200, 40);
+        else if (gs && gs->key == "tamarisk") dot2(tr.base.x, tr.base.z, 0, 200, 90, 150);
+        else if (gs) dot2(tr.base.x, tr.base.z, 0, 20, 60, 20);
+        else if (tr.kind != 3) dot2(tr.base.x, tr.base.z, 0, 30, 70, 30);
         else if (tr.design == forest::DRY_COTTONWOOD) dot2(tr.base.x, tr.base.z, 1, 60, 200, 40);
         else if (tr.design == forest::DRY_TAMARISK) dot2(tr.base.x, tr.base.z, 0, 200, 90, 150);
         else dot2(tr.base.x, tr.base.z, 0, 20, 60, 20);

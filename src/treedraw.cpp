@@ -26,12 +26,15 @@ const char* const kTreeVS = "#version 330 core\n" TREE_PLACE R"(
 invariant gl_Position;  // (the depth pre-pass and the shading pass must land on the same depths)
 uniform mat4 uVP; uniform mat4 uLightVP;
 out vec3 vPos; out vec3 vNrm; centroid out vec4 vCol; out vec4 vLight; out vec3 vLocal; out float vFade;  // (centroid: see kLitVS)
+out float vCut;  // (a leaf card, material 16: foliage whose pixels are cut to a leafy outline)
 void main(){
   vec3 wp = placed();
   vec3 col = aCol.rgb * iLook.y;
+  int m = int(aCol.a + 0.5);
+  vCut = m == 16 ? 1.0 : 0.0;
   // (each tree's leaves a little yellower or bluer than the next)
-  if (int(aCol.a + 0.5) == 13) col *= iLook.z > 0.0 ? mix(vec3(1.0), vec3(1.14, 1.05, 0.72), iLook.z) : mix(vec3(1.0), vec3(0.9, 0.98, 1.1), -iLook.z);
-  vPos = wp; vNrm = turn(aNrm * vec3(1.0, 1.0 / iMore.x, 1.0)); vCol = vec4(col, aCol.a); vLocal = aPos; vFade = iLook.w;
+  if (m == 13 || m == 16) col *= iLook.z > 0.0 ? mix(vec3(1.0), vec3(1.14, 1.05, 0.72), iLook.z) : mix(vec3(1.0), vec3(0.9, 0.98, 1.1), -iLook.z);
+  vPos = wp; vNrm = turn(aNrm * vec3(1.0, 1.0 / iMore.x, 1.0)); vCol = vec4(col, m == 16 ? 13.0 : aCol.a); vLocal = aPos; vFade = iLook.w;
   vLight = uLightVP * vec4(wp, 1.0);
   gl_Position = uVP * vec4(wp, 1.0);
 })";
@@ -40,8 +43,16 @@ void main(){
 // foliage, wood, snow on the boughs. (It does what the lit one does for those, so they look the same.)
 const char* const kTreeFSBody = R"(
 in float vFade;
+in float vCut;
+// A leaf card's outline: the card kept where a noise fixed in the world (leaf-sized: a hand across) is high, so a card reads as
+// a spray of leaves with sky between them, not a flat tile. The pre-pass and the shading pass cut the same pixels.
+bool leafCut(vec3 p){
+  float a = vnoise(p.xy * 5.3 + p.z * 3.1), b = vnoise(p.zy * 6.1 - p.x * 2.7 + 9.3);
+  return a * 0.55 + b * 0.45 < 0.46;
+}
 void main(){
   if (vFade < ditherAt(gl_FragCoord.xy)) discard;  // (fading out at its reach)
+  if (vCut > 0.5 && leafCut(vPos)) discard;
   vec3 n = normalize(vNrm);
   vec3 base = vCol.rgb;
   int mat = int(vCol.a + 0.5);
@@ -73,6 +84,7 @@ void main(){
   }
   vec3 lin = pow(max(base, 0.0), vec3(2.2));
   float sh = shadowAt(vPos, n);
+  if (vCut > 0.5) sh = mix(sh, 1.0, 0.3);  // (a spray of leaves lets light through: its own shade is softer than a solid's)
   vec3 amb = ambientAt(n);
   vec3 V = normalize(uCam - vPos);
   vec3 lspec, lamp = lampLight(vPos, n, V, max(specP, 12.0), mat == 13 ? 0.4 : 0.0, lspec);
@@ -94,8 +106,16 @@ const char* const kTreePreFSBody = R"(
 in vec3 vPos; centroid in vec4 vCol; in float vFade;
 uniform int uTreeFadeN;
 uniform vec4 uTreeFade[24];
+in float vCut;
+// A leaf card's outline: the card kept where a noise fixed in the world (leaf-sized: a hand across) is high, so a card reads as
+// a spray of leaves with sky between them, not a flat tile. The pre-pass and the shading pass cut the same pixels.
+bool leafCut(vec3 p){
+  float a = vnoise(p.xy * 5.3 + p.z * 3.1), b = vnoise(p.zy * 6.1 - p.x * 2.7 + 9.3);
+  return a * 0.55 + b * 0.45 < 0.46;
+}
 void main(){
   if (vFade < ditherAt(gl_FragCoord.xy)) discard;
+  if (vCut > 0.5 && leafCut(vPos)) discard;
   int mat = int(vCol.a + 0.5);
   if (uTreeFadeN > 0 && (mat == 13 || mat == 15)) {
     float fade = 0.0;
@@ -120,17 +140,26 @@ layout(location=0) in vec3 aPos;
 layout(location=1) in vec3 aNrm;
 layout(location=2) in vec4 aCol;
 uniform vec3 uRight, uE; uniform vec2 uRH;
-out vec3 vN; out vec4 vC;
+out vec3 vN; out vec4 vC; out vec3 vL;
 void main(){
-  vN = aNrm; vC = aCol;
+  vN = aNrm; vC = aCol; vL = aPos;
   gl_Position = vec4(dot(aPos, uRight) / uRH.x, aPos.y / uRH.y * 2.0 - 1.0, -dot(aPos, uE) / (uRH.x * 1.5), 1.0);
 })";
 const char* const kImpostorCaptureFS = R"(#version 330 core
-in vec3 vN; in vec4 vC;
+in vec3 vN; in vec4 vC; in vec3 vL;
 layout(location=0) out vec4 oA;
 layout(location=1) out vec4 oB;
+float chash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float cnoise(vec2 p){
+  vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+  return mix(mix(chash(i), chash(i+vec2(1,0)), f.x), mix(chash(i+vec2(0,1)), chash(i+vec2(1,1)), f.x), f.y);
+}
 void main(){
   int m = int(vC.a + 0.5);
+  if (m == 16) {  // (a leaf card, cut as the tree shader cuts it, in the model's own space: the picture has the same ragged crown)
+    if (cnoise(vL.xy * 2.6 + vL.z * 1.5) * 0.55 + cnoise(vL.zy * 3.0 - vL.x * 1.3 + 9.3) * 0.45 < 0.46) discard;
+    m = 13;
+  }
   oA = vec4(vC.rgb, 1.0);
   oB = vec4(normalize(vN) * 0.5 + 0.5, m == 13 ? 1.0 : m == 15 ? 0.5 : 0.0);
 })";

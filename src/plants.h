@@ -36,6 +36,8 @@ struct PlantInfo {
     double cy, ry, rx;            // the pick ellipsoid, as multiples of the radius: its middle height, half-height, half-width
 };
 const PlantInfo& plantInfo(int kind);  // (out of range: the leafy shrub)
+// A kind's name as a palette or a species file writes it: lower case, underscores (sagebrush, mormon_tea).
+const char* plantKindName(int kind);
 inline int plantKindOf(int kind) { return kind >= 0 && kind < BUSH_KIND_COUNT ? kind : BUSH_LEAFY; }
 
 // What kind of country a plant grows in (the same names as the wilds: world.h WildsKind, in that order).
