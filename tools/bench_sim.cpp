@@ -21,11 +21,17 @@ int main(int argc, char** argv) {
     if (getenv("CZ_SIMD0")) simdSetLevel(0);
     sim.setupEmpty();
     const auto& cat = vehicleCatalog();
+    // Which vehicles: the first four of the catalog (Civic, Jesko, Bronco, 4Runner), as the
+    // published fingerprints and timings were taken. CZ_BENCH_VEHICLES=all cycles through every
+    // catalog vehicle instead (the buggy, UTV, Tacoma, Blazer and Baja Bug too), so a change to
+    // any of them shows in the state fingerprint: `CZ_BENCH_VEHICLES=all bench_sim 18 separated 4000`.
+    const char* which = getenv("CZ_BENCH_VEHICLES");
+    const int nveh = which && !std::strcmp(which, "all") ? (int)cat.size() : 4;
     for (int i = 0; i < (traffic ? 1 : count); i++) {
         // On the proving ground's flat pad. Pileups use overlapping opposing rows.
         const double x = pileup ? -35 + (i % 2) * 3.5 : -100 + (i % 8) * 12;
         const double z = pileup ? -40 + (i / 2) * 1.5 : -60 + (i / 8) * 12;
-        sim.addCar(cat[i % 4], V3(x, sim.world.clearY(x, z) + 0.05, z),
+        sim.addCar(cat[i % nveh], V3(x, sim.world.clearY(x, z) + 0.05, z),
                    pileup && i % 2 ? M_PI : 0, V3(0.4, 0.5, 0.6));
         Car& c = sim.cars.back();
         c.throttle = 0.6;
