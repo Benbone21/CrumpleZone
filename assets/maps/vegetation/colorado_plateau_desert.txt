@@ -4,6 +4,7 @@
 # valley floors. Bare slickrock carries nothing. Fremont cottonwood, tamarisk and coyote willow keep to the water.
 # Densities are a hectare of ground that carries plants: where the map has a ground cover from aerial photos, its brush class.
 name COLORADO PLATEAU DESERT
+plants procedural       # the plant generator's species (assets/plants) where it has one of the name
 upland 1330 1560        # benches and mesa tops: juniper comes in over this band (the valley floors below have none)
 riparian 70 6           # the river's banks and bars
 wash 22 3               # dry washes
@@ -43,7 +44,7 @@ zone lowland 5 180
 zone upland 40 180
   tree juniper 72 2.2 4.8
   tree pinyon 20 2.6 5.5
-  tree grey_snag 8 2.0 3.8
+  tree snag 8 2.0 3.8
   shrub blackbrush 42
   shrub bunchgrass 14
   shrub mormon_tea 13
