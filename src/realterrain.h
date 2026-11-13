@@ -17,6 +17,7 @@
 // Everything that decides the land is plain arithmetic (+ - * / sqrt floor, and the series below for the one cosine a lat/lon
 // crop needs): no platform libm in it, so the same file builds the same land (World::landHash) on every platform.
 #pragma once
+#include "vegetation.h"
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -267,6 +268,11 @@ struct Spec {
     // `cover FILE`: what the ground is (from aerial imagery: tools/naip_cover.py), a GeoTIFF in degrees, a class a pixel:
     // 0 unknown, 1 bare rock, 2 sand, 3 brush. Where given, it decides sand from rock on the slickrock and where bushes grow.
     std::string cover, coverPath;
+    // `vegetation NAME`: the palette that says what grows where (vegetation.h; its file's text is part of the hash). None: the
+    // climate's own trees and bushes.
+    std::string vegetation, vegText;
+    bool hasVeg = false;
+    veg::Palette veg;
     // `ledge_sharpen STRENGTH`: on the lidar patches, steps steeper than round them are made steeper (0..1; 0 off).
     double ledgeSharpen = 0;
     // `osm FILE`: OpenStreetMap ways and points the trails, obstacles and landmarks name by id (its text is part of the hash).

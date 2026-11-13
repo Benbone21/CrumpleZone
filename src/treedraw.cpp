@@ -334,7 +334,7 @@ void TreeDraw::uploadImpostors() {
     const auto& cells = picker_.cells();
     std::vector<float> d;
     d.reserve(set_.inst.size() * kInstFloats);
-    double count[3][ImpostorAtlas::kMaxLayers] = {};
+    double count[forest::kKinds][ImpostorAtlas::kMaxLayers] = {};
     for (const auto& c : cells) {
         impCellFirst_.push_back((int)(d.size() / kInstFloats));
         int n = 0;
@@ -347,7 +347,7 @@ void TreeDraw::uploadImpostors() {
             d.insert(d.end(), {in.x, in.y, in.z, in.yaw, L.R * in.scale, L.H * in.scale * in.stretch, in.tint, in.warm, (float)layer,
                                (float)((hsh >> 8) * (1.0 / 16777216.0)), 0.0f, 0.0f});
             n++;
-            if (L.kind >= 0 && L.kind < 3) count[L.kind][layer] += 1;
+            if (L.kind >= 0 && L.kind < forest::kKinds) count[L.kind][layer] += 1;
         }
         impCellCount_.push_back(n);
     }

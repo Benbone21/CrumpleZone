@@ -146,7 +146,7 @@ struct Tree {
     V3 base;
     double height, radius;
     float tint;
-    int kind = 0;  // 0 pine, 1 broadleaf, 2 dead snag
+    int kind = 0;  // 0 pine, 1 broadleaf, 2 dead snag, 3 dry-country (forest.h DrylandDesign: juniper, pinyon, cottonwood, tamarisk)
     int design = -1;  // its model's variant (forest.h designFor; -1: worked out when drawn)
 };
 

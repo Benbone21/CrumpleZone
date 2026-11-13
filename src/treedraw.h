@@ -85,7 +85,7 @@ public:
     // The pictures' layers by kind (0 pine, 1 broadleaf, 2 snag): which layers the window's trees of that kind use and how
     // often (shares sum to 1), and each layer's half-width and height in model units (the far forest's trees).
     struct KindLayers { std::vector<std::pair<int, float>> layers; };
-    const KindLayers& kindLayers(int kind) const { return kindLayers_[kind < 0 || kind > 2 ? 0 : kind]; }
+    const KindLayers& kindLayers(int kind) const { return kindLayers_[kind < 0 || kind >= forest::kKinds ? 0 : kind]; }
 
 private:
     forest::Set set_;  // (the meshes dropped once they're in the buffer)
@@ -96,7 +96,7 @@ private:
     std::vector<int> impCellFirst_, impCellCount_;  // per picker cell: its trees in the picture buffer
     std::vector<int> impCells_;
     std::vector<std::pair<int, int>> impRuns_;
-    KindLayers kindLayers_[3];
+    KindLayers kindLayers_[forest::kKinds];
     void captureImpostors();
     void uploadImpostors();
     forest::Picker picker_;

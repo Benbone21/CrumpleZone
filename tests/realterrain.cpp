@@ -3,6 +3,8 @@
 // here become maps: a cone mountain (its height, rock on the steep, snow over the line, a summit on top), a valley (a river down
 // its floor, outposts on flat ground, roads and trails within their grade), a hollow and a shore (a lake, the sea), and the same
 // file always builds the same land (and another file other land). A guest needs the host's file (the welcome carries its hash).
+#include <sstream>
+#include <set>
 #include <unistd.h>
 
 #include <atomic>
@@ -20,6 +22,10 @@
 #include "../src/props.h"
 #include "../src/realterrain.h"
 #include "../src/worldcache.h"
+#include "../src/forest.h"
+#include "../src/plants.h"
+#include "../src/vegetation.h"
+#include "../src/platform.h"
 #include "harness.h"
 
 namespace rt = realterrain;
@@ -326,6 +332,98 @@ SCENARIO(realValley, "realterrain/valley", "A valley: a river down its floor alo
     ctx.check("roads join the outposts", roads >= 1 && !plan.trails.empty(), std::to_string(roads) + " roads, " + std::to_string(plan.trails.size()) + " in all");
     ctx.check("...every road and trail within its grade (12%, trails 30%), on its tread", steep == 0 && samples > 100,
               std::to_string(steep) + " of " + std::to_string(samples) + " over, worst +" + std::to_string(worst));
+}
+
+SCENARIO(realVegetation, "realterrain/vegetation", "A vegetation palette (vegetation.h): its file parsed, each spot sorted into its zone, and a map naming one grows only its species where it says (trees by the water, none on rock); a map naming none grows as before") {
+    // The shipped palette: no pines, juniper on the uplands, cottonwood only by water.
+    {
+        std::ifstream f(findAssetDir("assets/maps") + "/vegetation/colorado_plateau_desert.txt");
+        std::stringstream ss;
+        ss << f.rdbuf();
+        veg::Palette p;
+        std::string err;
+        ctx.check("the Colorado Plateau palette parses", veg::parse(ss.str(), p, &err) && !p.name.empty(), err);
+        bool pines = false, cottonDry = false, juniperUp = false, cottonWet = false, rockBare = p.zone[veg::Z_ROCK].trees.empty();
+        for (int z = 0; z < veg::Z_COUNT; z++)
+            for (const veg::TreeSpec& t : p.zone[z].trees) {
+                pines |= t.kind == 0 || t.kind == 1;
+                cottonDry |= t.species == "cottonwood" && (z == veg::Z_UPLAND || z == veg::Z_SAND || z == veg::Z_ROCK);
+                juniperUp |= t.species == "juniper" && z == veg::Z_UPLAND;
+                cottonWet |= t.species == "cottonwood" && z == veg::Z_RIPARIAN;
+                ctx.check(std::string(veg::zoneName(z)) + " " + t.species + ": a desert tree's height", t.hMax <= 18 && (t.species == "cottonwood" || t.hMax <= 6));
+            }
+        ctx.check("...no pines or forest broadleaves in it, no trees on bare rock", !pines && rockBare);
+        ctx.check("...juniper on the uplands, cottonwood by the river and not on the dry zones", juniperUp && cottonWet && !cottonDry);
+        veg::Site s;
+        s.elevation = 1250, s.cover = 3;
+        ctx.check("brush on a valley floor: lowland", veg::zoneOf(p, s, 0.5) == veg::Z_LOWLAND);
+        s.elevation = 1700;
+        ctx.check("brush on a mesa top: upland", veg::zoneOf(p, s, 0.5) == veg::Z_UPLAND);
+        s.water = 20, s.waterRise = 1.5;
+        ctx.check("...by the river: riparian", veg::zoneOf(p, s, 0.5) == veg::Z_RIPARIAN);
+        s.waterRise = 40;
+        ctx.check("...on a rim 40 m over the river: not riparian", veg::zoneOf(p, s, 0.5) == veg::Z_UPLAND);
+        s.cover = 1;
+        ctx.check("bare rock is rock, by the river too", veg::zoneOf(p, s, 0.5) == veg::Z_ROCK);
+        s.cover = 2, s.water = 1e9;
+        ctx.check("sand is sand", veg::zoneOf(p, s, 0.5) == veg::Z_SAND);
+    }
+    std::string err;
+    veg::Palette bad;
+    ctx.check("an unknown species is an error", !veg::parse("zone upland 5 5\ntree redwood 1 3 4\n", bad, &err) && err.find("redwood") != std::string::npos, err);
+    ctx.check("a species keeps to its elevations", veg::parse("zone lowland 5 5\ntree cottonwood 1 8 12 below 1290\ntree juniper 1 2 4 above 1300 crown 0.5\n", bad, &err) && bad.zone[veg::Z_LOWLAND].tree(0.9, 1250) && bad.zone[veg::Z_LOWLAND].tree(0.9, 1250)->species == "cottonwood" && bad.zone[veg::Z_LOWLAND].tree(0.1, 1400)->species == "juniper" && !bad.zone[veg::Z_LOWLAND].tree(0.5, 1295), err);
+    ctx.check("a tree before any zone is an error", !veg::parse("tree juniper 1 3 4\n", bad, &err), err);
+    // A desert valley with a river, with and without a palette of its own beside the sidecar.
+    const std::string side = "name VALLEY\nsize 1600\nclimate desert\nriver_area 0.4\nwash_area 0.05\noutposts 3\n";
+    size_t plainTrees = 0, plainPines = 0;
+    {
+        const std::string dir = freshDir("veg-plain");
+        std::string why;
+        auto t = makeTerrain(dir, synthDem(181, 181, 10, valleyAt), side, &why);
+        ctx.check("the desert valley is prepared", t != nullptr, why);
+        if (!t) return;
+        auto w = buildReal(t);
+        plainTrees = w->trees.size();
+        for (const Tree& tr : w->trees) plainPines += tr.kind == 0;
+        ctx.check("no palette: the climate's own trees, as before", plainTrees > 20 && plainPines > plainTrees / 2, std::to_string(plainPines) + " of " + std::to_string(plainTrees));
+    }
+    {
+        const std::string dir = freshDir("veg-palette");
+        writeText(dir + "/testscrub.txt", "name TEST SCRUB\nupland 0 0\nriparian 40 4\nopen 1\n"
+                                          "zone upland 20 150\n tree juniper 3 2.5 4.5\n tree pinyon 1 3 5\n shrub blackbrush 3\n shrub mormon_tea 1\n shrub prickly_pear 1\n"
+                                          "zone riparian 60 200\n tree cottonwood 1 8 14\n tree tamarisk 2 3 5\n shrub coyote_willow 1\n");
+        std::string why;
+        auto t = makeTerrain(dir, synthDem(181, 181, 10, valleyAt), side + "vegetation testscrub\n", &why);
+        ctx.check("the valley with a palette is prepared", t != nullptr, why);
+        if (!t) return;
+        ctx.check("...the palette is the one beside the sidecar", t->spec.hasVeg && t->spec.veg.name == "TEST SCRUB");
+        auto w = buildReal(t);
+        size_t pines = 0, dry = 0, cotton = 0, cottonFar = 0, onRock = 0, poles = w->poles.size();
+        for (const Tree& tr : w->trees) {
+            pines += tr.kind != 3;
+            dry += tr.kind == 3 && (tr.design == forest::DRY_JUNIPER || tr.design == forest::DRY_PINYON);
+            onRock += w->surfaceAt(tr.base.x, tr.base.z) == SURF_ROCK;
+            if (tr.kind == 3 && (tr.design == forest::DRY_COTTONWOOD || tr.design == forest::DRY_TAMARISK)) {
+                cotton++;
+                // (water within 60 m: the palette's 40 m reach, the 16 m grid it's measured on)
+                bool wet = false;
+                for (double a = 0; a < 6.28 && !wet; a += 0.4)
+                    for (double r = 4; r <= 60 && !wet; r += 4) wet = w->waterLevel(tr.base.x + std::cos(a) * r, tr.base.z + std::sin(a) * r) > -1e8;
+                cottonFar += !wet;
+            }
+        }
+        ctx.check("only the palette's trees: juniper and pinyon, no pines", pines == 0 && dry > 20, std::to_string(pines) + " others, " + std::to_string(dry) + " juniper and pinyon");
+        ctx.check("cottonwood and tamarisk only by the water", cotton > 3 && cottonFar == 0, std::to_string(cottonFar) + " of " + std::to_string(cotton) + " away from it");
+        ctx.check("no tree on bare rock, each with its trunk to hit", onRock == 0 && poles >= w->trees.size());
+        std::set<int> kinds;
+        bool only = true;
+        for (const Bush& b : w->bushes) kinds.insert(b.kind), only &= b.kind == BUSH_BLACKBRUSH || b.kind == BUSH_EPHEDRA || b.kind == BUSH_PRICKLYPEAR || b.kind == BUSH_WILLOW;
+        ctx.check("only the palette's shrubs, a mix of them", only && kinds.size() >= 3 && w->bushes.size() > 100, std::to_string(w->bushes.size()) + " shrubs of " + std::to_string(kinds.size()) + " kinds");
+        auto w2 = buildReal(t);
+        ctx.check("the same every build", w2->landHash() == w->landHash() && w2->bushes.size() == w->bushes.size());
+    }
+    rt::Spec s;
+    ctx.check("a palette that isn't there is an error", !rt::parseSpec("source a.tif\nvegetation nosuchpalette\n", freshDir("veg-none"), s, &err) && err.find("nosuchpalette") != std::string::npos, err);
 }
 
 SCENARIO(realWater, "realterrain/water", "A closed hollow holds a lake at its spill level; land under sea level is sea") {

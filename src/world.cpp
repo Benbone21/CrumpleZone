@@ -708,7 +708,7 @@ void World::buildModelYard() {
     double colX = yardX;
     for (int c = 0; c < kClasses; c++) {
         if (area[c] <= 0) continue;
-        const double W = std::max(widest[c], std::sqrt(area[c] * 1.3));
+        const double W = std::max(widest[c], std::sqrt(area[c] * 1.2));  // (a little deeper than wide: the yard has room to the south, not to the west)
         const double x1 = colX - W;  // the column's west edge
         double x = colX, z = yardZ, lineD = 0;
         auto newLine = [&]() {

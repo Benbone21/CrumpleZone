@@ -24,6 +24,9 @@ include detail.txt
 ledge_sharpen 0.8
 # What the ground is (cover.tif, tools/naip_cover.py): bare rock, sand and brush from NAIP 2024's colours (USDA, public domain).
 cover cover.tif
+# What grows: the canyon country's own plants by zone (../vegetation/colorado_plateau_desert.txt): juniper and pinyon on the
+# benches, blackbrush and saltbush scrub, cottonwood, tamarisk and willow along the Colorado and the washes; no pines.
+vegetation colorado_plateau_desert
 # The rock's colours by real elevation, after the formations round Moab (sRGB): Moenkopi and Chinle's dark red-brown in the valleys,
 # Wingate's orange-red cliffs, Kayenta's darker ledgy band, Navajo's salmon slickrock (Hell's Revenge)
 # paling to cream on the high rims (Golden Spike, Gold Bar).

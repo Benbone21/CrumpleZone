@@ -18,7 +18,7 @@ namespace {
 // instanced, built once each: the full model can afford more, its far copy, below, can't.)
 size_t budgetFor(const std::string& id) {
     static const std::map<std::string, size_t> b = {
-        {"tree_pine", 700}, {"tree_broadleaf", 420}, {"tree_snag", 220}, {"bush", 130}, {"stump", 80},
+        {"tree_pine", 700}, {"tree_broadleaf", 420}, {"tree_snag", 220}, {"tree_dryland", 520}, {"bush", 130}, {"stump", 80},
         {"marker_post", 100}, {"cairn", 250}, {"trail_sign", 400}, {"person", 2500},
         {"repair_shed", 12000}, {"fire_tower", 12000}, {"sign_gantry", 12000}, {"race_gate", 12000},
         {"cabin", 6500}, {"timber_bridge", 12000}, {"garage", 6000}, {"ranger_station", 12000}, {"mine_headframe", 12000}, {"chain_bundle", 2600}, {"crate_engine_v8", 3600}, {"crate_engine_v8_dohc", 3600}, {"crate_engine_v6", 3600}, {"crate_engine_i4", 3600}, {"crate_engine_i3", 3600}, {"crate_engine_flat4", 3600}, {"wreck_pickup", 10000}, {"ore_cart", 5000}, {"mine_portal", 6000}, {"jersey_barrier", 6000}, {"guardrail", 6000},
@@ -64,7 +64,7 @@ SCENARIO(modelsBuild, "models/build", "Every design of every model builds: sound
             ctx.check(tag + "builds something", m.triangles() > 0);
             ctx.check(tag + "sound", sound(m, why), why);
             ctx.check(tag + "within budget", m.triangles() <= budgetFor(d.id), std::to_string(m.triangles()) + " > " + std::to_string(budgetFor(d.id)));
-            static const std::map<std::string, size_t> farBudget = {{"tree_pine", 220}, {"tree_broadleaf", 260}, {"tree_snag", 120}};
+            static const std::map<std::string, size_t> farBudget = {{"tree_pine", 220}, {"tree_broadleaf", 260}, {"tree_snag", 120}, {"tree_dryland", 300}};
             if (farBudget.count(d.id)) {  // (the far copy most of a forest is drawn with: forest.h)
                 mk::P far;
                 far.v["lod"] = 2;
@@ -123,7 +123,7 @@ SCENARIO(modelsInstance, "models/instance", "The settings the game sets per copy
 }
 
 SCENARIO(modelsTreeTrunks, "models/tree-trunks", "See-through trees dissolve only FOLIAGE (and snow on it): every tree design's trunk is wood at its foot, nothing leafy sits where the collision pole is, and snags have no foliage") {
-    for (const char* id : {"tree_pine", "tree_broadleaf", "tree_snag"}) {
+    for (const char* id : {"tree_pine", "tree_broadleaf", "tree_snag", "tree_dryland"}) {
         const mk::ModelDef* d = mk::findModel(id);
         if (!d) continue;
         for (int v = 0; v < (int)d->variants.size(); v++)

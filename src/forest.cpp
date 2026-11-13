@@ -16,8 +16,8 @@
 namespace forest {
 
 const char* modelId(int kind) {
-    static const char* const ids[3] = {"tree_pine", "tree_broadleaf", "tree_snag"};
-    return ids[std::clamp(kind, 0, 2)];
+    static const char* const ids[kKinds] = {"tree_pine", "tree_broadleaf", "tree_snag", "tree_dryland"};
+    return ids[std::clamp(kind, 0, kKinds - 1)];
 }
 double modelHeight(int kind) { return kind == 2 ? 8.0 : 10.0; }
 
@@ -29,7 +29,7 @@ double lodReach(int lod) {
 int designFor(int kind, uint32_t seed, double x, double z, double height) {
     const mk::ModelDef* d = mk::findModel(modelId(kind));
     if (!d) return 0;
-    if (d->variants.size() < 3) return mk::variantFor(*d, (uint32_t)seed);
+    if (d->variants.size() < 3 || kind >= 3) return mk::variantFor(*d, (uint32_t)seed);  // (the dry-country trees: a palette names each one's design)
     const double r = latticeHash((int)(seed % 1000003), 31), stand = valueNoise(x * 0.018 + 11.3, z * 0.018 - 4.1);
     const int v = [&] {
     switch (kind) {
@@ -205,7 +205,7 @@ void build(const World& w, bool skipPines, bool skipSnags, Set& out) {
     for (size_t i = 0; i < w.trees.size(); i++) {
         const Tree& t = w.trees[i];
         const int seed = w.map == MAP_PROCEDURAL ? worldSeed(w, t.base.x, t.base.z) : (int)i + 1;  // (as the baked forest had it: a tree keeps its look)
-        if (t.kind < 0 || t.kind > 2 || (t.kind == 0 && skipPines) || (t.kind == 2 && skipSnags)) continue;
+        if (t.kind < 0 || t.kind >= kKinds || (t.kind == 0 && skipPines) || (t.kind == 2 && skipSnags)) continue;
         Look lk;
         lk.kind = t.kind;
         lk.design = t.design >= 0 ? t.design : designFor(t.kind, (uint32_t)seed, t.base.x, t.base.z, t.height);

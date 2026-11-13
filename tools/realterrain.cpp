@@ -11,6 +11,7 @@
 //   build/realterrain pack FILE LAT LON SIZE K OUT a coarse int16 copy round a point (K x K pixels averaged): a map's backdrop
 //   build/realterrain views SIDECAR|DIR            a driver's-eye view of each named obstacle, as the game's --eye and --spawn
 //   (make ... --int16 SCALE OFFSET: the cropped DEM as int16 with its vertical_scale and vertical_offset, about half the size)
+#include <map>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -23,6 +24,8 @@
 #include <string>
 #include <vector>
 
+#include "../src/forest.h"
+#include "../src/plants.h"
 #include "../src/loadprof.h"
 #include "../src/props.h"
 #include "../src/realterrain.h"
@@ -140,7 +143,13 @@ void preview(const World& w, const rt::Terrain& t, const std::string& path) {
                 p[0] = R, p[1] = G, p[2] = B;
             }
     };
-    for (const Tree& tr : w.trees) dot2(tr.base.x, tr.base.z, 0, 30, 70, 30);
+    // (the dry-country trees by species: juniper and pinyon dark, cottonwood bright and bigger, tamarisk dusty pink)
+    for (const Tree& tr : w.trees) {
+        if (tr.kind != 3) dot2(tr.base.x, tr.base.z, 0, 30, 70, 30);
+        else if (tr.design == forest::DRY_COTTONWOOD) dot2(tr.base.x, tr.base.z, 1, 60, 200, 40);
+        else if (tr.design == forest::DRY_TAMARISK) dot2(tr.base.x, tr.base.z, 0, 200, 90, 150);
+        else dot2(tr.base.x, tr.base.z, 0, 20, 60, 20);
+    }
     for (const MapPlace& pl : t.plan().places) dot2(pl.p.x, pl.p.z, 3, pl.kind == PK_RANGER_STATION ? 255 : 220, 40, pl.kind == PK_LOOKOUT || pl.kind == PK_SUMMIT ? 200 : 40);
     // The sidecar's own: its big rivers' lines (blue), named trails (magenta), each course's start (green) and finish (white).
     for (const rt::PlanRiver& r : t.plan().rivers)
@@ -279,6 +288,17 @@ int make(int argc, char** argv) {
     std::printf("  world: %d x %d cells, %zu trees, %zu rocks, %zu bushes, %zu rivers, %zu stations; built in %.2f s; land hash %016llx\n", w.gridSize(), w.gridSize(),
                 w.trees.size(), w.rocks.size(), w.bushes.size(), w.rivers.size(), w.stations.size(),
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count(), (unsigned long long)w.landHash());
+    {  // (what grows: the trees by kind and design, the plants by kind)
+        std::map<std::pair<int, int>, int> tk;
+        std::map<int, int> bk;
+        for (const Tree& tr : w.trees) tk[{tr.kind, tr.design}]++;
+        for (const Bush& b : w.bushes) bk[b.kind]++;
+        std::printf("  trees:");
+        for (const auto& kv : tk) std::printf(" %s/%d %d", forest::modelId(kv.first.first), kv.first.second, kv.second);
+        std::printf("\n  plants:");
+        for (const auto& kv : bk) std::printf(" %s %d", plantInfo(kv.first).name, kv.second);
+        std::printf("\n");
+    }
     std::printf("  start (%.0f, %.0f); %zu boxes (buildings, bridge decks)\n", w.spawn.x, w.spawn.z, w.boxes.size());
     loadprof::report("real");
     if (!prev.empty()) {

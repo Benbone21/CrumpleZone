@@ -11,7 +11,10 @@
 
 namespace forest {
 
-const char* modelId(int kind);  // tree_pine, tree_broadleaf, tree_snag
+constexpr int kKinds = 4;       // World::Tree::kind: 0 pine, 1 broadleaf, 2 dead snag, 3 dry-country (its design says which: below)
+// The dry-country model's designs (kind 3: a vegetation palette names them, vegetation.h).
+enum DrylandDesign { DRY_JUNIPER, DRY_PINYON, DRY_COTTONWOOD, DRY_TAMARISK };
+const char* modelId(int kind);  // tree_pine, tree_broadleaf, tree_snag, tree_dryland
 double modelHeight(int kind);   // what a model is built to (10 m; a snag 8): a tree's scale is its height over this
 
 // The design (the model's variant) a tree of `kind` gets: the one picked in the model lab, with some of

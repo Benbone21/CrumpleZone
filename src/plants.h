@@ -19,6 +19,14 @@ enum PlantKind {
     BUSH_MUSHROOMS,   // toadstools in moss
     BUSH_MOSSROCKS,   // small stones under moss
     BUSH_WILDFLOWERS, // a patch of flowers
+    // Dry-country kinds: in no habitat's mix, grown only where a vegetation palette (vegetation.h) names them.
+    BUSH_BLACKBRUSH,  // low dense dark grey-olive mound, spiny (the Colorado Plateau's benches)
+    BUSH_EPHEDRA,     // Mormon tea: a broom of thin jointed yellow-green stems, no leaves
+    BUSH_RABBITBRUSH, // rounded grey-green shrub, yellow flower heads
+    BUSH_SALTBUSH,    // pale silver-grey saltbush or shadscale
+    BUSH_PRICKLYPEAR, // a low clump of flat pads
+    BUSH_BUNCHGRASS,  // a sparse tuft of pale ricegrass
+    BUSH_WILLOW,      // coyote willow: a thicket of thin upright wands by water
     BUSH_KIND_COUNT
 };
 

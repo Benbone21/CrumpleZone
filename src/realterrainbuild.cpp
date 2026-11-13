@@ -1011,6 +1011,65 @@ void World::buildReal() {
         for (float v : P.h) hlo = std::min(hlo, (double)v), hhi = std::max(hhi, (double)v);
         const double lowLine = hlo + 0.33 * (hhi - hlo);
         const uint32_t seed = sp.seed * 2654435761u;
+        // A vegetation palette (vegetation.h) wants each spot's distance to water and to a dry wash, and how far above it the spot
+        // stands: on a 16 m grid, from the water as built and the plan's wash cells, spread outward (a two-pass chamfer).
+        const veg::Palette* pal = sp.hasVeg ? &sp.veg : nullptr;
+        struct NearField {
+            int n = 0;
+            double cs = 16, half = 0;
+            std::vector<float> d, y;
+            void spread() {
+                auto relax = [&](int i, int j, int di, int dj) {
+                    const int a = i + di, b = j + dj;
+                    if (a < 0 || b < 0 || a >= n || b >= n) return;
+                    const float c = d[(size_t)a * n + b] + (float)(cs * (di && dj ? 1.41421356 : 1.0));
+                    if (c < d[(size_t)i * n + j]) d[(size_t)i * n + j] = c, y[(size_t)i * n + j] = y[(size_t)a * n + b];
+                };
+                for (int i = 0; i < n; i++)
+                    for (int j = 0; j < n; j++) relax(i, j, -1, 0), relax(i, j, 0, -1), relax(i, j, -1, -1), relax(i, j, -1, 1);
+                for (int i = n - 1; i >= 0; i--)
+                    for (int j = n - 1; j >= 0; j--) relax(i, j, 1, 0), relax(i, j, 0, 1), relax(i, j, 1, 1), relax(i, j, 1, -1);
+            }
+            // The distance at (x, z) (between the cells' middles), and the nearest's level.
+            void at(double x, double z, double& dist, double& level) const {
+                const double fx = std::min(std::max((x + half) / cs - 0.5, 0.0), n - 1.001), fz = std::min(std::max((z + half) / cs - 0.5, 0.0), n - 1.001);
+                const int i = (int)fx, j = (int)fz;
+                const double u = fx - i, v = fz - j;
+                auto D = [&](int a, int b) { return (double)d[(size_t)a * n + b]; };
+                dist = (D(i, j) * (1 - u) + D(i + 1, j) * u) * (1 - v) + (D(i, j + 1) * (1 - u) + D(i + 1, j + 1) * u) * v;
+                level = y[(size_t)(u < 0.5 ? i : i + 1) * n + (v < 0.5 ? j : j + 1)];
+            }
+        } nearWater, nearWash;
+        if (pal) {
+            for (NearField* f : {&nearWater, &nearWash}) {
+                f->half = half, f->n = std::max(2, (int)std::ceil(2 * half / f->cs));
+                f->d.assign((size_t)f->n * f->n, 1e9f), f->y.assign((size_t)f->n * f->n, 0.0f);
+            }
+            const int fn = nearWater.n;
+            parallelRows(fn, [&](int a) {
+                for (int b = 0; b < fn; b++) {
+                    // (water: any of the cell's 16 points 4 m apart, so a creek a few metres wide isn't stepped over)
+                    for (int q = 0; q < 16; q++) {
+                        const int id = cellI(-half + a * 16.0 + 2 + 4 * (q / 4)) * hN + cellI(-half + b * 16.0 + 2 + 4 * (q % 4));
+                        const float wy = waterY[id];
+                        if (wy > -1e8f) {
+                            nearWater.d[(size_t)a * fn + b] = 0, nearWater.y[(size_t)a * fn + b] = wy;
+                            break;
+                        }
+                    }
+                }
+            });
+            if ((int)P.wash.size() == P.n * P.n)
+                for (int i = 0; i < P.n; i++)
+                    for (int j = 0; j < P.n; j++) {
+                        if (!P.wash[(size_t)i * P.n + j]) continue;
+                        const double x = P.cx(i), z = P.cx(j);
+                        const int a = std::min(fn - 1, std::max(0, (int)((x + half) / 16.0))), b = std::min(fn - 1, std::max(0, (int)((z + half) / 16.0)));
+                        nearWash.d[(size_t)a * fn + b] = 0, nearWash.y[(size_t)a * fn + b] = (float)height(x, z);
+                    }
+            nearWater.spread(), nearWash.spread();
+        }
+        const double cellHa = cellM * cellM / 1e4;
         for (int ci = 0; ci < cn; ci++)
             for (int cj = 0; cj < cn; cj++) {
                 const double x0 = -half + ci * cellM, z0 = -half + cj * cellM;
@@ -1032,7 +1091,78 @@ void World::buildReal() {
                 int k = 0;
                 auto count = [&](double expect) { return (int)std::floor(expect + cellRoll(ci, cj, k++, seed)); };
                 const int nt = count(eT), nb = count(eB), nr = count(eR);
-                for (int q = 0; q < nt; q++) {
+                if (pal) {
+                    // By the palette: each candidate spot sorted into a zone (its cover from the photos, its ground, slope, real
+                    // elevation, the water or wash near it), kept as often as that zone is dense, its species from the zone's mix.
+                    const bool covered = !t.cover.c.empty();
+                    auto site = [&](double x, double z, int sf, int cv) {
+                        veg::Site st;
+                        st.cover = cv;
+                        st.rock = (sf == SURF_ROCK && cv != 3) || sf == SURF_SNOW || sf == SURF_ICE;
+                        st.sand = sf == SURF_SAND;
+                        const double y = height(x, z);
+                        st.elevation = t.realElevation(y);
+                        double lvl;
+                        nearWater.at(x, z, st.water, lvl), st.waterRise = y - lvl;
+                        nearWash.at(x, z, st.wash, lvl), st.washRise = y - lvl;
+                        return st;
+                    };
+                    // (ground with no photo cover: plants on a share of it, in drifts)
+                    auto openShare = [&](double x, double z) { return pal->open * 2 * smoothstep(0.3, 0.7, fbmNoise(x * 0.021 + 5.0, z * 0.021 - 9.0, 2)); };
+                    const double maxT = pal->maxTrees() * sp.trees * treeOK, maxB = pal->maxShrubs() * sp.bushes;
+                    const int vt = maxT > 0 ? count(maxT * cellHa) : 0, vb = maxB > 0 ? count(maxB * cellHa) : 0;
+                    for (int q = 0; q < vt; q++) {
+                        const double x = x0 + cellRoll(ci, cj, 100 + 3 * q, seed) * cellM, z = z0 + cellRoll(ci, cj, 101 + 3 * q, seed) * cellM;
+                        if (!clear(x, z)) continue;
+                        const int id = cellI(x) * hN + cellI(z), sf = surf[id];
+                        if (sf == SURF_ROCK || slopeAt(x, z) > pal->treeSlope) continue;
+                        const int cv = covered ? t.coverAt(x, z) : 0;
+                        double dens = 1;
+                        const veg::Site st = site(x, z, sf, cv);
+                        const int zn = veg::zoneOf(*pal, st, plantRoll(x, z, 61), &dens);
+                        const veg::ZoneRule& zr = pal->zone[zn];
+                        if (zr.trees.empty() || zr.treesPerHa <= 0) continue;
+                        if (cv == 0) dens *= openShare(x, z);
+                        else if (cv == 3 && pal->crown > 0) {  // (a tree where the photo's brush is a patch a crown wide, not one dark pixel)
+                            int brush = 1;
+                            for (int e = 0; e < 4; e++) brush += t.coverAt(x + (e == 0 ? 2.5 : e == 1 ? -2.5 : 0), z + (e == 2 ? 2.5 : e == 3 ? -2.5 : 0)) == 3;
+                            if (brush < pal->crown) continue;
+                        }
+                        if (plantRoll(x, z, 62) >= dens * zr.treesPerHa / pal->maxTrees()) continue;
+                        const veg::TreeSpec* ts = zr.tree(plantRoll(x, z, 63), st.elevation);
+                        if (!ts) continue;
+                        Tree tr;
+                        tr.height = ts->hMin + (ts->hMax - ts->hMin) * cellRoll(ci, cj, 900 + q, seed);
+                        tr.radius = tr.height * ts->crown;
+                        if (edge[id] < 1.0 + 0.7 * tr.radius) continue;  // (its crown off the trail)
+                        tr.base = V3(x, height(x, z) - 0.2, z);
+                        tr.tint = (float)(0.8 + 0.4 * cellRoll(ci, cj, 950 + q, seed));
+                        tr.kind = ts->kind, tr.design = ts->design;
+                        plant(tr);
+                    }
+                    for (int q = 0; q < vb; q++) {
+                        const double x = x0 + cellRoll(ci, cj, 2000 + 3 * q, seed) * cellM, z = z0 + cellRoll(ci, cj, 2001 + 3 * q, seed) * cellM;
+                        if (!clear(x, z) || slopeAt(x, z) > pal->shrubSlope) continue;
+                        const int sf = surf[cellI(x) * hN + cellI(z)];
+                        const int cv = covered ? t.coverAt(x, z) : 0;
+                        double dens = 1;
+                        const veg::Site st = site(x, z, sf, cv);
+                        const int zn = veg::zoneOf(*pal, st, plantRoll(x, z, 64), &dens);
+                        const veg::ZoneRule& zr = pal->zone[zn];
+                        if (zr.shrubs.empty() || zr.shrubsPerHa <= 0) continue;
+                        if (cv == 0) dens *= openShare(x, z);
+                        if (plantRoll(x, z, 65) >= dens * zr.shrubsPerHa / pal->maxShrubs()) continue;
+                        const veg::ShrubSpec* ss = zr.shrub(plantRoll(x, z, 66), st.elevation);
+                        if (!ss) continue;
+                        Bush bu;
+                        bu.p = V3(x, height(x, z), z);
+                        bu.kind = ss->kind;
+                        bu.r = plantRadius(ss->kind, cellRoll(ci, cj, 2002 + 3 * q, seed)) * ss->size;
+                        bu.tint = (float)(0.8 + 0.4 * cellRoll(ci, cj, 2900 + q, seed));
+                        bushes.push_back(bu);
+                    }
+                }
+                for (int q = 0; q < (pal ? 0 : nt); q++) {
                     const double x = x0 + cellRoll(ci, cj, 100 + 3 * q, seed) * cellM, z = z0 + cellRoll(ci, cj, 101 + 3 * q, seed) * cellM;
                     if (!clear(x, z)) continue;
                     const double s = slopeAt(x, z);
@@ -1049,7 +1179,7 @@ void World::buildReal() {
                 const int habitat = climate == realterrain::CLIMATE_DESERT ? HAB_DESERT : climate == realterrain::CLIMATE_ALPINE ? HAB_UPLAND : wood > 0.5 ? HAB_FOREST : HAB_MEADOW;
                 const bool covered = !t.cover.c.empty();
                 const int nbAll = covered ? count(eB * 8.0) : nb;  // (with a ground cover: bushes where the photos show brush)
-                for (int q = 0; q < nbAll; q++) {
+                for (int q = 0; q < (pal ? 0 : nbAll); q++) {
                     const double x = x0 + cellRoll(ci, cj, 2000 + 3 * q, seed) * cellM, z = z0 + cellRoll(ci, cj, 2001 + 3 * q, seed) * cellM;
                     if (!clear(x, z) || slopeAt(x, z) > 0.7) continue;
                     if (covered) {
