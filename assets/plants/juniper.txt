@@ -1,0 +1,43 @@
+# Utah juniper: short and as wide as tall. A thick, twisted, shreddy grey trunk forking low into a few crooked limbs, the
+# foliage in dusty olive tufts at the ends of the twigs with the limbs showing between them, and bare bleached dead limbs.
+name UTAH JUNIPER
+about Short and wide: a thick twisted trunk forking low, olive tufts, bleached dead limbs
+class tree
+id 5
+form decurrent
+replaces dryland 0
+size 2 5
+trunk_len 0.34
+trunk_radius 0.07
+flare 1.5
+pipe 2.15
+count 6 4 3
+angle 64 50 45
+length 0.55 0.5 0.5
+crown spreading
+start 0.25 0.2 0.3
+up 0 0.38 0.15 0.05
+gnarl 0.09 0.2 0.22 0.22
+segs 5 5 3 2
+dead 0.2
+dead_top 0.3
+width 0.55
+leaf_order 1
+leaf_from 0.3
+leaf_step 0.08
+cards 2
+card 0.1 0.08
+scatter 0.06
+align 0.2
+ao 0.3
+bark 0.36 0.31 0.26
+bark2 0.52 0.47 0.40
+deadwood 0.64 0.61 0.55
+leaf 0.26 0.28 0.15
+leaf2 0.38 0.39 0.22
+stems 1 2
+stem_spread 20
+falloff 0.3
+puff 0.07 0.8
+leaf_tip 0.1
+far 1.25

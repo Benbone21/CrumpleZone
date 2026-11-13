@@ -1,0 +1,16 @@
+# Plains prickly pear: a low sprawling clump of small flat pads, red-purple fruit along the edges of some.
+name PRICKLY PEAR
+about Low sprawling clump of small flat cactus pads
+class shrub
+id 7
+form pads
+replaces bush prickly_pear
+size 0.3 0.7
+pads 18 28
+pad 0.34 0.25 0.045
+width 1.0
+leaf 0.29 0.37 0.21
+leaf2 0.40 0.47 0.28
+leaf_dry 0.50 0.46 0.30
+flower 0.55 0.16 0.25
+flower_share 0.25

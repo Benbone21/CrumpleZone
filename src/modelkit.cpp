@@ -64,10 +64,28 @@ std::vector<ModelDef>& registry() {
 
 Reg::Reg(ModelDef def) { registry().push_back(std::move(def)); }
 
-const std::vector<ModelDef>& catalog() { return registry(); }
+namespace {
+std::vector<std::function<std::vector<ModelDef>()>>& lateRegs() {
+    static std::vector<std::function<std::vector<ModelDef>()>> r;
+    return r;
+}
+// The catalog with the late models in it: they're made on the first look at it (after every static Reg has run), once.
+std::vector<ModelDef>& whole() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        for (const auto& f : lateRegs())
+            for (ModelDef& d : f()) registry().push_back(std::move(d));
+    });
+    return registry();
+}
+}  // namespace
+
+LateReg::LateReg(std::function<std::vector<ModelDef>()> make) { lateRegs().push_back(std::move(make)); }
+
+const std::vector<ModelDef>& catalog() { return whole(); }
 
 const ModelDef* findModel(const std::string& id) {
-    for (const ModelDef& d : registry())
+    for (const ModelDef& d : whole())
         if (d.id == id) return &d;
     return nullptr;
 }
@@ -115,7 +133,7 @@ void build(const ModelDef& def, int variant, const P& p, Mesh& out) {
     P full = defaults(var);
     for (const auto& kv : p.v) full.v[kv.first] = kv.second;
     // (A model built round a path hint depends on more than its numbers: not cached.)
-    const bool cached = meshcache::enabled() && pathHint().empty();
+    const bool cached = meshcache::enabled() && pathHint().empty() && def.cache;
     uint64_t key = 0;
     if (cached) {
         meshcache::Hasher h;
@@ -139,7 +157,7 @@ void build(const ModelDef& def, int variant, const P& p, Mesh& out) {
 }
 
 bool simplified(const ModelDef& def) {
-    static const std::set<std::string> own = {"tree_pine", "tree_broadleaf", "tree_snag", "bush", "stump",  // (plants and trees)
+    static const std::set<std::string> own = {"tree_pine", "tree_broadleaf", "tree_snag", "tree_gen", "shrub_gen", "bush", "stump",  // (plants and trees)
                                               "drive_shaft", "tie_rod", "control_arm", "cv_axle", "torn_end", "bed_gate", "tire_part"};  // (a car's)
     if (def.id == "waterfall") return false;  // (its vertex colours are the water shader's coordinates: nothing to merge)
     static const std::set<std::string> crates = {"crate_engine_v8", "crate_engine_v8_dohc", "crate_engine_v6", "crate_engine_i4", "crate_engine_i3", "crate_engine_flat4", "supply_crate"};  // (parts drawn as they stand: skids and crates bury faces)

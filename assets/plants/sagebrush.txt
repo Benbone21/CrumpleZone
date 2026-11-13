@@ -1,0 +1,30 @@
+# Big sagebrush: gnarled grey stems, silvery grey-green foliage in tufts at the top, thin flower stalks.
+name SAGEBRUSH
+about Gnarled grey stems under silvery grey-green tufts
+class shrub
+id 1
+form shrub
+replaces bush sagebrush
+size 0.4 1.0
+stems 3 5
+stem_spread 42
+trunk_radius 0.04
+count 3 2
+gnarl 0.16 0.2 0.22
+leaf_order 1
+leaf_from 0.45
+leaf_step 0.13
+cards 1
+card 0.1 0.06
+scatter 0.045
+align 0.4
+width 0.6
+bark 0.33 0.29 0.25
+bark2 0.46 0.42 0.37
+leaf 0.33 0.35 0.27
+leaf2 0.43 0.44 0.35
+leaf_dry 0.50 0.47 0.37
+flower 0.56 0.54 0.32
+flower_share 0.08
+puff 0.095 0.75
+leaf_tip 0.08

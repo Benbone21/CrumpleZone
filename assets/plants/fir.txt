@@ -1,0 +1,28 @@
+# Subalpine / Douglas fir: the mountain maps' conifer. A straight trunk, flat boughs in whorls that droop low down and rise
+# toward the top, a crown to near the ground, a pointed spire.
+name FIR
+about Conical fir: flat drooping boughs to near the ground, a pointed top
+class tree
+id 1
+form excurrent
+replaces pine 0
+size 9 19
+count 44 6
+angle 98 55
+angle_top 48
+length 0.27 0.4
+crown conical
+start 0.10 0.2
+up 0 0.10 0
+segs 9 3 1
+dead_low 0.06
+leaf_step 0.04
+cards 2
+card 0.09 0.066
+flat 0.8
+align 0.9
+scatter 0.008
+bark 0.27 0.22 0.18
+bark2 0.36 0.30 0.24
+leaf 0.091 0.195 0.130
+leaf2 0.156 0.286 0.169

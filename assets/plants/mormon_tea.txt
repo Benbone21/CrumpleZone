@@ -1,0 +1,30 @@
+# Mormon tea (Ephedra): no leaves. A broom of stiff, jointed, yellow-green stems that fork upward at narrow angles.
+name MORMON TEA
+about A broom of bare jointed yellow-green stems forking upward
+class shrub
+id 3
+form shrub
+replaces bush mormon_tea
+size 0.35 0.8
+green_stems 1
+cards 0
+stems 9 13
+stem_spread 34
+stem_base 0.06
+count 3 2
+angle 22 20
+length 0.5 0.55
+start 0.35 0.3
+up 0.5 0.35 0.2
+gnarl 0.04 0.05 0.05
+segs 2 1 1
+trunk_radius 0.02
+twig 0.009
+taper 0.004
+sides 3
+width 0.5
+bark 0.34 0.33 0.20
+bark2 0.40 0.42 0.20
+leaf 0.36 0.42 0.16
+leaf2 0.50 0.55 0.24
+leaf_dry 0.52 0.48 0.28

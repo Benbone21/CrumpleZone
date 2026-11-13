@@ -1,0 +1,24 @@
+# Narrowleaf yucca: a stemless rosette of stiff narrow sword leaves, dead ones hanging under it, a tall stalk of cream bells
+# on some.
+name YUCCA
+about Rosette of stiff narrow sword leaves, a tall stalk of cream bells on some
+class shrub
+id 6
+form rosette
+replaces bush yucca
+size 0.5 1.0
+blades 46
+blade 0.78 0.05
+skirt 0.2
+stalks 0 1
+stalk_len 1.9
+trunk_len 0.06
+trunk_radius 0.06
+width 0.7
+bark 0.36 0.31 0.24
+bark2 0.44 0.38 0.30
+leaf 0.25 0.33 0.20
+leaf2 0.36 0.44 0.27
+leaf_tip 0.25
+leaf_dry 0.60 0.53 0.36
+flower 0.90 0.88 0.72
