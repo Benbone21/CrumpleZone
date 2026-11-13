@@ -23,6 +23,16 @@ those four are bit-identical, the Tacoma and Blazer are not, and the fingerprint
 `<name>-after.jpg` is the sheet after the pass for the four vehicles whose looks changed (Civic,
 buggy, UTV, Baja Bug). Everything else is in the tables below as a finding for the owner.
 
+### Tests on the branch's head
+
+Run by category (`--jobs 2`, 4 GB cap): 102 categories, **1,313 scenarios, 1,308 pass, 5 fail**.
+The five are the ones open on main: `structure/weight/koenigsegg jesko`,
+`components/axle-landing`, `components/tire-into-fender/rock buggy`, `tires/shear`,
+`tires/debead`. `engine/performance` passed this time. No new failure.
+
+Not run to the end: `procworld/` (killed at the 4 GB cap), `moab/` (15 min time limit), and
+`onemap/`, `world/` (skipped, known to pass 4 GB). None of them builds a vehicle differently.
+
 ## How the shots were taken
 
 ```
