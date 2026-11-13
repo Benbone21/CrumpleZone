@@ -948,13 +948,13 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         utv.structureMass = 165;  // chromoly tube frame and cage
         utv.panelMass = 55;       // plastic hood, fenders and tail
         utv.items = {
-            {"radiator and intercooler", 14, 1.55, 0.62, 0},  {"front bumper and skid plate", 22, 1.60, 0.46, 0},
+            {"radiator", 8, 1.55, 0.62, 0},  {"front bumper and skid plate", 22, 1.60, 0.46, 0},
             {"front differential", 26, 1.26, 0.45, 0},         {"front prop shaft", 8, 0.1, 0.45, 0},
             {"battery", 11, 0.95, 0.65, 0},                   {"dashboard, steering and pedals", 20, 0.72, 0.85, 0},
-            {"seats and belts", 30, -0.05, 0.62, 0},            {"fuel tank (40 L, full)", 30, -0.30, 0.50, 0},
+            {"seats and belts", 30, -0.25, 0.62, 0},            {"fuel tank (40 L, full)", 30, -0.30, 0.50, 0},
             {"exhaust and muffler", 12, -1.35, 0.62, 0},     {"rear bumper and tow hitch", 10, -1.70, 0.55, 0},
             {"coil-overs", 28, 0.0, 0.8, 0},                    {"skid plates", 14, 0.2, 0.40, 0},
-            {"cargo box and tail", 10, -1.40, 0.9, 0},          {"electronics, lamps and wiring", 18, 0.5, 0.9, 0},
+            {"cargo box and tail", 10, -1.40, 0.9, 0},          {"intercooler and fan (behind the seats)", 6, -1.15, 0.95, 0},          {"electronics, lamps and wiring", 18, 0.5, 0.9, 0},
         };
         utv.engineMass = 85;      // 900 cc triple with the turbo, intercooler plumbing and manifold
         utv.gearboxMass = 55;     // CVT housing, gearbox and the front-drive output
@@ -1484,11 +1484,11 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         baja.structureMass = 185;  // the platform pan, its backbone tunnel and the steel body tub (the rear torsion housing is an item)
         baja.panelMass = 70;       // doors (steel), fiberglass nose and the cut fenders, glass
         baja.items = {
-            {"tube push bar", 9, 1.88, 0.58, 0},              {"fuel cell behind the seats (40 L, full)", 38, -0.45, 0.62, 0},
-            {"spare wheel strapped in where the back seat was", 22, -0.65, 0.80, 0},    {"front beam and torsion bars", 22, 1.30, 0.50, 0},
+            {"tube push bar", 9, 1.88, 0.58, 0},              {"fuel tank in the nose (40 L, full)", 38, 1.20, 0.70, 0},
+            {"spare wheel in the nose well", 22, 1.50, 0.62, 0},    {"front beam and torsion bars", 22, 1.30, 0.50, 0},
             {"steering box", 6, 1.10, 0.68, -0.30},            {"dashboard", 8, 0.85, 0.95, 0},
-            {"race buckets and belts", 24, 0.15, 0.60, 0},     {"tools and recovery straps", 10, -0.50, 0.58, 0},
-            {"roll cage", 45, -0.15, 1.20, 0},                 {"battery", 15, -1.0, 0.60, 0.35},
+            {"race buckets and belts", 24, 0.15, 0.60, 0},     {"tools and recovery straps", 10, 1.15, 0.60, 0},
+            {"roll cage", 45, 0.0, 1.20, 0},                 {"battery", 15, -0.60, 0.60, 0.35},
             {"carpets, trim and wiring", 20, 0.0, 0.50, 0},    {"rear exo-cage and bumper", 18, -1.80, 0.85, 0},
             {"stinger exhaust", 10, -1.75, 0.75, 0},           {"oil cooler", 6, -1.45, 1.00, 0.25},
             {"light bar", 8, 0.20, 1.68, 0},                   {"brakes", 16, 0.0, 0.45, 0},

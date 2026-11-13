@@ -236,8 +236,14 @@ double worstAlign(const Align& a, const Align& b) { return std::max({std::fabs(a
 // Survey: every hit on a fresh car, both front wheels' alignment after, and after a field repair.
 SCENARIO(frontWheelSurvey, "survey/front-wheel-damage", "Survey (no limits): curb, rock, wall-corner hits, drops and a rock field, front alignment after and after a field repair") {
     const char* cars[] = {"BLAZER", "CIVIC", "BRONCO", "JESKO"};
-    const std::pair<HitKind, double> hits[] = {{CURB, 20}, {CURB, 35}, {CURB, 50}, {ROCK, 20}, {ROCK, 35}, {ROCK, 50}, {CORNER, 15}, {CORNER, 30},
-                                               {CORNER, 45}, {CORNER, 65}, {DROP, 1.0}, {DROP, 2.0}, {DROP, 3.5}, {FIELD, 30}, {FIELD, 45}};
+    std::vector<std::pair<HitKind, double>> hits = {{CURB, 20}, {CURB, 35}, {CURB, 50}, {ROCK, 20}, {ROCK, 35}, {ROCK, 50}, {CORNER, 15}, {CORNER, 30},
+                                                    {CORNER, 45}, {CORNER, 65}, {DROP, 1.0}, {DROP, 2.0}, {DROP, 3.5}, {FIELD, 30}, {FIELD, 45}};
+    // WD_SWEEP=lo,hi,step: the rock at each of those speeds instead (where an outcome tips over).
+    double lo, hi, st;
+    if (std::getenv("WD_SWEEP") && std::sscanf(std::getenv("WD_SWEEP"), "%lf,%lf,%lf", &lo, &hi, &st) == 3 && st > 0) {
+        hits.clear();
+        for (double v = lo; v <= hi + 1e-9; v += st) hits.push_back({ROCK, v});
+    }
     for (const char* cn : cars) {
         if (std::getenv("WD_CAR") && !std::strstr(cn, std::getenv("WD_CAR"))) continue;
         for (const auto& h : hits) {
