@@ -1681,9 +1681,16 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     // A live axle lands on its jounce bumpers (tube travel ~ wheel travel).
                     // The coil-over gets no stop of its own: pushing on the seat behind the
                     // tube, one rolled the housing over on its links in hard landings.
+                    // The bumper is sized for the weight that lands on it, not for the coil
+                    // beside it: at least the rate a jounceHz (1.5 Hz) ride on this corner would have (a
+                    // truck's own springs are about that, so theirs stay as they were). Following
+                    // the coil alone, the rock buggy's soft 1.3 Hz springs gave it a bumper a
+                    // third softer than a truck's under the same weight, and a 2 m tail-first
+                    // drop ran its axle 9.5-10 cm past the stop.
                     Beam& st = beams[wh.bumpStop];
-                    st.k = kWheel;
-                    st.c = cWheel * 2;  // rubber (or hydraulic) bumpers soak up the hit
+                    const double kRef = std::pow(2 * M_PI * vs.jounceHz, 2) * mCorner, kStop = std::max(kRide, kRef);
+                    st.k = kStop * kTire / std::max(kTire - kStop, kTire * 0.2);
+                    st.c = 2 * vs.dampingRatio * std::sqrt(st.k * mCorner) * 2;  // rubber (or hydraulic) bumpers soak up the hit
                     st.minL = st.L0 - (bump > 0 ? bump : 0.085 * sizeK);
                     st.maxL = 1e9;
                     sp.minL = 0;

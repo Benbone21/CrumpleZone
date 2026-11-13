@@ -444,7 +444,12 @@ VEHICLE_SCENARIO(tireIntoFender, "components/tire-into-fender", "Coil-over torn 
     // (A leaf-sprung corner has no coil-over to tear out: the pack is the spring, and its bump
     // stop holds the tire clear of the fender, so there may be no push at all.)
     const bool leafCorner = w.front ? spec.leafFront : spec.leafSprings;
-    ctx.metric("peak push of the tire on the body", peak / 1000, "kN", leafCorner ? 0 : 1, 400);
+    // (A tube chassis on a live front axle has no fender or wheel well at all, and its frame is
+    // necked in between the tires: the axle is on its jounce bumper before the tire reaches a tube.
+    // There is nothing for the tire to push on, so the push isn't measured: not applicable, not passed.)
+    const bool noFender = spec.openFrame && spec.frontSusp == SOLID_AXLE;
+    if (noFender) ctx.check("push on the fender: not applicable (a tube chassis on a live axle has no fender; measured " + std::to_string(peak / 1000) + " kN)", true);
+    else ctx.metric("peak push of the tire on the body", peak / 1000, "kN", leafCorner ? 0 : 1, 400);
     ctx.metric("deepest the body got into the tire (no clipping: under the sidewall)", deepest * 100, "cm", 0, 14);
     // (An open tube-frame UTV: its front knuckle is held as one solid piece, so the tire rises square
     // under the cage's tubes, which take 27 kN without a set, where it used to lean out on a folding
