@@ -137,6 +137,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     panels.clear();
     quadPanel.clear();
     links.clear();
+    wrapDampers.clear();
     frameBeams.clear();
     ladder.clear();
     ladderStations = 0;
@@ -1561,16 +1562,19 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 // (Leaves clamped along the seat: stiff against wind-up, though they do wrap a
                 // few degrees under a hard launch, and they spring back rather than bend.)
                 const int wrap = link(nullptr, dbot, axleUpperPick[ax], BEAM_ARM, LINK_BUSHING, -1);
-                // (Interleaf friction damps the wrap. At 6x the link's own damping, a loss factor of
-                // ~0.09 at the wrap's 16 Hz, the axle hopped by itself under steady power: at half
-                // throttle and 5 % wheel slip the Tacoma's rear wheel loads swung +-1,500 N, a third
-                // of their weight, growing all the way up first gear. A real pack only tramps with
-                // the wheels spinning. 15x (~0.23) more than halves it: +-650 N there, +-110 N flat
-                // out. 30x holds it under +-120 N everywhere, but the link's end nodes then need
-                // ~17 kg each to step stably, and the weight the build lends them comes off the
-                // nose: the Tacoma's front axle share fell to 52.5 % and the Blazer stopped
-                // settling. tools/trace/main/hop.cpp measures it.)
-                if (wrap >= 0) beams[wrap].yieldStrain = 0.25, beams[wrap].c *= 15;
+                // (Interleaf friction damps the wrap. With only the link's own damper at 6x, a
+                // loss factor of ~0.09 at the wrap's 16 Hz, the axle hopped by itself under
+                // steady power: at half throttle and 5 % wheel slip the Tacoma's rear wheel loads
+                // swung +-1,500 N, a third of their weight, growing all the way up first gear. A
+                // real pack only tramps with the wheels spinning. It takes ~5x that to stop it, and
+                // an explicit damper that strong needs ~17 kg on each of the link's end nodes to
+                // step stably, which the build could only take off the nose (Tacoma 52.5 % front,
+                // the Blazer no longer settling). So the rest is a damper stepped implicitly
+                // (Car::integrate): it needs no mass. tools/trace/main/hop.cpp measures the hop.)
+                if (wrap >= 0) {
+                    beams[wrap].yieldStrain = 0.25, beams[wrap].c *= 6;
+                    wrapDampers.push_back({wrap, beams[wrap].c * 4.0});
+                }
                 as.links.push_back(wrap);
                 as.links.push_back(link(nullptr, seat[0], panhardFrame[ax], BEAM_ARM, LINK_BUSHING, -1));
             } else {
@@ -1677,9 +1681,16 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     // A live axle lands on its jounce bumpers (tube travel ~ wheel travel).
                     // The coil-over gets no stop of its own: pushing on the seat behind the
                     // tube, one rolled the housing over on its links in hard landings.
+                    // The bumper is sized for the weight that lands on it, not for the coil
+                    // beside it: at least the rate a jounceHz (1.5 Hz) ride on this corner would have (a
+                    // truck's own springs are about that, so theirs stay as they were). Following
+                    // the coil alone, the rock buggy's soft 1.3 Hz springs gave it a bumper a
+                    // third softer than a truck's under the same weight, and a 2 m tail-first
+                    // drop ran its axle 9.5-10 cm past the stop.
                     Beam& st = beams[wh.bumpStop];
-                    st.k = kWheel;
-                    st.c = cWheel * 2;  // rubber (or hydraulic) bumpers soak up the hit
+                    const double kRef = std::pow(2 * M_PI * vs.jounceHz, 2) * mCorner, kStop = std::max(kRide, kRef);
+                    st.k = kStop * kTire / std::max(kTire - kStop, kTire * 0.2);
+                    st.c = 2 * vs.dampingRatio * std::sqrt(st.k * mCorner) * 2;  // rubber (or hydraulic) bumpers soak up the hit
                     st.minL = st.L0 - (bump > 0 ? bump : 0.085 * sizeK);
                     st.maxL = 1e9;
                     sp.minL = 0;
@@ -2244,35 +2255,142 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         if (getenv("CZ_STAB"))
             for (size_t i = 0; i < nodes.size(); i++)
                 if (L[i] / nodes[i].m > target * 1.3) std::printf("STAB node %zu L %.2f m %.2f L/m %.2f target %.2f\n", i, L[i], nodes[i].m, L[i] / nodes[i].m, target);
-        // Balance: what the body lent shifted the center of mass (toward the stiff nodes
-        // that borrowed: a few cm). Tilt the mass of the body nodes with plenty to spare
-        // fore-aft and side to side, just enough to put it back, so the axle loads stay the
-        // factory's. (Nodes near their limit are left alone.)
-        for (int it = 0; it < 6 && !isProp; it++) {
-            auto roomy = [&](int i) { return nodes[i].m > 2 * L[i] / target; };
-            V3 cg, xb;
-            double M = 0, Mb = 0, vx = 0, vz = 0;
-            for (size_t i = 0; i < nodes.size(); i++) cg += local[i] * nodes[i].m, M += nodes[i].m;
-            cg = cg / M;
-            for (int i = 0; i < bodyNodes; i++)
-                if (roomy(i)) xb += local[i] * nodes[i].m, Mb += nodes[i].m;
-            if (Mb <= 0) break;
-            xb = xb / Mb;
-            for (int i = 0; i < bodyNodes; i++)
-                if (roomy(i)) {
-                    vx += nodes[i].m * (local[i].x - xb.x) * (local[i].x - xb.x);
-                    vz += nodes[i].m * (local[i].z - xb.z) * (local[i].z - xb.z);
+        // Balance: what the body lent moved the center of mass, toward the stiff, light nodes
+        // that borrowed: a low car's beltline and pillars (the Jesko's came out 68 mm high, the
+        // Civic's 56), a truck's brackets and axle seats (the Blazer's 40 mm low), and fore-aft
+        // too (the Baja Bug's 29 cm forward, the Tacoma's 12 cm back). Put it back where the
+        // spec's masses put it, in all three directions: the least change to the body nodes'
+        // masses that does it, none going below what it needs to step stably (the pass's own
+        // target). Where the body hasn't the weight to spare, the nodes in the way are too
+        // stiff for the mass the car really has there, and their beams are softened a step at a
+        // time until it has (they still yield at the same force): stiffness gives way, never
+        // where the weight is.
+        if (!isProp && !getenv("CZ_NO_CG_RESTORE")) {
+            double Mnow = 0;
+            for (size_t i = 0; i < nodes.size(); i++) Mnow += nodes[i].m;
+            std::vector<double> floorM(bodyNodes), m0(bodyNodes);
+            for (int i = 0; i < bodyNodes; i++) m0[i] = nodes[i].m;
+            std::vector<char> pinned(bodyNodes, 0);
+            // One attempt: true if the body's masses got the CG there. `pinned` is left marking
+            // the nodes that ended on their floors.
+            V3 cgNow;
+            for (size_t i = 0; i < nodes.size(); i++) cgNow += local[i] * nodes[i].m;
+            cgNow = cgNow / Mnow;
+            // (The pitch inertia is held at what it is: a plain tilt of the masses along the car
+            // would spread them to its ends, the Blazer's dynamic index from 1.12 to 1.20.)
+            double pitchSpread = 0;
+            for (size_t i = 0; i < nodes.size(); i++) {
+                const V3 d = local[i] - cgNow;
+                pitchSpread += nodes[i].m * (d.x * d.x + d.y * d.y);
+            }
+            const int NC = 5;  // mass, the three first moments, the pitch inertia
+            auto shift = [&](const V3& want) {
+                for (int i = 0; i < bodyNodes; i++) nodes[i].m = m0[i], pinned[i] = 0, floorM[i] = std::min(m0[i], L[i] / target);
+                auto basis = [&](int i, double f[5]) {
+                    const V3 d = local[i] - want;
+                    f[0] = 1, f[1] = d.x, f[2] = d.y, f[3] = d.z, f[4] = d.x * d.x + d.y * d.y;
+                };
+                for (int it = 0; it < 120; it++) {
+                    double r[5] = {Mnow, 0, 0, 0, pitchSpread}, f[5];
+                    for (size_t i = 0; i < nodes.size(); i++) {
+                        basis((int)i, f);
+                        for (int c = 0; c < NC; c++) r[c] -= nodes[i].m * f[c];
+                    }
+                    bool ok = std::fabs(r[0]) < 1e-7 * Mnow && std::fabs(r[4]) < 2e-4 * Mnow;
+                    for (int c = 1; c < 4; c++) ok = ok && std::fabs(r[c]) < 2e-5 * Mnow;
+                    if (ok) return true;
+                    // Each free node's change is its mass times a . basis: solve for a.
+                    double A[5][6] = {};
+                    for (int i = 0; i < bodyNodes; i++) {
+                        if (pinned[i]) continue;
+                        basis(i, f);
+                        for (int j = 0; j < NC; j++)
+                            for (int k = 0; k < NC; k++) A[j][k] += nodes[i].m * f[j] * f[k];
+                    }
+                    for (int j = 0; j < NC; j++) A[j][NC] = r[j];
+                    for (int c = 0; c < NC; c++) {
+                        int pv = c;
+                        for (int j = c + 1; j < NC; j++)
+                            if (std::fabs(A[j][c]) > std::fabs(A[pv][c])) pv = j;
+                        if (std::fabs(A[pv][c]) < 1e-12) return false;
+                        for (int k = 0; k <= NC; k++) std::swap(A[c][k], A[pv][k]);
+                        for (int j = 0; j < NC; j++) {
+                            if (j == c) continue;
+                            const double g2 = A[j][c] / A[c][c];
+                            for (int k = c; k <= NC; k++) A[j][k] -= g2 * A[c][k];
+                        }
+                    }
+                    for (int i = 0; i < bodyNodes; i++) {
+                        if (pinned[i]) continue;
+                        basis(i, f);
+                        double q = 0;
+                        for (int c = 0; c < NC; c++) q += A[c][NC] / A[c][c] * f[c];
+                        const double dm = nodes[i].m * q;
+                        if (nodes[i].m + dm <= floorM[i]) pinned[i] = 1;
+                        nodes[i].m = std::max(floorM[i], nodes[i].m + dm);
+                    }
                 }
-            const double bx = -(cg.x - cgBefore.x) * M / std::max(vx, 1e-9), bz = -(cg.z - cgBefore.z) * M / std::max(vz, 1e-9);
-            double before = 0, after = 0;
-            for (int i = 0; i < bodyNodes; i++)
-                if (roomy(i)) {
-                    before += nodes[i].m;
-                    nodes[i].m *= clampd(1 + bx * (local[i].x - xb.x) + bz * (local[i].z - xb.z), 0.6, 1.6);
-                    after += nodes[i].m;
+                return false;
+            };
+            bool there = shift(cgBefore);
+            int rounds = 0;
+            // A carbon tub's upper body (the Jesko's canopy, beltline and clamshells) is thin
+            // panels on the real car, and built as stiff as the tub it asks for weight the car
+            // doesn't have up there (91 kg on the Jesko's beltline): that lattice is softened,
+            // three steps of 12 % (it still yields at the same force), so most of the weight can
+            // go back down. Three, not all the way: each step costs torsional stiffness and
+            // steadiness under power (0 steps: CG 0.46 m on its tires, 26.8 kNm/deg, yaw swing
+            // after a kick 0.02; 3: 0.43, 23.6, 0.09; 6: 0.41, 20.9, 0.14; 10: 0.40 (its parts'),
+            // 17.6, 0.19). Steel bodies keep their stiffness, and get as close as their weight allows.
+            for (; !there && vs.carbonTub && !vs.openFrame && rounds < 3; rounds++) {  // (the UTV's spec is a copy of the Jesko's: a tube frame is no tub)
+                const double f = 0.88, above = vs.layerY[1] + 0.01;
+                std::vector<char> done(beams.size(), 0);
+                for (int i = 0; i < bodyNodes; i++) {
+                    if (!pinned[i] || local[i].y < above) continue;
+                    for (int bj : nb[i]) {
+                        Beam& b = beams[bj];
+                        const int o = b.a == i ? b.b : b.a;
+                        // (Body and cabin lattice only: the cells the suspension and the engine bolt to
+                        // are frame members and stay as stiff as they were. Softened too, the Jesko's
+                        // rear pick-ups gave and it weaved under power.)
+                        if (done[bj] || (b.type != BEAM_BODY && b.type != BEAM_CABIN) || local[o].y < above) continue;
+                        done[bj] = 1;
+                        b.k *= f, b.c *= f;
+                        b.yieldStrain /= f;
+                    }
+                    for (int pi : pinsAt[i]) {  // (a softer pin still lets go at the same force)
+                        Pin& pn = pins[pi];
+                        pn.breakDist = pn.slack + (pn.breakDist - pn.slack) / f;
+                        pn.k *= f, pn.c *= f;
+                    }
                 }
-            for (int i = 0; i < bodyNodes; i++)
-                if (roomy(i)) nodes[i].m *= before / after;  // (same total)
+                for (size_t i = 0; i < nodes.size(); i++) L[i] = load(i);
+                there = shift(cgBefore);
+            }
+            double got = there ? 1.0 : 0.0;
+            if (!there) {
+                // As far along the way back as the body's weight allows (to 1/128 of it).
+                double lo = 0, hi = 1;
+                for (int k = 0; k < 7; k++) {
+                    const double mid = (lo + hi) / 2;
+                    (shift(cgNow + (cgBefore - cgNow) * mid) ? lo : hi) = mid;
+                }
+                got = lo;
+                if (lo <= 0 || !shift(cgNow + (cgBefore - cgNow) * lo))
+                    for (int i = 0; i < bodyNodes; i++) nodes[i].m = m0[i];
+            }
+            // (Exactly the weight it had.)
+            double M = 0, Mb = 0;
+            for (size_t i = 0; i < nodes.size(); i++) M += nodes[i].m;
+            for (int i = 0; i < bodyNodes; i++) Mb += nodes[i].m;
+            const double k = 1 + (Mnow - M) / std::max(Mb, 1e-9);
+            for (int i = 0; i < bodyNodes; i++) nodes[i].m *= k;
+            if (getenv("CZ_CG")) {
+                V3 cg;
+                for (size_t i = 0; i < nodes.size(); i++) cg += local[i] * nodes[i].m;
+                cg = cg / Mnow;
+                std::printf("CG %s: parts (%.4f, %.4f, %.4f) lent (%.4f, %.4f, %.4f) built (%.4f, %.4f, %.4f) M %.1f, %d softening rounds, %.0f %% of the way back\n", vs.name, cgBefore.x, cgBefore.y, cgBefore.z, cgNow.x, cgNow.y, cgNow.z, cg.x, cg.y, cg.z, Mnow, rounds, got * 100);
+            }
         }
         if (getenv("CZ_DEBUG"))
             for (size_t i = 0; i < nodes.size(); i++)

@@ -207,6 +207,10 @@ struct VehicleSpec {
     // Wheel travel from ride height (m at the wheel): up to the bump stop, down to full droop.
     // 0 = the old defaults scaled by tire size.
     double bumpFront = 0, droopFront = 0, bumpRear = 0, droopRear = 0;
+    // A live axle's jounce bumpers: the ride frequency (Hz) the bumper's own rate would give the
+    // weight on that corner. 1.5: a truck's rubber bumper. Nitrogen-charged hydraulic bump stops
+    // (desert and rock racers) are firmer.
+    double jounceHz = 1.5;
     // Front anti-roll bar disconnect: 0 none, 1 electronic (a dash button, under 30 km/h),
     // 2 quick-disconnect pins (stopped only).
     int swayDisconnect = 0;
