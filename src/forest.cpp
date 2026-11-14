@@ -381,10 +381,10 @@ void build(const World& w, bool skipPines, bool skipSnags, Set& out) {
         const bool gen = lk.design >= kGenDesign;
         if (t.kind == kGenKind && !gen) continue;  // (a species this build doesn't know)
         anyGen |= gen;
-        lk.seed = gen && t.kind != kGenKind ? 1 + seed % 4 : 1 + seed % 6;  // (a stand-in: four of each, there are more species)
-        if (!gen) lk.classic = 0;  // (only a stand-in's trunk depends on which classic design it stands for)
+        lk.seed = gen && t.kind != kGenKind ? 1 + seed % 2 : 1 + seed % 6;  // (a stand-in: two of each, there are many more species)
+        lk.classic = 0;  // (...and one trunk a kind, made for the kind's first design's collider: models and draws stay few)
         lk.snow = w.surfaceAt(t.base.x, t.base.z) == SURF_SNOW;
-        const auto key = std::make_tuple(lk.kind, lk.design, lk.seed + 16 * lk.classic, lk.snow ? 1 : 0);
+        const auto key = std::make_tuple(lk.kind, lk.design, lk.seed, lk.snow ? 1 : 0);
         auto it = index.find(key);
         if (it == index.end()) {
             it = index.emplace(key, (int)out.shapes.size()).first;

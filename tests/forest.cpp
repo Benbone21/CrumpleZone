@@ -8,6 +8,7 @@
 #include "../src/farforest.h"
 #include "../src/forest.h"
 #include "../src/procworld.h"
+#include "../src/plantgen.h"
 #include "harness.h"
 
 SCENARIO(forestInstances, "forest/instances", "Every tree is one instance of a model built once: the meshes are a few percent of baking the forest, and far copies are much lighter") {
@@ -26,6 +27,9 @@ SCENARIO(forestInstances, "forest/instances", "Every tree is one instance of a m
 }
 
 SCENARIO(forestTrunks, "forest/trunks", "Each kind and design of tree: its trunk's Pole is as thick as the drawn trunk 1 m up") {
+    // (The classic models, which the Poles are made from: --classic-plants. The generated stand-ins' trunks are checked in
+    // procplants/switch and procplants/trunks, with a measure that tells a stem from the limbs crossing the plane.)
+    plantgen::EverywhereHere classic(false);
     World w(MAP_BACKCOUNTRY);
     forest::Set set;
     forest::build(w, false, false, set);

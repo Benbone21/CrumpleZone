@@ -317,6 +317,11 @@ SCENARIO(procPlantsSwitch, "procplants/switch", "Classic maps: off (the default)
         if (!seen.insert({s.look.kind, s.look.design}).second) continue;
         // (a single trunk that forks above where the Pole is measured: a low desert tree's limbs are not a cylinder to compare)
         // (nor a short stand-in: its believable trunk is thinner than the tall classic tree's Pole, which it hides in its crown)
+        // (nor a tree of its kind's other classic designs: the stand-in's trunk is made for the first one's collider)
+        if (t.design > 0) {
+            seen.erase({s.look.kind, s.look.design});
+            continue;
+        }
         if (!sp || (int)sp->v("stems", 1) > 1 || stand < 0.7 || 1.2 / a.scale > 5.0 * sp->v("trunk_len")) continue;
         const Pole* pole = nullptr;
         for (const Pole& p : w.poles)
