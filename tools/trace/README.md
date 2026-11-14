@@ -65,7 +65,8 @@ against the current code; kept for the idea).
 | `main/launchtrace.cpp` | Trace a full-throttle launch: gear, rpm, engine torque, tcCut, wheel omega*R vs speed. |
 | `main/bead.cpp` | tires/debead replica: peak bead load at each wheel against the load that rolls the tire off (vehicle, psi, steer). |
 | `main/hop.cpp` | Axle hop under power (vehicle, throttle, seconds): the strongest 6-30 Hz line of the rear wheel loads and hub height, per half second. |
-| `main/ledge.cpp` | Nose off a 1.2 m ledge (rock-hits #3): where does the frame take a set, and when. |
+| `main/land.cpp` | dynamics/landing-settle replica (vehicle, drop height): each wheel's static load and how high its tire comes off the ground after the squat; springs and dampers. |
+| `main/ledge.cpp` | Nose off a ledge (rock-hits #3; vehicle, crawl speed, ledge height): where the frame takes a set, when, and where that member is against the lip. LEDGE_LOG=1: frame by frame. |
 | `main/linkgeo.cpp` | (no notes: see main()) |
 | `main/links.cpp` | (no notes: see main()) |
 | `main/lowpts.cpp` | lowest colliding nodes overall excluding hub inner/outer |

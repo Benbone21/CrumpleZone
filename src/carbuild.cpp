@@ -2255,19 +2255,52 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         if (getenv("CZ_STAB"))
             for (size_t i = 0; i < nodes.size(); i++)
                 if (L[i] / nodes[i].m > target * 1.3) std::printf("STAB node %zu L %.2f m %.2f L/m %.2f target %.2f\n", i, L[i], nodes[i].m, L[i] / nodes[i].m, target);
-        // Balance: what the body lent moved the center of mass, toward the stiff, light nodes
-        // that borrowed: a low car's beltline and pillars (the Jesko's came out 68 mm high, the
-        // Civic's 56), a truck's brackets and axle seats (the Blazer's 40 mm low), and fore-aft
-        // too (the Baja Bug's 29 cm forward, the Tacoma's 12 cm back). Put it back where the
-        // spec's masses put it, in all three directions: the least change to the body nodes'
-        // masses that does it, none going below what it needs to step stably (the pass's own
-        // target). Where the body hasn't the weight to spare, the nodes in the way are too
-        // stiff for the mass the car really has there, and their beams are softened a step at a
-        // time until it has (they still yield at the same force): stiffness gives way, never
-        // where the weight is.
+        // Balance: what the body lent shifted the center of mass (toward the stiff nodes
+        // that borrowed: a few cm). Tilt the mass of the body nodes with plenty to spare
+        // fore-aft and side to side, just enough to put it back, so the axle loads stay the
+        // factory's. (Nodes near their limit are left alone.)
+        for (int it = 0; it < 6 && !isProp; it++) {
+            auto roomy = [&](int i) { return nodes[i].m > 2 * L[i] / target; };
+            V3 cg, xb;
+            double M = 0, Mb = 0, vx = 0, vz = 0;
+            for (size_t i = 0; i < nodes.size(); i++) cg += local[i] * nodes[i].m, M += nodes[i].m;
+            cg = cg / M;
+            for (int i = 0; i < bodyNodes; i++)
+                if (roomy(i)) xb += local[i] * nodes[i].m, Mb += nodes[i].m;
+            if (Mb <= 0) break;
+            xb = xb / Mb;
+            for (int i = 0; i < bodyNodes; i++)
+                if (roomy(i)) {
+                    vx += nodes[i].m * (local[i].x - xb.x) * (local[i].x - xb.x);
+                    vz += nodes[i].m * (local[i].z - xb.z) * (local[i].z - xb.z);
+                }
+            const double bx = -(cg.x - cgBefore.x) * M / std::max(vx, 1e-9), bz = -(cg.z - cgBefore.z) * M / std::max(vz, 1e-9);
+            double before = 0, after = 0;
+            for (int i = 0; i < bodyNodes; i++)
+                if (roomy(i)) {
+                    before += nodes[i].m;
+                    nodes[i].m *= clampd(1 + bx * (local[i].x - xb.x) + bz * (local[i].z - xb.z), 0.6, 1.6);
+                    after += nodes[i].m;
+                }
+            for (int i = 0; i < bodyNodes; i++)
+                if (roomy(i)) nodes[i].m *= before / after;  // (same total)
+        }
+        // Height: the lending also moves weight up or down, toward the stiff, light nodes that
+        // borrowed: a low car's beltline and pillars (the Jesko's center of gravity came out 68 mm
+        // high, the Civic's 56), a truck's brackets and axle seats (the Blazer's 40 mm low, the
+        // Bronco's 29). Put the height back where the spec's masses put it, with the balance held
+        // where the tilt above left it (the axle loads everything is sized and tested on): the
+        // least change to the body nodes' masses that does it, the pitch inertia held too, none
+        // going below what the lending leaves a donor. Where the body hasn't the weight to spare
+        // it goes as far as it can.
         if (!isProp && !getenv("CZ_NO_CG_RESTORE")) {
             double Mnow = 0;
             for (size_t i = 0; i < nodes.size(); i++) Mnow += nodes[i].m;
+            // (No node gives up weight below 1.25 times what it needs to step stably at the pass's
+            // target: the margin the lending itself leaves a donor. At 1.0 the Blazer, most of its
+            // body nodes sitting exactly on their limit, blew a fender node up against a tree at
+            // 120 km/h: recovery/tree-stuck.)
+            const double kGiveFloor = 1.25;
             std::vector<double> floorM(bodyNodes), m0(bodyNodes);
             for (int i = 0; i < bodyNodes; i++) m0[i] = nodes[i].m;
             std::vector<char> pinned(bodyNodes, 0);
@@ -2285,7 +2318,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             }
             const int NC = 5;  // mass, the three first moments, the pitch inertia
             auto shift = [&](const V3& want) {
-                for (int i = 0; i < bodyNodes; i++) nodes[i].m = m0[i], pinned[i] = 0, floorM[i] = std::min(m0[i], L[i] / target);
+                for (int i = 0; i < bodyNodes; i++) nodes[i].m = m0[i], pinned[i] = 0, floorM[i] = std::min(m0[i], kGiveFloor * L[i] / target);
                 auto basis = [&](int i, double f[5]) {
                     const V3 d = local[i] - want;
                     f[0] = 1, f[1] = d.x, f[2] = d.y, f[3] = d.z, f[4] = d.x * d.x + d.y * d.y;
@@ -2332,7 +2365,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 }
                 return false;
             };
-            bool there = shift(cgBefore);
+            const V3 wantCg(cgNow.x, cgBefore.y, cgNow.z);
+            bool there = shift(wantCg);
             int rounds = 0;
             // A carbon tub's upper body (the Jesko's canopy, beltline and clamshells) is thin
             // panels on the real car, and built as stiff as the tub it asks for weight the car
@@ -2365,18 +2399,18 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     }
                 }
                 for (size_t i = 0; i < nodes.size(); i++) L[i] = load(i);
-                there = shift(cgBefore);
+                there = shift(wantCg);
             }
-            double got = there ? 1.0 : 0.0;
+            double gotY = there ? 1.0 : 0.0;
             if (!there) {
-                // As far along the way back as the body's weight allows (to 1/128 of it).
+                // As far up or down as the body's weight allows (to 1/128 of the way).
                 double lo = 0, hi = 1;
                 for (int k = 0; k < 7; k++) {
                     const double mid = (lo + hi) / 2;
-                    (shift(cgNow + (cgBefore - cgNow) * mid) ? lo : hi) = mid;
+                    (shift(V3(cgNow.x, cgNow.y + (cgBefore.y - cgNow.y) * mid, cgNow.z)) ? lo : hi) = mid;
                 }
-                got = lo;
-                if (lo <= 0 || !shift(cgNow + (cgBefore - cgNow) * lo))
+                gotY = lo;
+                if (lo <= 0 || !shift(V3(cgNow.x, cgNow.y + (cgBefore.y - cgNow.y) * lo, cgNow.z)))
                     for (int i = 0; i < bodyNodes; i++) nodes[i].m = m0[i];
             }
             // (Exactly the weight it had.)
@@ -2389,7 +2423,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 V3 cg;
                 for (size_t i = 0; i < nodes.size(); i++) cg += local[i] * nodes[i].m;
                 cg = cg / Mnow;
-                std::printf("CG %s: parts (%.4f, %.4f, %.4f) lent (%.4f, %.4f, %.4f) built (%.4f, %.4f, %.4f) M %.1f, %d softening rounds, %.0f %% of the way back\n", vs.name, cgBefore.x, cgBefore.y, cgBefore.z, cgNow.x, cgNow.y, cgNow.z, cg.x, cg.y, cg.z, Mnow, rounds, got * 100);
+                std::printf("CG %s: parts (%.4f, %.4f, %.4f) balanced (%.4f, %.4f, %.4f) built (%.4f, %.4f, %.4f) M %.1f, %d softening rounds, %.0f %% of the way back in height\n", vs.name, cgBefore.x, cgBefore.y, cgBefore.z, cgNow.x, cgNow.y, cgNow.z, cg.x, cg.y, cg.z, Mnow, rounds, gotY * 100);
             }
         }
         if (getenv("CZ_DEBUG"))
