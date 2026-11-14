@@ -1,0 +1,30 @@
+# Engelmann / blue spruce: taller and narrower than the fir, short boughs hanging steeply, near black-green.
+name SPRUCE
+about Tall narrow spruce: short steep boughs, a long spire, blue-black green
+class tree
+id 2
+form excurrent
+replaces pine 1
+size 12 24
+count 50 5
+angle 108 60
+angle_top 55
+length 0.19 0.4
+crown spire
+start 0.08 0.2
+up 0 -0.05 0
+segs 10 3 1
+dead_low 0.05
+leader 0.08
+leaf_step 0.036
+cards 2
+card 0.08 0.055
+flat 0.6
+align 0.9
+droop 0.15
+scatter 0.008
+trunk_radius 0.018
+bark 0.25 0.21 0.19
+bark2 0.33 0.28 0.25
+leaf 0.085 0.203 0.169
+leaf2 0.169 0.321 0.254

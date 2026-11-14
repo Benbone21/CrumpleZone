@@ -1,0 +1,37 @@
+# Two-needle pinyon: a small, dense, rounded pine on one crooked trunk, branched from low down, darker and greener than the
+# juniper it grows with.
+name PINYON
+about Small rounded pine, dense and dark, on one crooked trunk
+class tree
+id 4
+form excurrent
+replaces dryland 1
+size 2.6 5.5
+count 18 5
+angle 78 50
+angle_top 30
+length 0.40 0.5
+crown round
+start 0.14 0.3
+up 0 0.25 0.1
+gnarl 0.07 0.16 0.2
+segs 7 4 2
+planar 0 0.3
+leader 0.06
+leaf_order 1
+leaf_from 0.45
+leaf_step 0.06
+cards 4
+card 0.08 0.055
+scatter 0.035
+align 0.35
+trunk_radius 0.042
+flare 1.4
+pipe 2.3
+dead 0.07
+width 0.4
+bark 0.24 0.20 0.17
+bark2 0.36 0.31 0.26
+leaf 0.149 0.254 0.120
+leaf2 0.254 0.374 0.164
+puff 0.045 0.85

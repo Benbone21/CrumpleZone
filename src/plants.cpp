@@ -1,7 +1,10 @@
 #include "plants.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <string>
+#include <vector>
 
 namespace {
 const PlantInfo kInfo[BUSH_KIND_COUNT] = {
@@ -18,21 +21,41 @@ const PlantInfo kInfo[BUSH_KIND_COUNT] = {
     {"MUSHROOMS", 0.3, 0.7, 0.5, 0.2, 0.3, 0.9},
     {"MOSSY ROCKS", 0.4, 1.0, 0.7, 0.3, 0.4, 1.0},
     {"WILDFLOWERS", 0.5, 1.2, 0.8, 0.25, 0.3, 1.0},
+    {"BLACKBRUSH", 0.35, 0.8, 0.55, 0.4, 0.5, 1.0},
+    {"MORMON TEA", 0.35, 0.8, 0.55, 0.6, 0.7, 0.9},
+    {"RABBITBRUSH", 0.4, 0.9, 0.6, 0.55, 0.65, 1.0},
+    {"SALTBUSH", 0.35, 0.8, 0.55, 0.4, 0.5, 1.0},
+    {"PRICKLY PEAR", 0.3, 0.7, 0.45, 0.3, 0.4, 1.0},
+    {"BUNCHGRASS", 0.25, 0.55, 0.4, 0.5, 0.6, 0.9},
+    {"COYOTE WILLOW", 0.8, 1.7, 1.2, 1.3, 1.4, 0.9},
 };
 
 // Weights by kind, for open ground and a wood's edge, in each habitat.
-//                  LEAF SAGE JUNI FLOW FERN REED CACT YUCC HEAT TUMB MUSH MOSS WILD
+//                  LEAF SAGE JUNI FLOW FERN REED CACT YUCC HEAT TUMB MUSH MOSS WILD, then the palette-only kinds (0: vegetation.h grows them)
 const int kMix[HAB_COUNT][2][BUSH_KIND_COUNT] = {
-    /* meadow */ {{44, 3, 4, 14, 0, 0, 0, 0, 0, 0, 0, 3, 26}, {40, 0, 8, 12, 12, 0, 0, 0, 0, 0, 8, 8, 12}},
-    /* desert */ {{3, 40, 4, 0, 0, 0, 18, 12, 0, 20, 0, 0, 3}, {3, 40, 4, 0, 0, 0, 18, 12, 0, 20, 0, 0, 3}},
-    /* forest */ {{26, 0, 12, 6, 22, 0, 0, 0, 2, 0, 8, 10, 14}, {22, 0, 10, 5, 28, 0, 0, 0, 0, 0, 14, 16, 5}},
-    /* canyon */ {{5, 28, 22, 0, 0, 0, 9, 14, 0, 14, 0, 0, 8}, {5, 22, 30, 0, 0, 0, 9, 14, 0, 14, 0, 0, 6}},
-    /* wetland */ {{10, 0, 0, 5, 14, 46, 0, 0, 0, 0, 5, 6, 14}, {14, 0, 0, 6, 22, 24, 0, 0, 0, 0, 14, 12, 8}},
-    /* upland */ {{8, 8, 18, 0, 0, 0, 0, 0, 40, 0, 0, 12, 14}, {10, 4, 24, 0, 6, 0, 0, 0, 30, 0, 4, 14, 8}},
+    /* meadow */ {{44, 3, 4, 14, 0, 0, 0, 0, 0, 0, 0, 3, 26, 0, 0, 0, 0, 0, 0, 0}, {40, 0, 8, 12, 12, 0, 0, 0, 0, 0, 8, 8, 12, 0, 0, 0, 0, 0, 0, 0}},
+    /* desert */ {{3, 40, 4, 0, 0, 0, 18, 12, 0, 20, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0}, {3, 40, 4, 0, 0, 0, 18, 12, 0, 20, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0}},
+    /* forest */ {{26, 0, 12, 6, 22, 0, 0, 0, 2, 0, 8, 10, 14, 0, 0, 0, 0, 0, 0, 0}, {22, 0, 10, 5, 28, 0, 0, 0, 0, 0, 14, 16, 5, 0, 0, 0, 0, 0, 0, 0}},
+    /* canyon */ {{5, 28, 22, 0, 0, 0, 9, 14, 0, 14, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0}, {5, 22, 30, 0, 0, 0, 9, 14, 0, 14, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0}},
+    /* wetland */ {{10, 0, 0, 5, 14, 46, 0, 0, 0, 0, 5, 6, 14, 0, 0, 0, 0, 0, 0, 0}, {14, 0, 0, 6, 22, 24, 0, 0, 0, 0, 14, 12, 8, 0, 0, 0, 0, 0, 0, 0}},
+    /* upland */ {{8, 8, 18, 0, 0, 0, 0, 0, 40, 0, 0, 12, 14, 0, 0, 0, 0, 0, 0, 0}, {10, 4, 24, 0, 6, 0, 0, 0, 30, 0, 4, 14, 8, 0, 0, 0, 0, 0, 0, 0}},
 };
 }  // namespace
 
 const PlantInfo& plantInfo(int kind) { return kInfo[plantKindOf(kind)]; }
+
+const char* plantKindName(int kind) {
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> v;
+        for (const PlantInfo& p : kInfo) {
+            std::string s = p.name;
+            for (char& c : s) c = c == ' ' ? '_' : (char)std::tolower((unsigned char)c);
+            v.push_back(s);
+        }
+        return v;
+    }();
+    return names[plantKindOf(kind)].c_str();
+}
 
 int plantKindFor(int habitat, bool edge, double u) {
     const int* w = kMix[std::min(std::max(habitat, 0), (int)HAB_COUNT - 1)][edge ? 1 : 0];

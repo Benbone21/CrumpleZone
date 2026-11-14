@@ -42,6 +42,8 @@ enum Mat : uint8_t {
     FOLIAGE = 13,   // leaves, needles, grass: soft light, glows with the sun behind
     WOOD = 14,      // weathered grain
     SNOWLEAF = 15,  // snow lying on boughs and crowns: plain matte, but dissolves with the foliage under it (see-through trees)
+    LEAFCUT = 16,   // leaf cards (the generated plants: plantgen.h): foliage the tree shader cuts to a leafy outline; only the
+                    // forest's instanced trees and bushes carry it (treedraw.cpp), the model kit's copies are plain FOLIAGE
     // Water (the waterfall, src/models/water.cpp): drawn see-through and moving by the water shader. Their vertex colour isn't a
     // colour but the shader's coordinates: (across, down the fall, opacity) in metres, or (u, v, phase) on a puff.
     WATERFALL = 20,  // the falling sheet
@@ -114,6 +116,7 @@ struct ModelDef {
     std::string id, title, category, use;  // use: what it is / where the game uses it
     double size = 1;                        // about how big it is (m): how far back the camera sits
     std::vector<Variant> variants;
+    bool cache = true;                      // its meshes kept in the mesh cache (false: built from data files the cache's key doesn't see)
 };
 
 // A mesh as bytes, field by field (no struct padding), and back: what the mesh cache (meshcache.h) stores. unpackMesh is false
@@ -124,6 +127,11 @@ bool unpackMesh(const std::vector<uint8_t>& bytes, Mesh& m);
 // Registers a model (from a static in src/models/*.cpp).
 struct Reg {
     explicit Reg(ModelDef def);
+};
+// Models made from data files (the generated plants: one design per species file), which can't be read while statics are being
+// set up: `make` runs on the first look at the catalog and its models go at the end of it.
+struct LateReg {
+    explicit LateReg(std::function<std::vector<ModelDef>()> make);
 };
 const std::vector<ModelDef>& catalog();
 const ModelDef* findModel(const std::string& id);

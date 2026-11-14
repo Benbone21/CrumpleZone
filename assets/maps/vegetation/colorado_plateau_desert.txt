@@ -1,0 +1,79 @@
+# The Colorado Plateau's canyon country below about 1900 m (Moab, Canyonlands, Arches, Glen Canyon): what grows where.
+# Read by a real-terrain sidecar's `vegetation colorado_plateau_desert` (src/vegetation.h has the format).
+# No tall conifers at these elevations: Utah juniper and two-needle pinyon are short and round, and thin out to nothing on the
+# valley floors. Bare slickrock carries nothing. Fremont cottonwood, tamarisk and coyote willow keep to the water.
+# Densities are a hectare of ground that carries plants: where the map has a ground cover from aerial photos, its brush class.
+name COLORADO PLATEAU DESERT
+plants procedural       # the plant generator's species (assets/plants) where it has one of the name
+upland 1330 1560        # benches and mesa tops: juniper comes in over this band (the valley floors below have none)
+riparian 70 6           # the river's banks and bars
+wash 22 3               # dry washes
+slope 0.5 0.7
+open 0.12
+sand_water 0.3
+crown 3
+
+# Bare sandstone: nothing (a rock zone with no species).
+zone rock 0 0
+
+# Sand flats and dunes: nearly bare, a tuft or a shrub here and there.
+zone sand 0.12 5
+  tree juniper 1 2.0 3.6
+  shrub bunchgrass 40
+  shrub sagebrush 18
+  shrub mormon_tea 16
+  shrub rabbitbrush 10
+  shrub yucca 10
+  shrub tumbleweed 6
+
+# Valley floors and low benches: salt-desert scrub; cottonwoods only on the Moab valley floor (the creeks, the town: under 1262 m).
+zone lowland 5 180
+  tree cottonwood 55 7 13 below 1262
+  tree tamarisk 30 2.5 4.5 below 1262
+  tree juniper 15 2.2 4.0 above 1290
+  shrub saltbush 30
+  shrub rabbitbrush 20
+  shrub sagebrush 16
+  shrub bunchgrass 12
+  shrub blackbrush 10
+  shrub mormon_tea 5
+  shrub prickly_pear 4
+  shrub tumbleweed 3
+
+# Slickrock benches and mesa tops: blackbrush flats with scattered juniper, some pinyon, dead grey snags.
+zone upland 40 180
+  tree juniper 72 2.2 4.8
+  tree pinyon 20 2.6 5.5
+  tree snag 8 2.0 3.8
+  shrub blackbrush 42
+  shrub bunchgrass 14
+  shrub mormon_tea 13
+  shrub sagebrush 7
+  shrub saltbush 6
+  shrub yucca 5
+  shrub prickly_pear 5
+  shrub rabbitbrush 4
+  shrub juniper 4 size 0.8
+
+# Along the river: tamarisk and willow thickets, cottonwood galleries.
+zone riparian 55 260
+  tree tamarisk 74 2.6 5.5
+  tree cottonwood 26 8 16
+  shrub coyote_willow 46
+  shrub saltbush 14
+  shrub rabbitbrush 12
+  shrub reeds 12
+  shrub bunchgrass 10
+  shrub sagebrush 6
+
+# Dry washes: rabbitbrush and big sage on the banks; a tamarisk or a cottonwood only down on the valley's creeks.
+zone wash 10 220
+  tree tamarisk 50 2.2 4.2 below 1270
+  tree juniper 30 2.2 4.2 above 1290
+  tree cottonwood 12 6 11 below 1270
+  shrub rabbitbrush 30
+  shrub sagebrush 25
+  shrub saltbush 15
+  shrub bunchgrass 12
+  shrub mormon_tea 10
+  shrub coyote_willow 8

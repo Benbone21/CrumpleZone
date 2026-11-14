@@ -1,0 +1,26 @@
+# A dead standing tree: a bleached grey trunk and the broken stubs of its limbs.
+name GREY SNAG
+about Bleached bare snag with broken limbs
+class tree
+id 10
+form excurrent
+replaces snag 0
+size 5 11
+orders 3
+count 10 2
+angle 72 45
+angle_top 45
+length 0.3 0.5
+crown round
+start 0.28 0.3
+up 0 0.1 0
+gnarl 0.03 0.16 0.2
+segs 8 3 2
+planar 0 0.2
+cards 0
+dead 1
+broken 0.5
+trunk_radius 0.03
+bark 0.45 0.42 0.38
+bark2 0.60 0.57 0.52
+deadwood 0.62 0.59 0.54

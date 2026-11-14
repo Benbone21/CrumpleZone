@@ -903,6 +903,18 @@ bool parseSpec(const std::string& text, const std::string& dir, Spec& s, std::st
         } else if (key == "cover") {
             if (!need(1)) return false;
             s.cover = a[0];
+        } else if (key == "vegetation") {
+            if (!need(1)) return false;
+            s.vegetation = lower(a[0]);
+            const std::string vf = veg::findFile(s.vegetation, dir);
+            std::ifstream vin(vf);
+            if (vf.empty() || !vin) return fail(err, "no vegetation palette " + s.vegetation + ".txt (beside the sidecar, or in the maps' vegetation folder)");
+            std::stringstream vs;
+            vs << vin.rdbuf();
+            s.vegText = vs.str();
+            std::string why;
+            if (!veg::parse(s.vegText, s.veg, &why)) return fail(err, why);
+            s.hasVeg = true;
         } else if (key == "ledge_sharpen") s.ledgeSharpen = clampd(num(0), 0, 1);
         else if (key == "backdrop") {
             if (!need(1)) return false;
@@ -1189,6 +1201,7 @@ bool loadSpec(const std::string& path, Spec& out, std::string* err) {
     for (char c : out.text) h = (h ^ (uint8_t)c) * 1099511628211ull;
     for (char c : out.osmText) h = (h ^ (uint8_t)c) * 1099511628211ull;  // (its OpenStreetMap file too)
     for (char c : out.includeText) h = (h ^ (uint8_t)c) * 1099511628211ull;  // (and what it includes)
+    for (char c : out.vegText) h = (h ^ (uint8_t)c) * 1099511628211ull;  // (and its vegetation palette)
     // (the lidar patches and the ground cover: their bytes)
     std::vector<std::string> more;
     for (const SpecDetail& d : out.details) more.push_back(d.path);

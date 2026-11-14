@@ -3,11 +3,15 @@
 // and no plant is anything a truck can hit.
 #include <cmath>
 #include <cstdio>
+#include <cctype>
+#include <fstream>
 #include <set>
+#include <sstream>
 
 #include "../src/editcore.h"
 #include "../src/level.h"
 #include "../src/modelkit.h"
+#include "../src/platform.h"
 #include "harness.h"
 
 namespace {
@@ -21,11 +25,25 @@ Level roundTrip(const Level& l) {
 SCENARIO(plantsKinds, "plants/kinds", "Every plant kind is a design of the bush model that builds and fits its size, and grows somewhere; each habitat's mix only picks kinds that grow there") {
     const mk::ModelDef* d = mk::findModel("bush");
     ctx.check("the bush model is there with a design per kind", d && (int)d->variants.size() == BUSH_KIND_COUNT, d ? std::to_string(d->variants.size()) : "none");
+    std::string palette;
+    {
+        std::ifstream f(findAssetDir("assets/maps") + "/vegetation/colorado_plateau_desert.txt");
+        std::stringstream ss;
+        ss << f.rdbuf();
+        palette = ss.str();
+    }
     for (int k = 0; k < BUSH_KIND_COUNT; k++) {
         const PlantInfo& pi = plantInfo(k);
         ctx.check(std::string(pi.name) + ": a sane size range", pi.rMin > 0.2 && pi.rMin < pi.rDefault && pi.rDefault < pi.rMax && pi.rMax < 2 && pi.ry > 0 && pi.rx > 0);
         bool somewhere = false;
         for (int h = 0; h < HAB_COUNT; h++) somewhere |= plantGrowsIn(h, k);
+        // (the dry country's kinds are in no habitat's mix: a vegetation palette grows them, and the shipped one names each)
+        if (k >= BUSH_BLACKBRUSH) {
+            std::string name = pi.name;
+            for (char& c : name) c = c == ' ' ? '_' : (char)std::tolower((unsigned char)c);
+            ctx.check(std::string(pi.name) + ": in no habitat's mix (other maps' scatter is as it was)", !somewhere);
+            somewhere = palette.find("shrub " + name + " ") != std::string::npos;
+        }
         ctx.check(std::string(pi.name) + ": grows somewhere", somewhere);
         if (!d || k >= (int)d->variants.size()) continue;
         // The design stands about as wide as its radius says (built 0.8 m in radius), and its height fits the pick ellipsoid.

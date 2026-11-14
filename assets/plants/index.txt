@@ -1,0 +1,24 @@
+# The species the plant generator knows (src/plantgen.h, docs/procedural-plants.md): one NAME.txt each, a name a line.
+# Trees.
+fir
+spruce
+ponderosa
+pinyon
+juniper
+cottonwood
+aspen
+oak
+tamarisk
+snag
+snag_burnt
+snag_broken
+# Shrubs, grasses, yuccas, cacti.
+sagebrush
+blackbrush
+mormon_tea
+rabbitbrush
+saltbush
+yucca
+prickly_pear
+bunchgrass
+coyote_willow

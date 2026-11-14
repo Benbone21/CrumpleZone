@@ -1,0 +1,36 @@
+# Ponderosa pine: a tall clean orange-brown trunk, an open irregular crown of stout upturned limbs, long needles in big tufts
+# at the ends of the twigs. (Stands in for the classic lodgepole.)
+name PONDEROSA PINE
+about Tall clean orange trunk, open crown of stout upturned limbs, needles in tufts
+class tree
+id 3
+form excurrent
+replaces pine 2
+size 12 24
+orders 4
+count 14 4 3
+angle 82 50 45
+angle_top 50
+length 0.27 0.5 0.5
+crown round
+start 0.42 0.3 0.3
+up 0 0.3 0.15 0.1
+gnarl 0.02 0.12 0.16 0.2
+segs 9 4 2 1
+planar 0 0.4 0.3
+leader 0.04
+leaf_order 2
+leaf_from 0.5
+leaf_step 0
+cards 3
+card 0.08 0.045
+scatter 0.03
+align 0.45
+trunk_radius 0.026
+pipe 2.3
+dead 0.08
+bark 0.46 0.28 0.16
+bark2 0.36 0.25 0.18
+leaf 0.169 0.321 0.135
+leaf2 0.287 0.473 0.186
+puff 0.05 0.9

@@ -1,0 +1,33 @@
+# Rubber rabbitbrush: a rounded broom of slender erect grey-green stems, topped with yellow flower heads.
+name RABBITBRUSH
+about Rounded broom of slender grey-green stems under yellow flower heads
+class shrub
+id 4
+form shrub
+replaces bush rabbitbrush
+size 0.4 0.9
+stems 8 10
+stem_spread 36
+orders 2
+count 3
+angle 24
+length 0.45
+up 0.4 0.3
+gnarl 0.06 0.08
+segs 3 2
+leaf_order 0
+leaf_from 0.5
+leaf_step 0.13
+cards 3
+card 0.14 0.05
+scatter 0.03
+align 0.7
+width 0.55
+trunk_radius 0.018
+bark 0.45 0.43 0.33
+bark2 0.50 0.50 0.38
+leaf 0.33 0.40 0.27
+leaf2 0.44 0.50 0.32
+flower 0.86 0.70 0.12
+flower_share 0.38
+leaf_dry 0.55 0.50 0.34

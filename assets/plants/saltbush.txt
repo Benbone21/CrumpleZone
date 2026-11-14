@@ -1,0 +1,31 @@
+# Four-wing saltbush / shadscale: a rounded, twiggy, pale silver-grey shrub.
+name SALTBUSH
+about Rounded twiggy shrub, pale silver-grey
+class shrub
+id 5
+form shrub
+replaces bush saltbush
+size 0.35 0.8
+stems 7 9
+stem_spread 58
+count 2
+leaf_order 0
+leaf_from 0.4
+leaf_step 0.25
+cards 1
+card 0.1 0.085
+scatter 0.06
+align 0.2
+width 0.66
+bark 0.48 0.44 0.36
+bark2 0.58 0.54 0.45
+leaf 0.44 0.43 0.34
+leaf2 0.56 0.55 0.45
+flower 0.68 0.63 0.42
+flower_share 0.12
+leaf_dry 0.60 0.56 0.44
+puff 0.11 0.75
+leaf_tip 0.08
+orders 2
+angle 42
+length 0.5

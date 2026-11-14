@@ -658,6 +658,207 @@ Reg treeSnag({"tree_snag", "DEAD SNAG", "NATURE AND PEOPLE", "Dead standing tree
                    snagBroken},
               }});
 
+// ---- Dry-country trees (the "tree_dryland" model: forest.h kind 3) -----------------------------------------------
+// Grown by a vegetation palette (vegetation.h): Utah juniper and pinyon on the benches and mesas, Fremont cottonwood and
+// tamarisk along the water. Built 10 tall like the others; a juniper stands 2-5 m, so its trunk is stout in model units.
+
+// A bare, bleached dead limb from `o` out along `dir`, kinked, with a spur.
+void deadLimb(B& b, uint32_t sd, const V3& o, const V3& dir, double L, double r, int lod) {
+    const V3 grey(0.50, 0.47, 0.42), pale(0.68, 0.65, 0.58);
+    const V3 side(-dir.z, 0, dir.x);
+    const V3 m = o + dir * (L * 0.55) + side * (L * 0.12 * (R01(sd, 1) - 0.5)) + V3(0, L * 0.1, 0), e = o + dir * L + V3(0, L * (0.25 + 0.3 * R01(sd, 2)), 0);
+    b.style(grey, WOOD);
+    limb(b, {o, m, e}, {r, r * 0.6, r * 0.12}, lod ? 3 : 4, grey, pale, false, sd, 0.1);
+    if (lod) return;
+    b.color(pale * 0.9);
+    b.cone(m, m + side * (L * 0.3 * (R01(sd, 3) < 0.5 ? 1 : -1)) + V3(0, L * 0.25, 0), r * 0.4, 0.0, 3, false);
+}
+
+// Utah juniper: a short, thick, twisted trunk forking low into a few limbs, a wide rounded crown of dense olive clumps as
+// broad as it is tall, and bare grey dead limbs standing out of it.
+void juniperTree(B& b, const P& p) {
+    const uint32_t sd = (uint32_t)p.i("seed");
+    const bool snow = p.i("snow") != 0;
+    const int lod = p.i("lod");
+    const double wide = p("width"), dead = p("dead");
+    const V3 barkLo(0.30, 0.26, 0.21), barkHi(0.52, 0.47, 0.40);  // (grey, shreddy bark)
+    const double lx = (R01(sd, 300) - 0.5) * 1.4, lz = (R01(sd, 301) - 0.5) * 1.4;
+    const V3 fork(lx, 2.6, lz);
+    b.style(barkLo, WOOD);
+    limb(b, {V3(0, -0.2, 0), V3(lx * 0.15, 0.8, lz * 0.15), V3(lx * 0.7, 1.8, lz * 0.5), fork}, {0.95, 0.76, 0.68, 0.62}, lod ? 5 : 7, barkLo, barkHi, false, sd, 0.3);
+    b.color(barkLo * 0.9);
+    if (!lod) roots(b, sd, 5, 0.8, 1.2, 4);
+    struct Lump { V3 c; double rx, ry; };
+    std::vector<Lump> L;
+    const int nl = 3 + (int)(sd % 2);
+    for (int k = 0; k < nl; k++) {
+        const double a = 2 * M_PI * k / nl + (R01(sd, k + 50) - 0.5) * 1.0, out = (2.6 + 1.0 * R01(sd, k + 55)) * wide;
+        const V3 dir(std::cos(a), 0, std::sin(a)), side(-dir.z, 0, dir.x);
+        const V3 m = fork + dir * (out * 0.5) + side * (0.5 * (R01(sd, k + 58) - 0.5)) + V3(0, 0.7 + 0.5 * R01(sd, k + 60), 0);
+        const V3 e = fork + dir * out + V3(0, 1.6 + 1.6 * R01(sd, k + 65), 0);
+        limb(b, {fork - dir * 0.1, m, e}, {0.42, 0.3, 0.14}, lod ? 4 : 5, barkLo * 1.1, barkHi, false, sd + (uint32_t)k * 7, 0.2);
+        // (the clump at the limb's end, and a lower one hung on its outside: the crown comes down near the ground)
+        L.push_back({e + V3(0, 0.6, 0), 2.5 + 0.5 * R01(sd, k + 30), 2.0 + 0.4 * R01(sd, k + 40)});
+        // (a skirt clump low on its outside: a juniper's foliage comes down nearly to the ground)
+        L.push_back({V3(fork.x, 0, fork.z) + dir * (out * 1.0) + side * (1.5 * (k & 1 ? 1 : -1)) + V3(0, 2.1 + 0.6 * R01(sd, k + 70), 0), (2.1 + 0.4 * R01(sd, k + 80)) * (lod >= 2 ? 1.15 : 1.0), 1.7 + 0.3 * R01(sd, k + 90)});
+        // A dead limb out past the foliage on some.
+        if (R01(sd, k + 95) < dead && lod < 2) deadLimb(b, sd + (uint32_t)k * 13, m, norm(dir + side * (0.8 * (k & 1 ? -1 : 1))), 3.4 + 1.4 * R01(sd, k + 97), 0.2, lod);
+    }
+    L.push_back({V3(lx * 0.6, 7.2, lz * 0.6), 3.1, 2.7});
+    if (lod < 2) L.push_back({V3(lx * 0.3 - 0.9, 5.4, lz * 0.3 + 1.0), 2.6, 2.0});
+    // A bleached spike top on some (the leader died back).
+    if (R01(sd, 310) < dead * 0.8 && lod < 2) deadLimb(b, sd + 99, V3(lx * 0.6, 7.9, lz * 0.6), norm(V3(0.3 * (R01(sd, 311) - 0.5), 1, 0.3 * (R01(sd, 312) - 0.5))), 1.9, 0.16, lod);
+    const size_t from = b.out().v.size();
+    const V3 A0(0.15, 0.175, 0.105), B0(0.27, 0.285, 0.165);  // (a dusty olive, yellowish in the light: not a forest green)
+    for (size_t k = 0; k < L.size(); k++) {
+        const double j = R01(sd + 31, (int)k) - 0.5, lit = 0.86 + 0.2 * clamp01((L[k].c.y - 2.0) / 5.0) + 0.08 * R01(sd + 37, (int)k);
+        const V3 A = (A0 + V3(0.03 * j, 0.01 * j, -0.01 * j)) * lit, Bc = (B0 + V3(0.03 * j, 0.01 * j, -0.01 * j)) * lit;
+        const V3 c(L[k].c.x, std::min(L[k].c.y, 10.0 - L[k].ry * 0.95), L[k].c.z);
+        leafBlob(b, c, V3(L[k].rx * wide, L[k].ry, L[k].rx * wide), sd * 7 + (uint32_t)k, A, Bc, 0.3, 0, 0.5);
+    }
+    if (snow) snowTops(b, from, 0.45, sd, true);
+}
+
+// Two-needle pinyon: one crooked trunk, a dense rounded crown, darker and greener than the juniper, broad at the bottom.
+void pinyonTree(B& b, const P& p) {
+    const uint32_t sd = (uint32_t)p.i("seed");
+    const bool snow = p.i("snow") != 0;
+    const int lod = p.i("lod");
+    const double wide = p("width");
+    const V3 barkLo(0.22, 0.17, 0.14), barkHi(0.36, 0.28, 0.22);
+    const double lx = (R01(sd, 300) - 0.5) * 0.9, lz = (R01(sd, 301) - 0.5) * 0.9;
+    const std::vector<V3> tr = {V3(0, -0.2, 0), V3(lx * 0.2, 1.0, lz * 0.2), V3(lx, 3.0, lz), V3(lx * 0.6, 5.6, lz * 0.6), V3(lx * 0.3, 8.2, lz * 0.3)};
+    b.style(barkLo, WOOD);
+    limb(b, tr, {0.62, 0.5, 0.42, 0.28, 0.06}, lod ? 5 : 6, barkLo, barkHi, false, sd, 0.22);
+    b.color(barkLo * 0.9);
+    if (!lod) roots(b, sd, 4, 0.5, 0.8, 4);
+    // Dead stubs under the crown.
+    b.color(mix(barkLo, V3(0.4, 0.37, 0.33), 0.6));
+    for (int k = 0; k < (lod ? 0 : 3); k++) {
+        const double y = 1.5 + 0.5 * k + 0.2 * R01(sd, k + 310), a = k * 2.3 + R01(sd, k + 320) * 1.2;
+        const V3 o(pathX(tr, y), y, pathX(tr, y, true));
+        b.cone(o, o + V3(std::cos(a), 0.15, std::sin(a)) * (0.7 + 0.6 * R01(sd, k + 330)), 0.09, 0.02, 3, false);
+    }
+    struct Lump { V3 c; double rx, ry; };
+    std::vector<Lump> L;
+    L.push_back({V3(pathX(tr, 3.9), 3.9, pathX(tr, 3.9, true)), 3.5, 2.1});
+    L.push_back({V3(pathX(tr, 6.1), 6.2, pathX(tr, 6.1, true)), 3.0, 2.1});
+    L.push_back({V3(lx * 0.3, 8.4, lz * 0.3), 2.0, 1.6});
+    for (int k = 0; k < (lod < 2 ? 4 : 0); k++) {
+        const double a = k * 1.571 + R01(sd, k + 50) * 1.2, o = 2.3 + 0.8 * R01(sd, k + 60), y = 2.6 + 2.6 * R01(sd, k + 70);
+        L.push_back({V3(pathX(tr, y) + std::cos(a) * o, y, pathX(tr, y, true) + std::sin(a) * o), 1.6 + 0.4 * R01(sd, k + 80), 1.2 + 0.3 * R01(sd, k + 90)});
+    }
+    const size_t from = b.out().v.size();
+    const V3 A0(0.09, 0.15, 0.10), B0(0.17, 0.235, 0.14);  // (a darker, greener olive than the juniper)
+    for (size_t k = 0; k < L.size(); k++) {
+        const double j = R01(sd + 31, (int)k) - 0.5, lit = 0.88 + 0.2 * clamp01((L[k].c.y - 3.5) / 5.0) + 0.08 * R01(sd + 37, (int)k);
+        const V3 A = (A0 + V3(0.02 * j, 0.01 * j, 0)) * lit, Bc = (B0 + V3(0.02 * j, 0.01 * j, 0)) * lit;
+        leafBlob(b, L[k].c, V3(L[k].rx * wide, L[k].ry, L[k].rx * wide), sd * 7 + (uint32_t)k, A, Bc, 0.26, 0);
+    }
+    if (snow) snowTops(b, from, 0.45, sd, true);
+}
+
+// Fremont cottonwood: a massive short pale trunk forking low into big spreading limbs, a broad open crown wider than it is
+// tall, its leaves a bright yellow-green (gold in autumn).
+void cottonwoodTree(B& b, const P& p) {
+    const uint32_t sd = (uint32_t)p.i("seed");
+    const int season = p.i("season");
+    const bool snow = p.i("snow") != 0;
+    const int lod = p.i("lod");
+    const double wide = p("width");
+    const V3 barkLo(0.31, 0.28, 0.24), barkHi(0.56, 0.53, 0.47);  // (pale grey, deeply furrowed)
+    const V3 fork(0.15, 2.5, -0.1);
+    b.style(barkLo, WOOD);
+    limb(b, {V3(0, -0.15, 0), V3(0, 0.6, 0), V3(0.06, 1.6, -0.04), fork}, {0.62, 0.46, 0.42, 0.4}, lod ? 5 : 7, barkLo, barkHi, false, sd, 0.2);
+    b.color(barkLo * 0.95);
+    if (!lod) roots(b, sd, 5, 0.46, 0.7, 4);
+    struct Lump { V3 c; double rx, ry; };
+    std::vector<Lump> L;
+    const int nl = 4;
+    for (int k = 0; k < nl; k++) {
+        const double a = 2 * M_PI * k / nl + (R01(sd, k + 50) - 0.5) * 0.9, out = (3.2 + 0.9 * R01(sd, k + 55)) * wide;
+        const V3 dir(std::cos(a), 0, std::sin(a)), side(-dir.z, 0, dir.x);
+        const V3 m = fork + dir * (out * 0.45) + V3(0, 1.5 + 0.4 * R01(sd, k + 60), 0);
+        const V3 e = fork + dir * out + V3(0, 2.8 + 1.4 * R01(sd, k + 65), 0);
+        limb(b, {fork - dir * 0.08, m, e}, {0.3, 0.2, 0.09}, lod ? 4 : 5, barkLo * 1.1, barkHi, false, sd + (uint32_t)k * 7, 0.14);
+        const double sgn = (k & 1) ? 1 : -1;
+        const V3 f = m + norm(dir * 0.5 + side * sgn) * (1.7 * wide) + V3(0, 0.9 + 0.5 * R01(sd, k + 70), 0);
+        if (!lod) limb(b, {m, f}, {0.13, 0.05}, 4, barkLo * 1.1, barkHi, false, sd + (uint32_t)k * 7 + 3, 0.1);
+        const double big = lod >= 2 ? 1.15 : 1.0;
+        L.push_back({e + V3(0, 0.6, 0), (2.5 + 0.4 * R01(sd, k + 30)) * big, (2.1 + 0.3 * R01(sd, k + 40)) * big});
+        if (lod < 2) L.push_back({f + V3(0, 0.5, 0), 1.9 + 0.3 * R01(sd, k + 80), 1.6 + 0.25 * R01(sd, k + 90)});
+        // (and one hanging low on the limb's outside: the crown is a dome, not a flat-bottomed umbrella)
+        if (lod < 2) L.push_back({e + dir * 0.9 + V3(0, -1.3 - 0.5 * R01(sd, k + 100), 0), 1.9 + 0.3 * R01(sd, k + 110), 1.5 + 0.2 * R01(sd, k + 120)});
+    }
+    // (the crown's middle: one rounded mass the limbs' clumps stand out of, not separate umbrellas)
+    L.push_back({V3(0.2, 7.2, 0), 3.6, 2.7});
+    if (lod < 2) L.push_back({V3(-0.9 * wide, 5.9, 0.8 * wide), 2.4, 1.8});
+    const size_t from = b.out().v.size();
+    V3 A0(0.16, 0.235, 0.10), B0(0.265, 0.335, 0.15);  // (a fresher green than anything else here, but not a lawn's)
+    if (season == 1) A0 = mix(A0, V3(0.40, 0.40, 0.08), 0.5), B0 = mix(B0, V3(0.58, 0.52, 0.12), 0.55);
+    if (season == 2) A0 = V3(0.78, 0.58, 0.08), B0 = V3(0.93, 0.76, 0.14);
+    for (size_t k = 0; k < L.size(); k++) {
+        const double j = R01(sd + 31, (int)k) - 0.5, lit = 0.9 + 0.14 * clamp01((L[k].c.y - 5.0) / 4.0) + 0.1 * R01(sd + 37, (int)k);
+        const V3 A = (A0 + V3(0.03 * j, 0.015 * j, -0.01 * j)) * lit, Bc = (B0 + V3(0.03 * j, 0.015 * j, -0.01 * j)) * lit;
+        const V3 c(L[k].c.x, std::min(L[k].c.y, 10.0 - L[k].ry * 0.95), L[k].c.z);
+        leafBlob(b, c, V3(L[k].rx * wide, L[k].ry, L[k].rx * wide), sd * 7 + (uint32_t)k, A, Bc, 0.24, 0);
+    }
+    if (snow) snowTops(b, from, 0.45, sd, true);
+}
+
+// Tamarisk (salt cedar): a thicket of slender arching stems from one crown, each a long feathery grey-green plume, some
+// tipped dusty pink in flower.
+void tamariskTree(B& b, const P& p) {
+    const uint32_t sd = (uint32_t)p.i("seed");
+    const bool snow = p.i("snow") != 0;
+    const int lod = p.i("lod");
+    const double wide = p("width");
+    const V3 barkLo(0.30, 0.17, 0.13), barkHi(0.44, 0.27, 0.20);  // (red-brown wands)
+    b.style(barkLo, WOOD);
+    b.cone(V3(0, -0.2, 0), V3(0, 0.6, 0), 0.75, 0.55, lod ? 5 : 6, false);  // (the root crown they all rise from)
+    const int ns = lod >= 2 ? 5 : 7;
+    const size_t stems0 = b.out().v.size();
+    struct Plume { V3 c; double r, h; };
+    std::vector<Plume> Pl;
+    for (int k = 0; k < ns; k++) {
+        const double a = 2 * M_PI * k / ns + (R01(sd, k + 50) - 0.5) * 0.7, out = (k == 0 ? 0.6 : 2.2 + 1.5 * R01(sd, k + 55)) * wide, h = k == 0 ? 9.2 : 6.0 + 2.6 * R01(sd, k + 60);
+        const V3 dir(std::cos(a), 0, std::sin(a));
+        const V3 o = dir * 0.35 + V3(0, 0.3, 0), m = dir * (0.35 + out * 0.4) + V3(0, h * 0.42, 0), e = dir * (0.35 + out) + V3(0, h * 0.78, 0);
+        b.style(barkLo, WOOD);
+        limb(b, {o, m, e}, {0.2, 0.13, 0.04}, lod ? 3 : 4, barkLo, barkHi, false, sd + (uint32_t)k * 5, 0.1);
+        Pl.push_back({m + (e - m) * 0.5 + V3(0, h * 0.04, 0), 1.35 + 0.35 * R01(sd, k + 70), h * 0.42});
+    }
+    (void)stems0;
+    Pl.push_back({V3(0, 2.7, 0), 2.5, 2.3});  // (the dense foot of the thicket: the wands don't show bare)
+    const size_t from = b.out().v.size();
+    const V3 A0(0.20, 0.25, 0.17), B0(0.36, 0.40, 0.29);  // (dusty grey-green, feathery)
+    for (size_t k = 0; k < Pl.size(); k++) {
+        const double lit = 0.9 + 0.2 * R01(sd + 37, (int)k);
+        V3 A = A0 * lit, Bc = B0 * lit;
+        if (R01(sd + 41, (int)k) < 0.3) Bc = mix(Bc, V3(0.50, 0.44, 0.40), 0.3);  // (in flower: a faint dusty pink cast)
+        const V3 c(Pl[k].c.x, std::min(Pl[k].c.y, 10.0 - Pl[k].h * 0.95), Pl[k].c.z);
+        leafBlob(b, c, V3(Pl[k].r * wide, Pl[k].h, Pl[k].r * wide), sd * 7 + (uint32_t)k, A, Bc, 0.34, 0, 0.9);
+    }
+    if (snow) snowTops(b, from, 0.45, sd, true);
+}
+
+Reg treeDryland({"tree_dryland", "DRY-COUNTRY TREE", "NATURE AND PEOPLE", "Trees of the desert Southwest, grown by a real map's vegetation palette (scaled per tree): juniper and pinyon on the benches, cottonwood and tamarisk by the water", 16,
+                 {
+                     {"UTAH JUNIPER", "Short, twisted and as wide as it is tall: olive clumps on a thick shreddy trunk, bare grey dead limbs",
+                      {seedParam(3), choice("snow", "SNOW", 0, {"CLEAR", "SNOWY"}), num("width", "CROWN WIDTH", 1, 0.7, 1.3, 0.05), num("dead", "DEAD LIMBS", 0.45, 0, 1, 0.05)},
+                      juniperTree},
+                     {"PINYON", "Small rounded pine, dense and dark, on one crooked trunk",
+                      {seedParam(5), choice("snow", "SNOW", 0, {"CLEAR", "SNOWY"}), num("width", "CROWN WIDTH", 1, 0.7, 1.3, 0.05)},
+                      pinyonTree},
+                     {"FREMONT COTTONWOOD", "Big riverside tree: a massive pale trunk, a broad bright yellow-green crown",
+                      {seedParam(4), choice("season", "SEASON", 0, {"GREEN", "LATE SUMMER", "AUTUMN"}), choice("snow", "SNOW", 0, {"CLEAR", "SNOWY"}), num("width", "CROWN WIDTH", 1, 0.7, 1.3, 0.05)},
+                      cottonwoodTree},
+                     {"TAMARISK", "A thicket of red-brown wands in feathery grey-green plumes, some in dusty pink flower",
+                      {seedParam(2), choice("snow", "SNOW", 0, {"CLEAR", "SNOWY"}), num("width", "WIDTH", 1, 0.7, 1.3, 0.05)},
+                      tamariskTree},
+                 }});
+
+
 // ---- Stumps ------------------------------------------------------------------------------
 
 const V3 SAP(0.66, 0.54, 0.37), HEART(0.46, 0.33, 0.20);

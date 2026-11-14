@@ -1,0 +1,38 @@
+# Fremont cottonwood: the big tree of the river bottoms. A massive pale furrowed trunk that forks low into a few great
+# ascending limbs, a broad open crown, bright yellow-green leaves in loose clumps with sky and limbs between them.
+name FREMONT COTTONWOOD
+about Big riverside tree: a massive pale forked trunk, a broad open yellow-green crown
+class tree
+id 6
+form decurrent
+replaces dryland 2
+replaces broadleaf 2
+size 7 16
+trunk_len 0.42
+trunk_radius 0.046
+pipe 2.3
+count 5 4 3
+angle 36 48 50
+length 0.62 0.55 0.5
+crown spreading
+start 0.55 0.3 0.3
+up 0 0.4 0.15 0
+gnarl 0.06 0.14 0.18 0.22
+dead 0.05
+width 0.55
+leaf_order 2
+leaf_from 0.25
+leaf_step 0.05
+cards 5
+card 0.075 0.065
+scatter 0.065
+align 0.1
+ao 0.35
+bark 0.44 0.40 0.34
+bark2 0.62 0.58 0.50
+leaf 0.20 0.28 0.10
+leaf2 0.33 0.40 0.16
+autumn 0.86 0.66 0.10
+falloff 0.3
+puff 0.04 0.8
+leaf_tip 0.12

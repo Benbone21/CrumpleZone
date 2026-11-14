@@ -133,6 +133,7 @@ build/realterrain make  path/moab.terrain.txt --out maps/moab --preview moab.ppm
 6. **Growth:** trees, bushes and rocks, 32 m cell by cell, by slope, surface, height (tree line), climate and a woods noise.
    - Broadleaf grows on the low third of the relief.
    - Rocks gather on the steep.
+   - With a `vegetation` palette (below), the trees and bushes come from it instead: each spot's zone, then that zone's species.
    - Nothing grows on roads, pads or water.
 
 ## Authored places, rivers, trails and courses
@@ -157,6 +158,7 @@ lidar detail/x+04038z-00058.tif 0.01 1265 24         # a lidar patch: FILE SCALE
 include detail.txt                                   # ...usually a file of them
 ledge_sharpen 0.8                                    # on the patches, steps steeper than round them pulled toward a stair (0..1)
 cover cover.tif                                      # ground cover from aerial photos: 1 rock, 2 sand, 3 brush (tools/naip_cover.py)
+vegetation colorado_plateau_desert                   # what grows where: a palette file (maps/vegetation/NAME.txt, or NAME.txt beside the sidecar)
 strata 1345 190 112 84                               # the rock's colour (sRGB) at a real elevation; one line a band, up to 8
 sand_look 176 96 62                                  # with strata: the sand's colour
 rock_look 176 104 70 0.8                             # scanned rocks and cliffs recoloured (to the strata if any, else this), 0..1
@@ -256,6 +258,42 @@ geologic map).
 more saturated orange ones sand, dark greener ones brush; median-filtered, then resampled by mode onto the map's frame at 2 m
 (`cover.tif`, 7.4 MB for Moab). In the slickrock band the build follows it (the steep is rock whatever it says; looked up a little off
 the point by noise, so the pixels' square edges are ragged), and bushes grow only on brush.
+
+### Vegetation palettes
+Without a `vegetation` key a map grows its climate's own trees and bushes (a desert: small pines and snags, sage, cacti), which is
+wrong for most real places: Moab has no pines. `vegetation NAME` names a palette, a text file of what grows where
+(`assets/maps/vegetation/NAME.txt`, shared by every map of that country, or `NAME.txt` beside the sidecar; `src/vegetation.h` has the
+format; its text is part of the map's hash). Nothing in the code names a map or a place: another region is another file.
+
+The build (`real.growth`) sorts each candidate spot into a zone and keeps it as often as the zone is dense:
+
+| Zone | A spot is in it when |
+|---|---|
+| `rock` | the cover says bare rock, or the ground is rock (and the cover doesn't say brush), snow or ice |
+| `riparian` | within `riparian REACH` m of water and no more than `RISE` m above it (16 m grid, from the water as built) |
+| `wash` | the same along the plan's dry washes (`wash REACH RISE`) |
+| `sand` | the cover says sand (or, with no cover, the ground is sand) |
+| `upland` / `lowland` | the rest, by real elevation: lowland below `upland FROM`, upland above `FULL`, mixed between |
+
+Each zone has trees and shrubs a hectare and a weighted list of species; a species can keep to elevations (`above E`, `below E`).
+Densities are a hectare of ground that carries plants: with a `cover`, its brush class (and sand, for the sand zone); with none, a
+share `open` of the ground, in drifts. Trees stand only on brush patches a crown wide (`crown N` of 5 cover samples), never on
+rock, never steeper than `slope`, and their crowns keep off the trails. Trees are `World::trees` like any other (a trunk to hit,
+far copies, pictures in the distance); shrubs are `World::bushes` (nothing to hit).
+
+Species are the code-made models: the trees `pine`, `broadleaf`, `snag`, `grey_snag`, and the dry-country ones (`tree_dryland`,
+tree kind 3: `juniper`, `pinyon`, `cottonwood`, `tamarisk`); the shrubs are the plant kinds (`plants.h`), among them the ones only
+palettes grow: `blackbrush`, `mormon_tea`, `rabbitbrush`, `saltbush`, `prickly_pear`, `bunchgrass`, `coyote_willow`.
+
+With the line `plants procedural` (before any zone) a name is first looked up among the plant generator's species
+(`assets/plants/NAME.txt`, `docs/procedural-plants.md`): a tree is then kind 4 with its species' id as its design, grown from
+the species' rules with a real trunk and limbs (its `Pole` as thick as the grown stem); a shrub's kind is 1000 + its species' id
+and its size the species' own. Names the generator doesn't have stay the classic models (`reeds`, `tumbleweed`).
+`colorado_plateau_desert` is procedural.
+
+`colorado_plateau_desert` (Moab): juniper, some pinyon and grey snags over blackbrush on the benches and mesas (from 1330 m, whole by
+1560 m); saltbush, rabbitbrush and sage on the lower ground; cottonwood only along the water and on the valley floor (under 1262 m);
+tamarisk and coyote willow along the Colorado; sand nearly bare; slickrock bare. `build/realterrain make DIR` prints the census.
 
 With `strata`, the ground shader (`groundshader.cpp`, uniform `uSlick`; every other map has it 0 and looks as before) draws the map's
 slickrock (paint REDROCK) with four sandstone materials, bedded and streaked ones (Poly Haven `cliff_side`, ambientCG `Rock029`) on the

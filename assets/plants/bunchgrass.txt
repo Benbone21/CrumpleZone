@@ -1,0 +1,19 @@
+# Indian ricegrass: a tuft of fine arching blades, straw-pale with green at the foot, airy seed stalks above.
+name BUNCHGRASS
+about A pale tuft of fine arching blades with airy seed stalks
+class shrub
+id 8
+form bunchgrass
+replaces bush bunchgrass
+size 0.25 0.55
+blades 60
+blade 1.0 0.03
+spread 40
+stem_base 0.1
+stalks 5 9
+stalk_len 1.25
+width 0.6
+leaf 0.40 0.42 0.22
+leaf2 0.72 0.66 0.42
+leaf_dry 0.74 0.68 0.46
+flower 0.82 0.76 0.54

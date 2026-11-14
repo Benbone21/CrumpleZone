@@ -647,13 +647,14 @@ void World::buildModelYard() {
         if (id == "race_gate") return {{"width", 10}};
         if (id == "guardrail") return {{"length", 8}};
         if (id == "jersey_barrier") return {{"length", 6}};
+        if (id == "tree_gen") return {{"scale", 0.3}};  // (a species a design: a dozen 10 m trees in a row would run off the pad)
         return {};
     };
     auto see = [](const std::string& id) { return id != "fp_hand" && id != "lug_nut" && id != "waterfall" && id != "timber_bridge" && (id.rfind("wreck_", 0) != 0 || id == "wreck_pickup"); };  // (the falls: drawn by the water pass, on rivers; the bridges span rivers, 10-40 m: the procedural world's)
     // Things to walk through or round rather than bump into.
     auto ghost = [](const std::string& id) {
         return id == "repair_shed" || id == "fire_tower" || id == "race_gate" || id == "sign_gantry" || id == "mine_portal" || id == "tent" ||
-               id == "person" || id == "campfire" || id == "tree_saver" || id == "ground_anchor" || id.rfind("tree_", 0) == 0 || id == "bush" ||
+               id == "person" || id == "campfire" || id == "tree_saver" || id == "ground_anchor" || id.rfind("tree_", 0) == 0 || id == "bush" || id == "shrub_gen" ||
                id == "lamp_post" || id == "marker_post" || id == "trail_sign" || id == "map_board";
     };
     struct Design {
@@ -708,7 +709,7 @@ void World::buildModelYard() {
     double colX = yardX;
     for (int c = 0; c < kClasses; c++) {
         if (area[c] <= 0) continue;
-        const double W = std::max(widest[c], std::sqrt(area[c] * 1.3));
+        const double W = std::max(widest[c], std::sqrt(area[c] * 1.2));  // (a little deeper than wide: the yard has room to the south, not to the west)
         const double x1 = colX - W;  // the column's west edge
         double x = colX, z = yardZ, lineD = 0;
         auto newLine = [&]() {

@@ -71,3 +71,29 @@ Also: the walls' depth no longer pulls in front of where a vehicle could be (onl
 plus 10 cm and 0.3% of the distance). Still wrong: the bed partings are too regular and evenly spaced, there are few alcoves at
 these two cameras, the talus under Gold Bar is plain where real talus is blocky, and beyond ~285 m the walls are the land's face
 with the shader's bedding only.
+
+## Vegetation round (branch wip/moab-vegetation)
+
+The pines were the importer's own: with `climate desert` it planted the mountain maps' conifer model (75% firs 3-6.5 m, 25% snags)
+on any ground that wasn't rock, by a noise, and the desert habitat's bushes (saguaros among them) on the photos' brush. Moab now
+names a vegetation palette (`vegetation colorado_plateau_desert`, `assets/maps/vegetation/`, docs/real-terrain.md "Vegetation
+palettes"): zones by ground cover, slope, real elevation and distance to water, each with its species. 39,836 trees (all pines and
+snags) became 18,626 (10,410 juniper, 1,779 pinyon, 693 grey snags, 2,081 cottonwood, 3,663 tamarisk); 370 k bushes became 412 k of
+twelve dry-country kinds (no saguaros). Same settings as above (10:00, `--photo --adaptive 0`, 1600x900, offscreen, frame 240);
+"before" is the same build with the sidecar's `vegetation` line removed (which reproduces main's land hash). Judged against how the
+place looks from memory of it and of photos, not against a photo side by side: nothing was downloaded this round.
+
+| Shot | Camera | Verdict |
+|---|---|---|
+| 50 domes wide (`-veg`) | 4900,300,45,-42,-6 | The green cones and the saguaro are gone; a few dark juniper clumps stand where the photos show brush. Honest: it is now nearly bare, barer than the real Sand Flats, whose blackbrush and scattered junipers show from this height. Shrubs stop being drawn at 130-250 m and the cover's brush class is thin here. |
+| 60 juniper bench | 6300,800,3,0,-4 | Better and plausible: low, rounded, dark olive junipers 2-5 m tall spaced tens of metres apart over sand and slickrock, a pinyon (right), blackbrush and yucca between, nothing on the bare rock. Off: the crowns are chunky low-polygon lumps with no visible twisted trunk or dead grey limbs at this distance, and the green is still a little too clean; real junipers are dustier and more ragged. |
+| 61 river corridor | 4300,4420,14,-90,-8 | The biggest change: a cottonwood gallery with willow and tamarisk under it along the Colorado, where there were saguaros and firs on bare sand. Off: the cottonwoods read as generic broad green trees (flat-shaded lumps; no pale furrowed trunk showing, no shimmer), the willows as clusters of pale lollipops, the ground under them is bare red sand where the real bank is a tangle, and the far bank is thinner than the near one. |
+| 62 sand flat | 4900,300,2.2,-42,-3 | Right in kind: open sand and slickrock with a sagebrush and a saltbush, junipers in the distance. The older sagebrush model is mint-coloured, not the grey-green of the real thing. |
+| 63 juniper close (after only) | 6318,812,1.8,35,-2 | Reads as a juniper in silhouette (wide as tall, foliage to the ground). Up close it is a pile of faceted blobs; the dead limb barely shows. |
+| 64 new trees (model sheet) | `build/modelsheet tree_dryland` | Juniper and pinyon are told apart (olive and round against darker and pointed); cottonwood is the broad one; tamarisk a clump of upright grey-green plumes. All are in the game's low-polygon style, none is a portrait. |
+| 65 new shrubs (model sheet) | `build/modelsheet bush`, designs N-T | Blackbrush (dark spiny mound), rabbitbrush (yellow heads) and bunchgrass read well. Mormon tea looks more like a grass spray than a jointed broom, the saltbush like a pale boulder, the prickly pear's pads are oversized. |
+| 66 map from above | `build/realterrain make --preview` | Before: trees (dark dots) evenly over everything that isn't rock. After: cottonwood (bright green) along the Colorado, in the Matheson wetland bend, up Courthouse Wash and on the valley floor; juniper (dark) on the benches and mesas; the sand and the slickrock empty. |
+
+Still wrong: shrubs aren't drawn far enough for a bench to look brushy from a height; no cryptobiotic soil; cottonwoods on the
+valley floor stand where the photos show any dark patch (fields and yards included); the wash zone follows every small drainage,
+so sage and rabbitbrush line slickrock runnels that are bare in life; tamarisk is all green (much of Moab's is beetle-browned).

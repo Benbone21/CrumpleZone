@@ -1,0 +1,39 @@
+# Tamarisk (salt cedar): a thicket of slender red-brown stems arching out from one foot, feathery grey-green plumes, some in
+# dusty pink flower.
+name TAMARISK
+about A thicket of arching red-brown stems in feathery grey-green plumes, some in pink flower
+class tree
+id 9
+form multistem
+replaces dryland 3
+size 2.5 5.5
+stems 6 9
+stem_spread 36
+stem_base 0.05
+trunk_len 0.85
+orders 2
+count 5
+angle 30
+length 0.36
+start 0.3
+up 0.3 0.3
+gnarl 0.08 0.12
+segs 5 3
+leaf_order 0
+leaf_from 0.35
+leaf_step 0.06
+cards 4
+card 0.14 0.045
+scatter 0.03
+align 0.85
+droop 0.15
+trunk_radius 0.02
+flare 1.1
+width 0.45
+bark 0.36 0.20 0.15
+bark2 0.46 0.27 0.19
+leaf 0.276 0.345 0.230
+leaf2 0.414 0.471 0.322
+flower 0.72 0.50 0.55
+flower_share 0.1
+puff 0 1
