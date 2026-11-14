@@ -91,7 +91,11 @@ spec number is clearly wrong. What is off is systematic:
 ### 1. Every engine makes 15 % more torque than its spec says (owner decision)
 
 `vehicleCatalog()` ends with `for (TorquePoint& tp : s.torque) tp.nm *= 1.15;` (there since the
-first commit, no comment). Every spec's comment gives the real rating ("330 hp at 5,250 rpm"),
+first commit). **Correction, 2026-11-12:** it did have a comment, which this audit missed: "Engines
+tuned ~15% over their factory ratings: rated torque is the crank's, and with the drivetrain's
+spinning mass counted the stock figures felt flat in the game." It was a deliberate feel choice,
+not an unexplained one. It was removed in `wip/car-pass-2` (see `car-pass-2.md`) on the owner's
+instruction; that is one commit and reverts cleanly. Every spec's comment gives the real rating ("330 hp at 5,250 rpm"),
 and the curve is then scaled past it. With no speed governors (replaced by tire speed ratings in
 `4499147`), that shows up as:
 
