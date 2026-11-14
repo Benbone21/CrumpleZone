@@ -1,0 +1,26 @@
+name THORN SCRUB
+about Dense grey thorny scrub: a tangle of stiff twigs, half of them bare, a few small leaves
+class shrub
+id 23
+form shrub
+size 0.5 1.2
+stems 6 8
+stem_spread 52
+count 3 2
+gnarl 0.2 0.26 0.26
+dead 0.4
+leaf_order 1
+leaf_from 0.5
+leaf_step 0.2
+cards 2
+card 0.1 0.06
+scatter 0.04
+trunk_radius 0.022
+twig 0.007
+width 0.66
+bark 0.32 0.29 0.26
+bark2 0.48 0.45 0.41
+deadwood 0.56 0.53 0.48
+leaf 0.25 0.30 0.18
+leaf2 0.36 0.40 0.25
+leaf_dry 0.44 0.40 0.28

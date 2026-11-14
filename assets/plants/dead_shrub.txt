@@ -1,0 +1,16 @@
+name DEAD SHRUB
+about A bare grey skeleton of a shrub
+class shrub
+id 14
+form shrub
+size 0.4 1.0
+cards 0
+stems 5 8
+stem_spread 48
+count 3 2
+gnarl 0.18 0.24 0.25
+trunk_radius 0.022
+twig 0.006
+width 0.6
+bark 0.40 0.37 0.33
+bark2 0.56 0.53 0.48

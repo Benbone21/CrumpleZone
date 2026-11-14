@@ -418,7 +418,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--grass") o.grass = std::atoi(next().c_str());
         else if (a == "--adaptive") o.adaptive = std::atoi(next().c_str());
         else if (a == "--photo") o.photo = true;
-        else if (a == "--proc-plants") plantgen::setEverywhere(true);  // (classic maps drawn with the generated plants: plantgen.h)
+        else if (a == "--proc-plants") plantgen::setEverywhere(true);
+        else if (a == "--classic-plants") plantgen::setEverywhere(false);  // (the classic tree and bush models everywhere a palette doesn't name a species)  // (classic maps drawn with the generated plants: plantgen.h)
         else if (a == "--debug-screen") o.debugScreen = 1;
         else if (a == "--bench") {  // N[,WARM]
             const std::string v = next();

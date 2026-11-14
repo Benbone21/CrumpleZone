@@ -1,0 +1,30 @@
+name OCOTILLO
+about A spray of long thorny unbranched wands from one foot, red flower tips
+class shrub
+id 11
+form wand
+size 1.2 2.2
+stems 8 14
+stem_spread 30
+stem_base 0.03
+orders 1
+gnarl 0.06
+up 0.25
+segs 5
+trunk_radius 0.012
+twig 0.006
+sides 4
+leaf_order 0
+leaf_from 0.93
+leaf_step 0.035
+cards 2
+card 0.08 0.035
+scatter 0.01
+align 0.9
+cut 0
+width 0.45
+bark 0.34 0.36 0.26
+bark2 0.42 0.46 0.30
+leaf 0.80 0.22 0.10
+leaf2 0.90 0.32 0.12
+leaf_dry 0.45 0.40 0.30

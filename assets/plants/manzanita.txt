@@ -1,0 +1,25 @@
+name MANZANITA
+about Stiff evergreen brush: smooth red crooked stems, rounded grey-green leaf clumps
+class shrub
+id 20
+form shrub
+size 0.6 1.3
+stems 5 7
+stem_spread 46
+orders 2
+count 2
+angle 45
+length 0.5
+leaf_order 0
+leaf_from 0.45
+leaf_step 0.22
+cards 1
+card 0.12 0.09
+puff 0.1 0.75
+trunk_radius 0.03
+width 0.65
+bark 0.42 0.14 0.10
+bark2 0.52 0.20 0.14
+leaf 0.22 0.31 0.17
+leaf2 0.32 0.41 0.23
+leaf_dry 0.40 0.38 0.24

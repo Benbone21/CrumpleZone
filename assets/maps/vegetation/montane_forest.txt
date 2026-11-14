@@ -1,0 +1,73 @@
+# Pine and montane forest: ponderosa and fir with aspen groves, manzanita brush in the openings, deadfall on the floor.
+name MONTANE FOREST
+plants procedural
+dead 0.1
+dry 0.15
+stand pine ponderosa 5
+stand pine fir 5
+stand pine spruce 2
+stand broadleaf aspen 6
+stand broadleaf oak 1
+stand snag snag 3
+stand snag deadfall 3
+stand snag snag_burnt 1
+stand snag snag_broken 2
+stand dead snag 2
+stand dead deadfall 2
+stand bush manzanita 26
+stand bush bunchgrass 16
+stand bush tall_grass 12
+stand bush fern 10
+stand bush stump 6
+stand bush sagebrush 6
+stand bush:fern fern 1
+stand bush:juniper manzanita 1
+stand deadbush stump 2
+stand deadbush dead_shrub 1
+upland 2300 2700
+riparian 40 4
+wash 15 2
+slope 0.65 0.8
+open 0.6
+zone rock 0 8
+  shrub manzanita 1
+zone sand 0 10
+  shrub bunchgrass 1
+zone lowland 180 420
+  tree ponderosa 60 12 24 crown 0.25
+  tree fir 12 10 20
+  tree aspen 12 8 15 crown 0.2
+  tree snag 8 6 12
+  tree deadfall 8 5 10
+  shrub manzanita 35
+  shrub bunchgrass 25
+  shrub sagebrush 10
+  shrub stump 10
+  shrub tall_grass 10
+  shrub dead_shrub 10
+zone upland 320 380
+  tree fir 45 10 22
+  tree spruce 20 12 24
+  tree aspen 15 8 15 crown 0.2
+  tree ponderosa 5 12 22 crown 0.25
+  tree snag 8 6 12
+  tree deadfall 7 5 10
+  shrub fern 25
+  shrub manzanita 25
+  shrub stump 20
+  shrub tall_grass 20
+  shrub dead_shrub 10
+zone riparian 200 600
+  tree aspen 50 8 15 crown 0.2
+  tree cottonwood 20 9 16
+  tree fir 20 10 20
+  tree deadfall 10 5 10
+  shrub coyote_willow 35
+  shrub tall_grass 30
+  shrub fern 20
+  shrub cattail 15
+zone wash 150 400
+  tree aspen 1 8 14 crown 0.2
+  tree fir 1 10 18
+  shrub manzanita 1
+  shrub tall_grass 1

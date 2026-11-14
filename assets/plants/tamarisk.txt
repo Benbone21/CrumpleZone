@@ -7,12 +7,12 @@ id 9
 form multistem
 replaces dryland 3
 size 2.5 5.5
-stems 6 9
+stems 8 11
 stem_spread 36
 stem_base 0.05
 trunk_len 0.85
 orders 2
-count 5
+count 6
 angle 30
 length 0.36
 start 0.3

@@ -1,0 +1,16 @@
+name FERN
+about A clump of broad arching fronds for the forest floor
+class shrub
+id 18
+form bunchgrass
+replaces bush fern
+size 0.5 1.1
+blades 14
+blade 1.0 0.3
+spread 64
+stem_base 0.05
+stalks 0 0
+width 0.95
+leaf 0.10 0.24 0.07
+leaf2 0.20 0.38 0.12
+leaf_dry 0.50 0.38 0.18

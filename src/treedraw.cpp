@@ -130,7 +130,17 @@ void main(){
 
 const char* const kTreeDepthVS = "#version 330 core\n" TREE_PLACE R"(
 uniform mat4 uLightVP;
-void main(){ gl_Position = uLightVP * vec4(placed(), 1.0); })";
+out vec3 vPos; out float vCut;
+void main(){ vPos = placed(); vCut = int(aCol.a + 0.5) == 16 ? 1.0 : 0.0; gl_Position = uLightVP * vec4(vPos, 1.0); })";
+// (leaf cards cast a leafy shadow: cut by a noise at the leaves' size, not the shading pass's own, which a shadow texel can't show)
+const char* const kTreeDepthFS = R"(#version 330 core
+in vec3 vPos; in float vCut;
+float dhash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float dnoise(vec2 p){
+  vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+  return mix(mix(dhash(i), dhash(i+vec2(1,0)), f.x), mix(dhash(i+vec2(0,1)), dhash(i+vec2(1,1)), f.x), f.y);
+}
+void main(){ if (vCut > 0.5 && dnoise(vPos.xy * 3.1 + vPos.z * 1.9) * 0.55 + dnoise(vPos.zy * 3.7 - vPos.x * 1.6 + 9.3) * 0.45 < 0.44) discard; })";
 
 // ---- Pictures (impostors) ----------------------------------------------------------------------------------------------------
 // Baking: a model seen from side k (k * 45 degrees round it, level), orthographic, into its layer's cell k: the base colour (alpha:

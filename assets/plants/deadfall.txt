@@ -1,0 +1,27 @@
+name LEANING SNAG
+about A dead tree going over: a bare grey trunk leaning hard, broken limbs
+class tree
+id 18
+form excurrent
+size 4 9
+stand_scale 0.75
+stem_spread 45
+lean 0.6
+orders 3
+count 8 2
+angle 70 45
+angle_top 45
+length 0.26 0.5
+crown round
+start 0.3 0.3
+gnarl 0.03 0.16 0.2
+segs 8 3 2
+planar 0 0.2
+cards 0
+dead 1
+broken 0.6
+trunk_radius 0.03
+bark 0.42 0.39 0.35
+bark2 0.58 0.55 0.50
+deadwood 0.60 0.57 0.52
+flare 1

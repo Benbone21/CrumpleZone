@@ -78,8 +78,11 @@ struct KeyInfo {
 };
 const std::vector<KeyInfo>& keys();
 
-// Classic maps drawn with the generated plants (the trees and bushes each species `replaces`): --proc-plants, CZ_PROC_PLANTS=1.
-// Off by default: they change those maps' look, the owner decides.
+// Every species file's text, hashed: part of a map's hash where a palette grows them (a trunk's Pole comes from its species).
+uint64_t textHash();
+
+// Classic maps drawn with the generated plants, each biome its own (forest.cpp, the palettes' `stand` lines). On by default;
+// --classic-plants or CZ_CLASSIC_PLANTS=1 restores the classic models exactly. A look only: the world is the same either way.
 bool everywhere();
 void setEverywhere(bool on);
 // For a test: on this thread only, whatever the switch says (scenarios run side by side).

@@ -15,6 +15,7 @@
 extern const char* const kTreeVS;
 extern const char* const kTreeFSBody;
 extern const char* const kTreeDepthVS;
+extern const char* const kTreeDepthFS;
 extern const char* const kTreePreFSBody;  // (after kCommonFS: the main pass's depth pre-pass, with kTreeVS)
 // Trees past their meshes' reach as pictures (impostors): each tree model's look baked from 8 sides into a texture array
 // (TreeDraw::enableImpostors), a quad per tree turned to the eye (to the light for the shadow maps) showing the two nearest

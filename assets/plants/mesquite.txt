@@ -1,0 +1,31 @@
+name MESQUITE
+about Low spreading thorny desert tree: dark crooked limbs, an open feathery crown
+class tree
+id 13
+form decurrent
+size 3 7
+stand_scale 0.55
+trunk_len 0.3
+trunk_radius 0.05
+count 5 4 3
+angle 62 50 45
+up 0 0.2 0.1 0
+gnarl 0.12 0.22 0.25 0.25
+length 0.6 0.55 0.5
+start 0.5 0.25 0.3
+falloff 0.3
+dead 0.08
+width 0.6
+leaf_order 2
+leaf_from 0.2
+leaf_step 0.06
+cards 4
+card 0.085 0.05
+scatter 0.06
+align 0.5
+droop 0.2
+ao 0.3
+bark 0.20 0.16 0.13
+bark2 0.30 0.25 0.20
+leaf 0.22 0.30 0.13
+leaf2 0.33 0.40 0.18

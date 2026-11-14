@@ -1,0 +1,17 @@
+name DRY GRASS
+about A bleached tuft of dead grass
+class shrub
+id 16
+form bunchgrass
+size 0.25 0.5
+blades 45
+blade 1.0 0.03
+spread 46
+stem_base 0.1
+stalks 2 5
+stalk_len 1.2
+width 0.65
+leaf 0.60 0.54 0.34
+leaf2 0.78 0.72 0.50
+leaf_dry 0.70 0.64 0.46
+flower 0.80 0.74 0.54

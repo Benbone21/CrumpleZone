@@ -1,0 +1,70 @@
+# Lush temperate broadleaf forest: oak and maple over a leafy understory, ferns and tall grass, stumps and deadfall.
+name TEMPERATE FOREST
+plants procedural
+dead 0.05
+dry 0.06
+stand pine fir 5
+stand pine spruce 3
+stand pine ponderosa 2
+stand broadleaf oak 5
+stand broadleaf maple 5
+stand broadleaf aspen 2
+stand snag snag 3
+stand snag deadfall 2
+stand snag snag_broken 2
+stand dead snag 1
+stand dead deadfall 1
+stand bush understory 30
+stand bush fern 22
+stand bush tall_grass 22
+stand bush stump 3
+stand bush:fern fern 1
+stand bush:reeds cattail 1
+stand bush:juniper understory 1
+stand deadbush stump 2
+stand deadbush dead_shrub 1
+upland 900 1400
+riparian 40 4
+wash 15 2
+slope 0.6 0.8
+open 0.7
+zone rock 0 10
+  shrub fern 1
+zone sand 0 20
+  shrub tall_grass 1
+zone lowland 260 700
+  tree oak 40 9 18 crown 0.35
+  tree maple 40 9 17 crown 0.32
+  tree snag 5 6 12
+  tree deadfall 4 5 10
+  tree aspen 11 8 14 crown 0.2
+  shrub understory 35
+  shrub fern 30
+  shrub tall_grass 25
+  shrub stump 5
+  shrub dead_shrub 5
+zone upland 300 600
+  tree maple 30 9 16 crown 0.32
+  tree oak 25 8 15 crown 0.35
+  tree fir 25 10 20
+  tree aspen 12 8 14 crown 0.2
+  tree snag 8 6 12
+  shrub fern 40
+  shrub understory 30
+  shrub tall_grass 20
+  shrub stump 10
+zone riparian 220 800
+  tree maple 40 9 16 crown 0.32
+  tree cottonwood 40 10 18
+  tree deadfall 10 5 10
+  tree snag 10 6 12
+  shrub coyote_willow 30
+  shrub fern 25
+  shrub cattail 20
+  shrub tall_grass 25
+zone wash 200 700
+  tree oak 50 8 15 crown 0.35
+  tree maple 50 8 15 crown 0.32
+  shrub fern 40
+  shrub understory 40
+  shrub tall_grass 20

@@ -1,0 +1,31 @@
+name ALPINE MAT
+about A ground-hugging cushion of tiny leaves and flowers above treeline
+class shrub
+id 21
+form shrub
+replaces bush heather
+size 0.4 0.9
+stems 6 8
+stem_spread 82
+stem_base 0.1
+orders 2
+count 2
+angle 50
+length 0.5
+up 0.05 0.05
+leaf_order 0
+leaf_from 0.3
+leaf_step 0.3
+cards 1
+card 0.3 0.22
+puff 0.34 0.45
+trunk_radius 0.03
+twig 0.012
+width 1.7
+bark 0.26 0.22 0.18
+bark2 0.34 0.30 0.24
+leaf 0.14 0.24 0.12
+leaf2 0.24 0.34 0.16
+leaf_dry 0.40 0.34 0.22
+flower 0.78 0.46 0.62
+flower_share 0.3

@@ -14,6 +14,11 @@
 //   plants procedural             species named below are the plant generator's (assets/plants/NAME.txt, plantgen.h) where it has
 //                                 one of that name, the classic models otherwise (the default, `plants classic`: classic only).
 //                                 Before any zone.
+//   dead SHARE, dry SHARE         the share of plants that are dead ones (the `dead` and `deadbush` stand lists; on a real map
+//                                 the zones' own species lists say it), and of shrubs in their dry colours
+//   stand KEY SPECIES WEIGHT      on a classic map (no zones: forest.cpp sorts each plant into a biome by the ground it stands
+//                                 on), what a classic tree or bush is drawn as here: KEY pine | broadleaf | snag | dryland |
+//                                 bush | bush:KIND | dead | deadbush
 //   crown CELLS                   trees only where this many of the 5 cover samples round the spot are brush (a crown-sized patch)
 //   zone NAME TREES SHRUBS        rock | sand | lowland | upland | riparian | wash, a hectare of ground that carries plants
 //     tree SPECIES WEIGHT HMIN HMAX [crown R] [above E] [below E]   (the zone above's; heights in m; R: its crown's radius
@@ -22,6 +27,7 @@
 // Species are the code-made models' names (treeSpecies(), shrubSpecies()): trees pine, broadleaf, snag, grey_snag, juniper, pinyon, cottonwood, tamarisk;
 // shrubs the plant kinds (plants.h) in lower case with underscores (sagebrush, blackbrush, mormon_tea, prickly_pear, ...).
 #pragma once
+#include <map>
 #include <string>
 #include <vector>
 
@@ -61,6 +67,15 @@ struct Palette {
     double open = 0.12;
     double sandWater = 0.25;
     int crown = 4;
+    // Classic maps (forest.cpp): what a classic tree or bush of this biome is drawn as. Keys: pine, broadleaf, snag, dryland,
+    // bush (any kind), bush:KIND (plants.h names), dead (a tree drawn dead instead, `dead` of them), deadbush.
+    struct Stand {
+        std::string species;
+        double weight = 1;
+    };
+    std::map<std::string, std::vector<Stand>> stand;
+    double dead = 0;   // `dead F`: the share of trees (and bushes) that are dead ones
+    double dry = -1;   // `dry F`: the share of shrubs in their dry colours (-1: one in seven)
     bool procedural = false;   // `plants procedural`: species are the plant generator's (plantgen.h) where it has one of that name
     ZoneRule zone[Z_COUNT];
     double maxTrees() const;   // the densest zone's (a hectare)

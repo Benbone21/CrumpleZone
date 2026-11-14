@@ -5,6 +5,7 @@
 #include "biome.h"
 #include "plantgen.h"
 #include "plants.h"
+#include "vegetation.h"
 #include "visibility.h"
 
 #include <algorithm>
@@ -12,6 +13,9 @@
 #include <cmath>
 #include <map>
 #include <mutex>
+#include <cstdio>
+#include <fstream>
+#include <sstream>
 #include <tuple>
 
 namespace forest {
@@ -57,12 +61,111 @@ namespace {
 const char* const kClassic[4] = {"pine", "broadleaf", "snag", "dryland"};
 // The generated species a look is (null: a classic model).
 const plantgen::Species* speciesOf(const Look& lk) { return lk.design >= kGenDesign ? plantgen::treeById(lk.design - kGenDesign) : nullptr; }
-// The look's design for a tree: its species' if it is a generated one, or stands in for the classic one.
-int lookDesign(int kind, int design) {
+// ---- Biomes on the classic maps ---------------------------------------------------------------------------------------------
+// A classic map's trees and bushes stay where and what they are (kind, height, collider); what each is drawn as comes from
+// the palette of the biome it stands in (assets/maps/vegetation/NAME.txt, its `stand` lines). The biome is read off the ground
+// the world already has (water, sand, snow, red rock, the Mountain's height), at a spot a few metres off the plant's own by its
+// hash, so one biome's plants thin out into the next's over a couple of dozen metres instead of stopping at a line.
+enum PlantBiome { PB_TEMPERATE, PB_HOT_DESERT, PB_HIGH_DESERT, PB_PRAIRIE, PB_RIPARIAN, PB_MONTANE, PB_SUBALPINE, PB_COUNT };
+const char* const kBiomeFile[PB_COUNT] = {"temperate_forest", "hot_desert", "colorado_plateau_desert", "dry_prairie", "riparian_wetland", "montane_forest", "subalpine"};
+struct BiomeStand {
+    typedef std::vector<std::pair<const plantgen::Species*, double>> List;
+    bool ok = false;
+    List tree[4], dead, bush[BUSH_KIND_COUNT], deadBush;
+    double deadShare = 0, dry = -1;
+};
+const BiomeStand& biomeStand(int b) {
+    static const std::array<BiomeStand, PB_COUNT> all = [] {
+        std::array<BiomeStand, PB_COUNT> r;
+        for (int k = 0; k < PB_COUNT; k++) {
+            std::ifstream f(plantgen::dir() + "/../maps/vegetation/" + kBiomeFile[k] + ".txt");
+            if (!f) continue;
+            std::stringstream ss;
+            ss << f.rdbuf();
+            veg::Palette p;
+            std::string err;
+            if (!veg::parse(ss.str(), p, &err)) {
+                std::fprintf(stderr, "vegetation %s: %s\n", kBiomeFile[k], err.c_str());
+                continue;
+            }
+            auto list = [&](const std::string& key) {
+                BiomeStand::List l;
+                auto it = p.stand.find(key);
+                if (it != p.stand.end())
+                    for (const veg::Palette::Stand& s : it->second)
+                        if (const plantgen::Species* sp = plantgen::find(s.species); sp && s.weight > 0) l.push_back({sp, s.weight});
+                return l;
+            };
+            for (int c = 0; c < 4; c++) r[k].tree[c] = list(kClassic[c]);
+            r[k].dead = list("dead"), r[k].deadBush = list("deadbush");
+            const BiomeStand::List any = list("bush");
+            for (int c = 0; c < BUSH_KIND_COUNT; c++) {
+                r[k].bush[c] = list(std::string("bush:") + plantKindName(c));
+                if (r[k].bush[c].empty()) r[k].bush[c] = any;
+            }
+            r[k].deadShare = p.dead, r[k].dry = p.dry, r[k].ok = true;
+        }
+        return r;
+    }();
+    return all[std::clamp(b, 0, PB_COUNT - 1)];
+}
+const plantgen::Species* pickStand(const BiomeStand::List& l, double u) {
+    double sum = 0;
+    for (const auto& s : l) sum += s.second;
+    if (sum <= 0) return nullptr;
+    double at = std::min(std::max(u, 0.0), 0.999999) * sum;
+    for (const auto& s : l) {
+        if (at < s.second) return s.first;
+        at -= s.second;
+    }
+    return l.back().first;
+}
+int plantBiomeAt(const World& w, double x, double z, uint32_t h) {
+    x += (mk::hash01(h, 11) - 0.5) * 26, z += (mk::hash01(h, 12) - 0.5) * 26;
+    const double half = w.halfSize() - 2;
+    x = std::clamp(x, -half, half), z = std::clamp(z, -half, half);
+    const double y = w.height(x, z);
+    if (w.waterLevel(x, z) > y - 1.0) return PB_RIPARIAN;
+    switch (w.surfaceAt(x, z)) {
+        case SURF_SAND: return PB_HOT_DESERT;
+        case SURF_SNOW: case SURF_ICE: return PB_SUBALPINE;
+        case SURF_MUD: case SURF_WET: return PB_RIPARIAN;
+        default: break;
+    }
+    const int cell = w.cellIndex(x, z);
+    const int paint = cell >= 0 ? w.cellPaint(cell) : PAINT_NONE;
+    if (paint == PAINT_REDROCK) return PB_HIGH_DESERT;
+    if (paint == PAINT_DESERT || paint == PAINT_SAND) return PB_HOT_DESERT;
+    if (paint == PAINT_SNOW || paint == PAINT_ICE) return PB_SUBALPINE;
+    for (int k = 0; k < 4; k++) {  // (water a few strides off: its bank)
+        const double qx = std::clamp(x + (k == 0 ? 9.0 : k == 1 ? -9.0 : 0.0), -half, half), qz = std::clamp(z + (k == 2 ? 9.0 : k == 3 ? -9.0 : 0.0), -half, half);
+        if (w.waterLevel(qx, qz) > w.height(qx, qz) - 0.3) return PB_RIPARIAN;
+    }
+    if (w.map == MAP_MOUNTAIN) return y > 150 ? PB_SUBALPINE : y > 95 ? PB_MONTANE : PB_TEMPERATE;
+    if (w.map == MAP_WILDS) return PB_PRAIRIE;
+    return PB_TEMPERATE;
+}
+
+// The look's design for a tree: its species' if it is a generated one, or stands in for the classic one in its biome.
+int lookDesign(const World& w, const Tree& t, int design, uint32_t seed) {
+    const int kind = t.kind;
     if (kind == kGenKind) return plantgen::treeById(design) ? kGenDesign + design : 0;
-    if (plantgen::everywhere() && kind >= 0 && kind < 4)
-        if (const plantgen::Species* s = plantgen::replacing(std::string(kClassic[kind]) + " " + std::to_string(design)); s && s->tree) return kGenDesign + s->id;
+    if (!plantgen::everywhere() || kind < 0 || kind >= 4) return design;
+    const uint32_t h = seed * 2654435761u ^ 0x5bd1e995u;
+    const BiomeStand& bs = biomeStand(plantBiomeAt(w, t.base.x, t.base.z, h));
+    if (bs.ok) {
+        const plantgen::Species* s = nullptr;
+        if (kind != 2 && mk::hash01(h, 2) < bs.deadShare) s = pickStand(bs.dead, mk::hash01(h, 3));
+        if (!s) s = pickStand(bs.tree[kind], mk::hash01(h, 1));
+        if (s) return kGenDesign + s->id;
+    }
+    if (const plantgen::Species* s = plantgen::replacing(std::string(kClassic[kind]) + " " + std::to_string(design)); s && s->tree) return kGenDesign + s->id;
     return design;
+}
+// How much of the classic tree's height a generated stand-in is drawn (a desert tree is short; its Pole is the classic one's).
+double standScale(const Look& lk) {
+    const plantgen::Species* s = speciesOf(lk);
+    return s && lk.kind != kGenKind ? std::clamp(s->v("stand_scale"), 0.2, 1.0) : 1.0;
 }
 double classicBreast(int kind, int design);
 
@@ -71,7 +174,7 @@ mk::Mesh buildModel(const Look& lk, int lod = 0) {
     if (const plantgen::Species* s = speciesOf(lk)) {
         plantgen::Options o;
         o.seed = (uint32_t)lk.seed, o.lod = lod, o.snow = lk.snow;
-        if (lk.kind != kGenKind) o.breast = classicBreast(lk.kind, lk.classic);  // (the classic tree's collider is kept: the trunk drawn to it)
+        if (lk.kind != kGenKind) o.breast = classicBreast(lk.kind, lk.classic) / standScale(lk);  // (the classic tree's collider is kept: the trunk drawn to it)
         plantgen::generate(*s, o, m);
         return m;
     }
@@ -260,6 +363,7 @@ void build(const World& w, bool skipPines, bool skipSnags, Set& out) {
     out = Set();
     for (int l = 0; l < kLods; l++) out.lodAt[l] = (float)lodReach(l);
     std::map<std::tuple<int, int, int, int>, int> index;
+    bool anyGen = false;
     for (size_t i = 0; i < w.trees.size(); i++) {
         const Tree& t = w.trees[i];
         const int seed = w.map == MAP_PROCEDURAL ? worldSeed(w, t.base.x, t.base.z) : (int)i + 1;  // (as the baked forest had it: a tree keeps its look)
@@ -267,10 +371,12 @@ void build(const World& w, bool skipPines, bool skipSnags, Set& out) {
         Look lk;
         lk.kind = t.kind;
         lk.classic = t.design >= 0 ? t.design : designFor(t.kind, (uint32_t)seed, t.base.x, t.base.z, t.height);
-        lk.design = lookDesign(t.kind, lk.classic);
+        lk.design = lookDesign(w, t, lk.classic, (uint32_t)seed);
         const bool gen = lk.design >= kGenDesign;
         if (t.kind == kGenKind && !gen) continue;  // (a species this build doesn't know)
-        lk.seed = 1 + seed % 6;
+        anyGen |= gen;
+        lk.seed = gen && t.kind != kGenKind ? 1 + seed % 4 : 1 + seed % 6;  // (a stand-in: four of each, there are more species)
+        if (gen && t.kind != kGenKind && lk.kind != 2) lk.classic = 0;      // (...and one trunk thickness a kind: the first design's)
         lk.snow = w.surfaceAt(t.base.x, t.base.z) == SURF_SNOW;
         const auto key = std::make_tuple(lk.kind, lk.design, lk.seed, lk.snow ? 1 : 0);
         auto it = index.find(key);
@@ -286,12 +392,14 @@ void build(const World& w, bool skipPines, bool skipSnags, Set& out) {
         Inst in;
         in.x = (float)t.base.x, in.y = (float)t.base.y, in.z = (float)t.base.z;
         in.yaw = (float)(latticeHash(seed, 7) * 6.2832);
-        in.scale = (float)(t.height / (gen ? plantgen::kTreeHeight : modelHeight(t.kind)));
+        in.scale = (float)(t.height * standScale(out.shapes[it->second].look) / (gen ? plantgen::kTreeHeight : modelHeight(t.kind)));
         in.tint = (float)(0.85 + 0.15 * t.tint);
         in.warm = (float)((latticeHash(seed, 13) - 0.5) * 1.2);
         in.shape = it->second, in.tree = (int)i;
         out.inst.push_back(in);
     }
+    // (Generated trees have several times a classic one's triangles in full: their far copies take over sooner.)
+    if (anyGen) out.lodAt[0] = kGenLodAt[0], out.lodAt[1] = kGenLodAt[1], out.lodAt[2] = kGenLodAt[2];
 }
 
 void buildBushes(const World& w, Set& out) {
@@ -306,18 +414,28 @@ void buildBushes(const World& w, Set& out) {
         const Bush& b = w.bushes[i];
         seed++;  // (as the baked bushes had it: a bush keeps its look)
         if (w.map == MAP_PROCEDURAL) seed = worldSeed(w, b.p.x, b.p.z);
-        const int sd = 1 + seed % 6, dry = seed % 7 == 0 ? 1 : 0;
+        const int sd = 1 + seed % 6;
         const plantgen::Species* gs = nullptr;
+        int dry = seed % 7 == 0 ? 1 : 0;
         if (b.kind >= plantgen::kShrubKindBase) {
             gs = plantgen::shrubById(b.kind - plantgen::kShrubKindBase);
             if (!gs) continue;  // (a species this build doesn't know)
         } else if (plantgen::everywhere()) {
-            auto si = standIn.find(plantKindOf(b.kind));
-            if (si == standIn.end()) {
-                const plantgen::Species* r = plantgen::replacing(std::string("bush ") + plantKindName(b.kind));
-                si = standIn.emplace(plantKindOf(b.kind), r && !r->tree ? r : nullptr).first;
+            const uint32_t h = (uint32_t)seed * 2654435761u ^ 0x27d4eb2fu;
+            const BiomeStand& bs = biomeStand(plantBiomeAt(w, b.p.x, b.p.z, h));
+            if (bs.ok) {
+                if (mk::hash01(h, 2) < bs.deadShare) gs = pickStand(bs.deadBush, mk::hash01(h, 3));
+                if (!gs) gs = pickStand(bs.bush[plantKindOf(b.kind)], mk::hash01(h, 1));
+                if (gs && bs.dry >= 0) dry = mk::hash01(h, 4) < bs.dry ? 1 : 0;
             }
-            gs = si->second;
+            if (!gs) {
+                auto si = standIn.find(plantKindOf(b.kind));
+                if (si == standIn.end()) {
+                    const plantgen::Species* r = plantgen::replacing(std::string("bush ") + plantKindName(b.kind));
+                    si = standIn.emplace(plantKindOf(b.kind), r && !r->tree ? r : nullptr).first;
+                }
+                gs = si->second;
+            }
         }
         const int kind = gs ? plantgen::kShrubKindBase + gs->id : plantKindOf(b.kind);
         const auto key = std::make_tuple(kind, sd, dry);

@@ -144,9 +144,9 @@ SCENARIO(procPlantsDeterminism, "procplants/determinism", "The same species and 
     ctx.check("the test species parses", plantgen::parse("test_tree", kTestTree, t, &err), err);
     const uint64_t h0 = meshHash(grow(t, 1, 0)), h1 = meshHash(grow(t, 7, 2)), h2 = meshHash(grow(t, 2, 0, true));
     std::printf("  test tree hashes: %016llx %016llx %016llx\n", (unsigned long long)h0, (unsigned long long)h1, (unsigned long long)h2);
-    ctx.check("pinned: seed 1, full", h0 == 0x56e5ef581aa25143ull);
-    ctx.check("pinned: seed 7, far", h1 == 0x3566381dda181599ull);
-    ctx.check("pinned: seed 2, snowy", h2 == 0x310a289a9c78dad3ull);
+    ctx.check("pinned: seed 1, full", h0 == 0xa2444ba117a8d029ull);
+    ctx.check("pinned: seed 7, far", h1 == 0xa2dede9ff64d23d8ull);
+    ctx.check("pinned: seed 2, snowy", h2 == 0x66b055588ca04b54ull);
 }
 
 SCENARIO(procPlantsBudgets, "procplants/budgets", "Every species at every seed the game uses: sound triangles, standing on the ground at the model's size, each far copy within its budget and lighter than the last") {
@@ -181,8 +181,9 @@ SCENARIO(procPlantsBudgets, "procplants/budgets", "Every species at every seed t
             if (s.tree) worst[lod] = std::max(worst[lod], most[lod]);
         }
         // Snow and drought change it, and add no triangles.
-        if (s.tree) ctx.check(s.key + ": snow lies on it", meshHash(grow(s, 1, 0, true)) != meshHash(grow(s, 1, 0)) && grow(s, 1, 0, true).triangles() == grow(s, 1, 0).triangles());
-        else ctx.check(s.key + ": dry is another colour", meshHash(grow(s, 1, 0, false, 1)) != meshHash(grow(s, 1, 0)));
+        if (s.tree && s.v("green_stems") > 1) {}  // (a cactus column: nothing level for snow to lie on)
+        else if (s.tree) ctx.check(s.key + ": snow lies on it", meshHash(grow(s, 1, 0, true)) != meshHash(grow(s, 1, 0)) && grow(s, 1, 0, true).triangles() == grow(s, 1, 0).triangles());
+        else if (s.v("cards") > 0 || s.v("green_stems") > 0 || !s.woody()) ctx.check(s.key + ": dry is another colour", meshHash(grow(s, 1, 0, false, 1)) != meshHash(grow(s, 1, 0)));  // (bare wood has nothing to dry)
     }
     ctx.metric("the heaviest tree, full", (double)worst[0], "tris", 500, 6500);
     ctx.metric("the heaviest tree, farthest", (double)worst[3], "tris", 6, 320);
@@ -198,6 +199,7 @@ SCENARIO(procPlantsTrunks, "procplants/trunks", "A generated tree has a trunk to
             int woodFoot = 0, leafy = 0;
             for (const mk::MVert& q : m.v) leafy += q.mat == mk::FOLIAGE || q.mat == mk::SNOWLEAF || q.mat == mk::LEAFCUT, woodFoot += q.p[1] < 0.5 && q.mat == mk::WOOD;
             ctx.check(s.key + (snow ? " snowy" : "") + ": the trunk is wood at the foot", woodFoot > 0);
+            if (s.v("green_stems") > 1) continue;  // (a cactus: all stem)
             if (s.v("cards") <= 0) ctx.check(s.key + (snow ? " snowy" : "") + ": bare", leafy == 0, std::to_string(leafy));
             else ctx.check(s.key + (snow ? " snowy" : "") + ": has foliage to fade", leafy > 0);
         }
@@ -212,7 +214,7 @@ SCENARIO(procPlantsTrunks, "procplants/trunks", "A generated tree has a trunk to
         const double k = h / plantgen::kTreeHeight, y = 1.2 / k;
         const mk::Mesh m = grow(s, 1, 0);
         const double drawn = woodRadius(m, y) * k;
-        if (y < 3.0 && drawn > 0) ctx.metric(s.key + ": pole over the drawn stem", p.r / drawn, "", 0.7, 1.4);
+        if (y < 3.0 && y < 7.0 * s.v("trunk_len") && drawn > 0) ctx.metric(s.key + ": pole over the drawn stem", p.r / drawn, "", 0.7, 1.4);  // (below where it forks)
     }
     ctx.check("a pole for each", w.poles.size() > poles0);
 }
@@ -301,7 +303,7 @@ SCENARIO(procPlantsSwitch, "procplants/switch", "Classic maps: off (the default)
     for (const forest::Shape& s : on.shapes) classic += s.look.design < forest::kGenDesign;
     for (const forest::Shape& s : bOn.shapes) genBush += s.look.kind >= plantgen::kShrubKindBase;
     ctx.check("on: every tree look is a generated species", classic == 0, std::to_string(classic) + " classic");
-    ctx.check("on: some bushes are generated, the kinds with no species stay", genBush > 0 && genBush < bOn.shapes.size(), std::to_string(genBush) + " of " + std::to_string(bOn.shapes.size()));
+    ctx.check("on: the bushes are generated (a kind no palette or species covers stays classic)", genBush > 0, std::to_string(genBush) + " of " + std::to_string(bOn.shapes.size()));
     // Each tree as tall as it was, its drawn trunk about its (unchanged) Pole.
     std::set<std::pair<int, int>> seen;
     double worstTall = 0;
@@ -309,8 +311,13 @@ SCENARIO(procPlantsSwitch, "procplants/switch", "Classic maps: off (the default)
         const forest::Inst& a = on.inst[i];
         const forest::Shape& s = on.shapes[a.shape];
         const Tree& t = w.trees[a.tree];
-        worstTall = std::max(worstTall, std::fabs(s.top * a.scale - t.height) / t.height);
+        const plantgen::Species* sp = plantgen::treeById(s.look.design - forest::kGenDesign);
+        const double stand = sp ? sp->v("stand_scale") : 1;  // (a desert or treeline tree stands short of the classic one)
+        worstTall = std::max(worstTall, std::fabs(s.top * a.scale - t.height * stand) / (t.height * stand));
         if (!seen.insert({s.look.kind, s.look.design}).second) continue;
+        // (a single trunk that forks above where the Pole is measured: a low desert tree's limbs are not a cylinder to compare)
+        // (nor a short stand-in: its believable trunk is thinner than the tall classic tree's Pole, which it hides in its crown)
+        if (!sp || (int)sp->v("stems", 1) > 1 || stand < 0.7 || 1.2 / a.scale > 5.0 * sp->v("trunk_len")) continue;
         const Pole* pole = nullptr;
         for (const Pole& p : w.poles)
             if (std::hypot(p.x - t.base.x, p.z - t.base.z) < 0.01) pole = &p;
@@ -321,5 +328,36 @@ SCENARIO(procPlantsSwitch, "procplants/switch", "Classic maps: off (the default)
         if (drawn > 0) ctx.metric(name, pole->r / drawn, "", 0.6, 1.6);
     }
     ctx.metric("generated trees: height off the tree's own", worstTall, "", 0, 0.12);
-    ctx.metric("species drawn for the classic trees", (double)seen.size(), "", 5, 12);
+    ctx.metric("species drawn for the classic trees", (double)seen.size(), "", 5, 40);
+}
+
+SCENARIO(procPlantsBiomes, "procplants/biomes", "Each biome has its palette file: it parses, names only species there are, says what every classic tree kind and bush is drawn as there, with dead ones; the default draws them and --classic-plants none") {
+    static const char* const files[] = {"hot_desert", "colorado_plateau_desert", "dry_prairie", "temperate_forest", "riparian_wetland", "montane_forest", "subalpine"};
+    std::set<std::string> used;
+    for (const char* name : files) {
+        std::ifstream f(plantgen::dir() + "/../maps/vegetation/" + name + ".txt");
+        ctx.check(std::string(name) + ": the file is there", (bool)f);
+        if (!f) continue;
+        std::stringstream ss;
+        ss << f.rdbuf();
+        veg::Palette p;
+        std::string err;
+        ctx.check(std::string(name) + ": parses", veg::parse(ss.str(), p, &err), err);
+        ctx.check(std::string(name) + ": generated species", p.procedural);
+        for (const char* key : {"pine", "broadleaf", "snag", "bush", "dead", "deadbush"}) ctx.check(std::string(name) + ": a stand list for " + key, p.stand.count(key) && !p.stand[key].empty());
+        ctx.check(std::string(name) + ": a share of it dead, a share dry", p.dead > 0 && p.dead < 0.5 && p.dry >= 0 && p.dry <= 1);
+        for (const auto& kv : p.stand)
+            for (const veg::Palette::Stand& s : kv.second) used.insert(s.species);
+        size_t zoned = 0;
+        for (const veg::ZoneRule& z : p.zone) zoned += z.trees.size() + z.shrubs.size();
+        ctx.check(std::string(name) + ": zones for a real map", zoned >= 8, std::to_string(zoned));
+    }
+    ctx.metric("species the biomes draw", (double)used.size(), "", 30, 400);
+    for (const char* want : {"creosote", "mesquite", "palo_verde", "catclaw", "ocotillo", "cholla", "barrel_cactus", "dry_grass", "dead_shrub", "tumbleweed", "snag", "maple", "fern", "tall_grass", "stump", "cattail", "manzanita", "deadfall", "krummholz", "alpine_mat"})
+        ctx.check(std::string(want) + " grows in some biome", used.count(want) > 0);
+    // The species' text is hashed (a map's hash takes it in where its palette grows them).
+    ctx.check("the species files have a hash", plantgen::textHash() != 0 && plantgen::textHash() == plantgen::textHash());
+    // A desert stand-in is drawn shorter than the classic tree it stands for; its Pole is the classic tree's.
+    const plantgen::Species* mq = plantgen::find("mesquite");
+    ctx.check("a desert tree stands short", mq && mq->v("stand_scale") < 0.8);
 }

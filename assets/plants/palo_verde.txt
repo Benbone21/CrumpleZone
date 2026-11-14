@@ -1,0 +1,31 @@
+name PALO VERDE
+about Green-barked desert tree: a broom of green twigs, tiny leaves, yellow flowers
+class tree
+id 14
+form decurrent
+size 3 6
+stand_scale 0.5
+trunk_len 0.28
+trunk_radius 0.045
+count 5 4 4
+angle 50 42 38
+up 0 0.4 0.25 0.1
+gnarl 0.1 0.15 0.18 0.2
+length 0.6 0.55 0.5
+start 0.5 0.25 0.3
+falloff 0.3
+width 0.55
+leaf_order 3
+leaf_from 0.3
+leaf_step 0.07
+cards 2
+card 0.07 0.04
+scatter 0.04
+align 0.6
+ao 0.2
+bark 0.34 0.42 0.19
+bark2 0.44 0.52 0.24
+leaf 0.36 0.46 0.20
+leaf2 0.48 0.56 0.26
+flower 0.90 0.78 0.15
+flower_share 0.3

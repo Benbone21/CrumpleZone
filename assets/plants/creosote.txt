@@ -1,0 +1,30 @@
+name CREOSOTE BUSH
+about Open airy desert shrub: many thin dark stems from the ground, small waxy olive leaves
+class shrub
+id 10
+form shrub
+size 0.5 1.2
+stems 8 12
+stem_spread 34
+orders 2
+count 3
+angle 28
+length 0.45
+up 0.3 0.3
+gnarl 0.1 0.14
+leaf_order 0
+leaf_from 0.45
+leaf_step 0.14
+cards 3
+card 0.11 0.06
+scatter 0.04
+align 0.4
+width 0.6
+trunk_radius 0.016
+bark 0.22 0.20 0.18
+bark2 0.34 0.31 0.27
+leaf 0.28 0.33 0.12
+leaf2 0.38 0.43 0.16
+leaf_dry 0.46 0.42 0.22
+flower 0.88 0.76 0.15
+flower_share 0.08

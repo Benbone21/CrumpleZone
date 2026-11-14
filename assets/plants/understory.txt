@@ -1,0 +1,27 @@
+name LEAFY SHRUB
+about A round leafy green shrub of the forest edge
+class shrub
+id 24
+form shrub
+replaces bush bush
+size 0.5 1.4
+stems 5 7
+stem_spread 46
+orders 2
+count 2
+angle 42
+length 0.5
+leaf_order 0
+leaf_from 0.4
+leaf_step 0.22
+cards 2
+card 0.13 0.1
+scatter 0.06
+puff 0.11 0.8
+trunk_radius 0.024
+width 0.66
+bark 0.26 0.22 0.17
+bark2 0.36 0.31 0.24
+leaf 0.14 0.27 0.08
+leaf2 0.25 0.40 0.13
+leaf_dry 0.50 0.42 0.20

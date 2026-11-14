@@ -1,0 +1,31 @@
+name SAGUARO
+about Columnar cactus: a tall ribbed green column, a few upturned arms
+class tree
+id 17
+form excurrent
+size 3 8
+stand_scale 0.5
+green_stems 2
+cards 0
+orders 2
+count 3
+angle 80
+angle_top 80
+angle_var 6
+length 0.2
+crown columnar
+start 0.4
+up 0 1.8
+gnarl 0.008 0.02
+segs 6 5
+planar 0 0
+trunk_radius 0.05
+flare 1
+pipe 9
+twig 0.034
+taper 0
+sides 8
+bark 0.24 0.34 0.19
+bark2 0.30 0.40 0.23
+leaf 0.24 0.34 0.19
+leaf2 0.33 0.43 0.25

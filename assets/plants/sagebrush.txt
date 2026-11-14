@@ -6,16 +6,16 @@ id 1
 form shrub
 replaces bush sagebrush
 size 0.4 1.0
-stems 3 4
-stem_spread 50
-trunk_radius 0.04
-count 3 2
+stems 6 8
+stem_spread 56
+trunk_radius 0.026
+count 2
 gnarl 0.16 0.2 0.22
-leaf_order 1
-leaf_from 0.35
-leaf_step 0.13
-cards 1
-card 0.1 0.06
+leaf_order 0
+leaf_from 0.5
+leaf_step 0.2
+cards 2
+card 0.08 0.05
 scatter 0.045
 align 0.4
 width 0.6
@@ -26,5 +26,7 @@ leaf2 0.43 0.44 0.35
 leaf_dry 0.50 0.47 0.37
 flower 0.56 0.54 0.32
 flower_share 0.08
-puff 0.085 0.7
+puff 0.075 0.7
 leaf_tip 0.08
+orders 2
+length 0.5

@@ -60,7 +60,9 @@ const std::vector<KeyInfo>& keyTable() {
         {"broken", "0", "how far branches are snapped short (a snag: 0.6)"},
         {"width", "0", "the crown's radius over the height it is fitted to (0: as it grows)"},
         {"sides", "8", "the most sides a stem is drawn with"},
-        {"green_stems", "0", "1: the branches are the foliage (leafless green stems: Mormon tea)"},
+        {"green_stems", "0", "1: the branches are the foliage (leafless green stems: Mormon tea); 2: the stems too (a cactus)"},
+        {"lean", "0", "a single stem leans at least this share of stem_spread (a toppling dead tree)"},
+        {"stand_scale", "1", "standing in for a classic map's tree, it is drawn this share of that tree's height (a desert tree is short)"},
         // Foliage.
         {"leaf_order", "2", "branches of this order and above carry foliage"},
         {"leaf_from", "0.3", "along the outer part of a branch, from this far along it"},
@@ -290,7 +292,7 @@ struct Woody {
         const double a0 = r.u() * 2 * kPi;
         for (int s = 0; s < stems; s++) {
             const double az = a0 + 2 * kPi * s / stems + (stems > 1 ? 0.5 * r.sym() : 0);
-            const double lean = stems > 1 ? spread * (0.45 + 0.55 * r.u()) : spread * r.u();
+            const double lean = stems > 1 ? spread * (0.45 + 0.55 * r.u()) : spread * (sp.v("lean") + (1 - sp.v("lean")) * r.u());
             const V3 out(dm::cos(az), 0, dm::sin(az));
             const V3 d = norm(UP * dm::cos(lean) + out * dm::sin(lean));
             const V3 o = out * (stems > 1 ? ring * (0.6 + 0.4 * r.u()) : 0.0) - UP * 0.02;
@@ -368,7 +370,7 @@ struct Woody {
         for (Br& b : br)
             if (b.parent < 0) b.r[0] *= flare;
         if (breastH > 0) {  // a classic tree's trunk: its collider stays what it was
-            const double have = radiusAt(0.1);
+            const double have = radiusAt(0.1 / std::clamp(sp.v("stand_scale"), 0.2, 1.0));  // (1.2 m up the classic tree it stands for)
             const double f = std::min(2.5, std::max(0.4, breastH / std::max(1e-6, have))), fs = std::sqrt(f);
             for (Br& b : br)
                 for (double& q : b.r) q *= b.order == 0 ? f : fs;
@@ -562,6 +564,7 @@ void woody(const Species& sp, const Options& o, Out& out, double scale) {
         V3 c0 = vmix(col.bark, col.bark2, clamp01(b.order * 0.5)), c1 = vmix(col.bark, col.bark2, clamp01(b.order * 0.5 + 0.5));
         mk::Mat mat = mk::WOOD;
         if (b.dead) c0 = vmix(c0, col.dead, 0.7), c1 = col.dead * 1.08;
+        else if (green && sp.v("green_stems") > 1) c0 = col.leaf, c1 = col.leaf2;  // (a cactus: green, but solid: it doesn't dissolve for the camera as leaves do)
         else if (green && b.order >= 1) c0 = col.leaf, c1 = col.leaf2, mat = mk::FOLIAGE;
         else if (green) c1 = vmix(c1, col.leaf, 0.6);
         tube(out, b, sides, stride, c0, c1, mat, o.seed * 31u + (uint32_t)i, !b.snapped || b.r.back() <= twig * 1.01);
@@ -676,7 +679,7 @@ void grass(const Species& sp, const Options& o, Out& out) {
         const bool stalk = k >= n;
         const double keep = rb.u(), az = rb.u() * 2 * kPi, lean = spread * (stalk ? 0.35 : 0.25 + 0.95 * rb.u()), L = (stalk ? sp.v("stalk_len") : bl) * (0.6 + 0.4 * rb.u());
         const double tone = rb.u(), bend = 0.25 + 0.5 * rb.u(), ro = ring * std::sqrt(rb.u()), ra = rb.u() * 2 * kPi;
-        if (keep >= kKeep[lod] && !(stalk && lod < 2 && keep < 0.7)) continue;
+        if (keep >= kKeep[lod] && k >= 2 && !(stalk && lod < 2 && keep < 0.7)) continue;  // (the first two always: a far copy is never nothing)
         const V3 outw(dm::cos(az), 0, dm::sin(az)), side(-outw.z, 0, outw.x);
         const V3 d0 = norm(UP * dm::cos(lean) + outw * dm::sin(lean)), d1 = norm(d0 + outw * bend - UP * (stalk ? 0.0 : 0.25 * bend));
         const V3 p0 = V3(dm::cos(ra), 0, dm::sin(ra)) * ro - UP * 0.02, p1 = p0 + d0 * (L * 0.55), p2 = p1 + d1 * (L * 0.45);
@@ -996,6 +999,11 @@ void generate(const Species& s, const Options& o, mk::Mesh& m) {
         const double w = s.v("width") > 0 ? s.v("width") : 0.5;
         k = kShrubRadius / w;
     }
+    if (s.tree) {  // (exactly the model's height: the skeleton's fit allows for foliage it can only guess at)
+        double top = 0;
+        for (size_t i = from; i < m.v.size(); i++) top = std::max(top, (double)m.v[i].p[1]);
+        if (top > 0.75 && top < 1.3) k /= top;
+    }
     for (size_t i = from; i < m.v.size(); i++)
         for (int c = 0; c < 3; c++) m.v[i].p[c] = (float)(m.v[i].p[c] * k);
     m.finish();
@@ -1034,11 +1042,25 @@ const Species* replacing(const std::string& what) {
     return nullptr;
 }
 
+uint64_t textHash() {
+    static const uint64_t h = [] {
+        uint64_t v = 1469598103934665603ull;
+        for (const Species& s : all()) {
+            std::ifstream f(dir() + "/" + s.key + ".txt");
+            std::stringstream ss;
+            ss << f.rdbuf();
+            for (char c : s.key + ss.str()) v = (v ^ (uint8_t)c) * 1099511628211ull;
+        }
+        return v;
+    }();
+    return h;
+}
+
 namespace {
 bool& everywhereSwitch() {
-    static bool on = [] {
-        const char* e = std::getenv("CZ_PROC_PLANTS");
-        return e && *e && *e != '0';
+    static bool on = [] {  // (on unless asked for the classic look)
+        const char* e = std::getenv("CZ_CLASSIC_PLANTS");
+        return !(e && *e && *e != '0');
     }();
     return on;
 }

@@ -6,7 +6,7 @@ id 9
 form wand
 replaces bush coyote_willow
 size 0.8 1.7
-stems 11 14
+stems 13 17
 stem_spread 12
 orders 2
 count 1

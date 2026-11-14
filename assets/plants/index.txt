@@ -22,3 +22,26 @@ yucca
 prickly_pear
 bunchgrass
 coyote_willow
+# Biome species (the palettes in assets/maps/vegetation name them).
+mesquite
+palo_verde
+catclaw
+maple
+saguaro
+deadfall
+krummholz
+creosote
+ocotillo
+cholla
+barrel_cactus
+dead_shrub
+tumbleweed
+dry_grass
+tall_grass
+fern
+cattail
+manzanita
+alpine_mat
+stump
+thornbush
+understory

@@ -1,0 +1,93 @@
+# Hot desert (Sonoran / Mojave / Chihuahuan lowlands): creosote flats, thorny trees along the washes, cactus on the slopes,
+# a lot of it dead or dry. src/vegetation.h has the format. `stand` lines: what a classic map's trees and bushes are drawn as
+# where the ground is sand or desert (forest.cpp); the zones are for a real map (`vegetation hot_desert`).
+name HOT DESERT
+plants procedural
+dead 0.18
+dry 0.45
+stand pine mesquite 4
+stand pine palo_verde 3
+stand pine saguaro 3
+stand pine catclaw 2
+stand broadleaf mesquite 4
+stand broadleaf palo_verde 4
+stand broadleaf catclaw 3
+stand snag deadfall 1
+stand snag snag 2
+stand snag snag_broken 1
+stand dryland mesquite 1
+stand dead snag 2
+stand dead deadfall 1
+stand bush creosote 30
+stand bush dry_grass 16
+stand bush thornbush 10
+stand bush ocotillo 7
+stand bush cholla 8
+stand bush barrel_cactus 6
+stand bush prickly_pear 6
+stand bush yucca 4
+stand bush tumbleweed 5
+stand bush:cactus cholla 3
+stand bush:cactus barrel_cactus 3
+stand bush:cactus prickly_pear 2
+stand bush:yucca yucca 1
+stand bush:tumbleweed tumbleweed 1
+stand deadbush dead_shrub 3
+stand deadbush tumbleweed 1
+upland 600 1100
+riparian 40 4
+wash 25 3
+slope 0.45 0.7
+open 0.2
+zone rock 0 6
+  shrub barrel_cactus 3
+  shrub cholla 2
+  shrub ocotillo 2
+zone sand 0.3 30
+  tree mesquite 1 2.5 4
+  shrub creosote 40
+  shrub dry_grass 25
+  shrub dead_shrub 15
+  shrub tumbleweed 10
+zone lowland 3 140
+  tree mesquite 40 3 6
+  tree palo_verde 30 3 6
+  tree snag 15 3 6
+  tree catclaw 15 2 4
+  shrub creosote 45
+  shrub dry_grass 15
+  shrub thornbush 10
+  shrub dead_shrub 10
+  shrub cholla 8
+  shrub prickly_pear 6
+  shrub tumbleweed 6
+zone upland 8 170
+  tree saguaro 45 4 9
+  tree palo_verde 30 3 6
+  tree mesquite 15 3 5
+  tree snag 10 3 6
+  shrub creosote 25
+  shrub ocotillo 14
+  shrub cholla 14
+  shrub barrel_cactus 10
+  shrub prickly_pear 10
+  shrub thornbush 10
+  shrub dry_grass 10
+  shrub yucca 7
+zone riparian 30 200
+  tree mesquite 50 4 8
+  tree cottonwood 20 7 13
+  tree catclaw 30 2.5 4.5
+  shrub thornbush 30
+  shrub creosote 20
+  shrub dry_grass 20
+  shrub coyote_willow 15
+  shrub dead_shrub 15
+zone wash 18 200
+  tree mesquite 40 3.5 7
+  tree palo_verde 35 3 6
+  tree catclaw 25 2 4
+  shrub thornbush 35
+  shrub creosote 30
+  shrub dry_grass 20
+  shrub dead_shrub 15

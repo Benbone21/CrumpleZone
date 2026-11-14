@@ -1,0 +1,24 @@
+name CATCLAW ACACIA
+about Thorny thicket tree: several crooked grey stems, sparse small grey-green leaves, dead twigs
+class tree
+id 15
+form multistem
+size 2 4
+stand_scale 0.4
+stems 3 5
+stem_spread 34
+count 5 3
+gnarl 0.16 0.22 0.25
+dead 0.18
+width 0.55
+leaf_order 1
+leaf_from 0.4
+leaf_step 0.08
+cards 3
+card 0.08 0.045
+scatter 0.05
+ao 0.25
+bark 0.30 0.27 0.24
+bark2 0.44 0.41 0.37
+leaf 0.27 0.32 0.20
+leaf2 0.38 0.42 0.27

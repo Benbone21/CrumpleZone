@@ -1,0 +1,56 @@
+# Subalpine and alpine: spruce and fir thinning to krummholz at treeline, low mats and bunchgrass above it, bare rock on top.
+name SUBALPINE AND ALPINE
+plants procedural
+dead 0.2
+dry 0.2
+stand pine krummholz 5
+stand pine spruce 3
+stand pine fir 2
+stand broadleaf krummholz 3
+stand broadleaf aspen 1
+stand snag snag 3
+stand snag snag_broken 2
+stand snag deadfall 2
+stand dead snag 2
+stand dead deadfall 1
+stand bush alpine_mat 45
+stand bush bunchgrass 25
+stand bush dry_grass 10
+stand bush stump 3
+stand bush:heather alpine_mat 1
+stand deadbush dead_shrub 1
+upland 3300 3600
+riparian 30 3
+wash 12 2
+slope 0.6 0.8
+open 0.4
+zone rock 0 12
+  shrub alpine_mat 1
+zone sand 0 10
+  shrub bunchgrass 1
+zone lowland 200 300
+  tree spruce 40 10 22
+  tree fir 35 9 18
+  tree snag 12 6 12
+  tree deadfall 8 5 10
+  tree krummholz 5 2 4
+  shrub alpine_mat 30
+  shrub bunchgrass 30
+  shrub stump 20
+  shrub dead_shrub 20
+zone upland 8 260
+  tree krummholz 1 1.5 3.5 below 3600
+  shrub alpine_mat 60
+  shrub bunchgrass 30
+  shrub dry_grass 10
+zone riparian 120 500
+  tree spruce 60 10 20
+  tree fir 30 9 18
+  tree deadfall 10 5 9
+  shrub coyote_willow 40
+  shrub tall_grass 40
+  shrub alpine_mat 20
+zone wash 30 300
+  tree krummholz 1 2 4
+  shrub alpine_mat 2
+  shrub bunchgrass 1

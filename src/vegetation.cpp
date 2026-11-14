@@ -160,6 +160,20 @@ bool parse(const std::string& text, Palette& out, std::string* err) {
         } else if (key == "crown") {
             if (!need(1)) return false;
             out.crown = std::min(5, std::max(0, (int)num(0)));
+        } else if (key == "dead") {
+            if (!need(1)) return false;
+            out.dead = std::min(1.0, std::max(0.0, num(0)));
+        } else if (key == "dry") {
+            if (!need(1)) return false;
+            out.dry = std::min(1.0, std::max(0.0, num(0)));
+        } else if (key == "stand") {
+            if (!need(3)) return false;
+            const plantgen::Species* gs = plantgen::find(lower(a[1]));
+            if (!gs) return fail(err, at + "no species called " + a[1]);
+            const std::string k = lower(a[0]);
+            const bool bush = k.rfind("bush", 0) == 0 || k == "deadbush";
+            if (bush == gs->tree) return fail(err, at + a[1] + (gs->tree ? " is a tree" : " is a shrub"));
+            out.stand[k].push_back({gs->key, std::max(0.0, num(2))});
         } else if (key == "plants") {
             if (!need(1)) return false;
             if (lower(a[0]) != "procedural" && lower(a[0]) != "classic") return fail(err, at + "plants is procedural or classic");

@@ -1,0 +1,67 @@
+# Dry grassland and prairie: grass above all, sage and rabbitbrush, a tree only in a draw.
+name DRY PRAIRIE
+plants procedural
+dead 0.08
+dry 0.5
+stand pine juniper 3
+stand pine ponderosa 2
+stand broadleaf cottonwood 3
+stand broadleaf oak 2
+stand snag snag 3
+stand snag deadfall 1
+stand dead snag 1
+stand bush tall_grass 22
+stand bush dry_grass 30
+stand bush bunchgrass 22
+stand bush sagebrush 12
+stand bush rabbitbrush 8
+stand bush yucca 3
+stand bush prickly_pear 3
+stand bush:sagebrush sagebrush 1
+stand bush:yucca yucca 1
+stand bush:cactus prickly_pear 1
+stand bush:tumbleweed tumbleweed 1
+stand deadbush dead_shrub 1
+stand deadbush tumbleweed 1
+upland 1500 2000
+riparian 50 5
+wash 20 3
+slope 0.5 0.75
+open 0.5
+zone rock 0 4
+  shrub yucca 1
+zone sand 0 60
+  shrub dry_grass 3
+  shrub yucca 1
+zone lowland 0.6 420
+  tree cottonwood 1 7 13 crown 0.4
+  shrub bunchgrass 30
+  shrub dry_grass 30
+  shrub tall_grass 20
+  shrub sagebrush 10
+  shrub rabbitbrush 6
+  shrub prickly_pear 2
+  shrub yucca 2
+zone upland 4 380
+  tree juniper 3 2.5 5
+  tree ponderosa 1 9 16
+  shrub bunchgrass 35
+  shrub dry_grass 25
+  shrub sagebrush 25
+  shrub rabbitbrush 8
+  shrub yucca 4
+  shrub dead_shrub 3
+zone riparian 45 320
+  tree cottonwood 70 8 16
+  tree snag 10 5 10
+  tree deadfall 5 4 8
+  shrub coyote_willow 30
+  shrub tall_grass 40
+  shrub cattail 15
+  shrub understory 15
+zone wash 6 360
+  tree cottonwood 1 6 11
+  shrub tall_grass 30
+  shrub dry_grass 30
+  shrub rabbitbrush 25
+  shrub sagebrush 15

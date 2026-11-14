@@ -1,0 +1,55 @@
+# Riverbanks, lake shores and wetland: willow and cottonwood, reeds and cattails, tall grass, drowned snags.
+name RIPARIAN AND WETLAND
+plants procedural
+dead 0.1
+dry 0.05
+stand pine cottonwood 4
+stand pine aspen 2
+stand pine fir 1
+stand broadleaf cottonwood 5
+stand broadleaf maple 2
+stand broadleaf aspen 2
+stand snag snag 3
+stand snag deadfall 3
+stand dead snag 1
+stand dead deadfall 1
+stand bush coyote_willow 30
+stand bush cattail 26
+stand bush tall_grass 26
+stand bush fern 8
+stand bush understory 10
+stand bush:reeds cattail 1
+stand deadbush dead_shrub 1
+stand deadbush stump 1
+upland 1e9 1e9
+riparian 80 6
+wash 30 3
+slope 0.5 0.7
+open 0.8
+zone rock 0 0
+zone sand 4 200
+  tree cottonwood 1 6 12
+  shrub coyote_willow 3
+  shrub tall_grass 2
+zone lowland 60 700
+  tree cottonwood 60 9 18
+  tree aspen 20 8 14 crown 0.2
+  tree snag 10 5 10
+  tree deadfall 10 5 9
+  shrub coyote_willow 30
+  shrub tall_grass 35
+  shrub cattail 20
+  shrub understory 15
+zone riparian 90 1100
+  tree cottonwood 60 9 18
+  tree snag 15 5 10
+  tree deadfall 10 5 9
+  tree aspen 15 8 14 crown 0.2
+  shrub cattail 35
+  shrub coyote_willow 35
+  shrub tall_grass 30
+zone wash 40 800
+  tree cottonwood 1 8 14
+  shrub coyote_willow 2
+  shrub tall_grass 2
+  shrub cattail 1

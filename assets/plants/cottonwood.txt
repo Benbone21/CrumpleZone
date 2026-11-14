@@ -8,8 +8,8 @@ form decurrent
 replaces dryland 2
 replaces broadleaf 2
 size 7 16
-trunk_len 0.42
-trunk_radius 0.046
+trunk_len 0.5
+trunk_radius 0.036
 pipe 2.3
 count 5 4 3
 angle 36 48 50
@@ -36,3 +36,4 @@ autumn 0.86 0.66 0.10
 falloff 0.3
 puff 0.04 0.8
 leaf_tip 0.12
+flare 1.25

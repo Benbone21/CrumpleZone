@@ -1,5 +1,6 @@
 // Real-world terrain: the DEM loaders and writers, the sidecar, the prepared land and the active real map (realterrain.h).
 #include "realterrain.h"
+#include "plantgen.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1202,6 +1203,7 @@ bool loadSpec(const std::string& path, Spec& out, std::string* err) {
     for (char c : out.osmText) h = (h ^ (uint8_t)c) * 1099511628211ull;  // (its OpenStreetMap file too)
     for (char c : out.includeText) h = (h ^ (uint8_t)c) * 1099511628211ull;  // (and what it includes)
     for (char c : out.vegText) h = (h ^ (uint8_t)c) * 1099511628211ull;  // (and its vegetation palette)
+    if (out.hasVeg && out.veg.procedural) h = (h ^ plantgen::textHash()) * 1099511628211ull;  // (and the species it grows: a trunk's Pole is its species')
     // (the lidar patches and the ground cover: their bytes)
     std::vector<std::string> more;
     for (const SpecDetail& d : out.details) more.push_back(d.path);

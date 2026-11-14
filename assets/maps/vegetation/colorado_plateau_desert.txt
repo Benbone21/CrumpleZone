@@ -5,6 +5,35 @@
 # Densities are a hectare of ground that carries plants: where the map has a ground cover from aerial photos, its brush class.
 name COLORADO PLATEAU DESERT
 plants procedural       # the plant generator's species (assets/plants) where it has one of the name
+dead 0.12               # classic maps: one tree in eight a snag
+dry 0.35
+# What a classic map's trees and bushes are drawn as on red rock and canyon ground (forest.cpp).
+stand pine juniper 6
+stand pine pinyon 3
+stand broadleaf juniper 3
+stand broadleaf cottonwood 1
+stand broadleaf catclaw 1
+stand snag snag 3
+stand snag deadfall 1
+stand dryland juniper 1
+stand dead snag 2
+stand dead deadfall 1
+stand bush blackbrush 26
+stand bush sagebrush 14
+stand bush bunchgrass 14
+stand bush mormon_tea 10
+stand bush saltbush 8
+stand bush rabbitbrush 7
+stand bush dry_grass 7
+stand bush yucca 5
+stand bush prickly_pear 5
+stand bush thornbush 4
+stand bush:cactus prickly_pear 1
+stand bush:yucca yucca 1
+stand bush:tumbleweed tumbleweed 1
+stand bush:sagebrush sagebrush 1
+stand deadbush dead_shrub 2
+stand deadbush tumbleweed 1
 upland 1330 1560        # benches and mesa tops: juniper comes in over this band (the valley floors below have none)
 riparian 70 6           # the river's banks and bars
 wash 22 3               # dry washes
@@ -45,7 +74,10 @@ zone upland 40 180
   tree juniper 72 2.2 4.8
   tree pinyon 20 2.6 5.5
   tree snag 8 2.0 3.8
-  shrub blackbrush 42
+  tree deadfall 3 2.0 3.6
+  shrub blackbrush 40
+  shrub dead_shrub 6
+  shrub dry_grass 5
   shrub bunchgrass 14
   shrub mormon_tea 13
   shrub sagebrush 7
