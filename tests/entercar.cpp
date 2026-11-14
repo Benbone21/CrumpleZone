@@ -271,7 +271,7 @@ SCENARIO(netTakeOver, "net/take-over", "A buddy's empty truck changes hands: ask
     a->sim.cars[ai].handbrake = 0;
     a->sim.cars[ai].occupied = true;
     a->drive = true;
-    s.run(4.0);  // (W held from parked: 3 s was 6.1 m with every engine 15 % over its rating, 3.5 m without)
+    s.run(3.0);
     a->drive = false;
     ctx.metric("the host's copy moved with it", len(ctx.sim.cars[hi].frame().com - parkedAt), "m", 5, 200);
     ctx.metric("...and matches it", len(ctx.sim.cars[hi].frame().com - a->sim.cars[ai].frame().com), "m", 0, 3);

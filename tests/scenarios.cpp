@@ -152,9 +152,9 @@ VEHICLE_SCENARIO(accel, "dynamics/acceleration", "Full throttle from rest on the
     // Civic Si ~7.2 s (0-60 mph in 6.8), Jesko ~2.5-3 s, Bronco 2.7 ~6.9 s, 4Runner ~10 s
     // (factory 3.4: 10.1-10.5 s; the blower makes up for the weight and the 35s).
     // EF replaces the 200 hp 2022 sedan: 108 hp and ~1,037 kg, estimated 0-100 ~10 s.
-    // Rock buggy: 450 hp in 1,800 kg through four 40 in tires in 4H: ~5.4 s (estimate, a 4-speed
+    // Rock buggy: ~520 hp (450 rated x1.15) in 1,800 kg through four 40 in tires in 4H: ~5 s (estimate, a 4-speed
     // with 5.38 axles). Side-by-side: ~4 s (Can-Am claims 0-60 mph in under 4 s for the Turbo RR).
-    // (Engines make their rated torque; they ran 15 % over it until 2026-11. Every range held without it.)
+    // (Engines run ~15% over the factory figures, see vehicles.cpp: a little quicker.)
     // Tacoma TRD Off-Road V6 automatic: 0-60 mph in 8.3 s (Edmunds), so ~8.8 s to 100.
     // (Its launch is traction-limited: with the game's tires kTireGripScale grippier it gets off the line ~0.35 s quicker.)
     static const Range expect[] = {{8.5, 11.0}, {2.4, 3.4}, {5.6, 7.2}, {8.5, 11.0}, {4.2, 6.4}, {3.3, 5.0}, {7.2, 10.0}, {10.0, 14.5}, {7.5, 11.0}};

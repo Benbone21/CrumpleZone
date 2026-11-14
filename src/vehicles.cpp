@@ -1606,8 +1606,10 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         voice("blazer", 105, 0.38f, 0.15f, 0.60f, 0.40f, 0.12f, 0.15f, 0.55f, 0.55f); // carbureted small block on dual exhaust: deep, a little lope, a rumble
         voice("baja", 215, 0.88f, 0.10f, 0.65f, 0.70f, 0.80f, 0.30f, 0.12f, 0.65f);   // air-cooled flat four out a stinger: loud, raspy, valvetrain and fan clatter, dual-carb honk
         for (size_t i = 0; i < v.size(); i++) v[i].model = (int)i;
-        // (Engines make their rated torque. Until 2026-11 every curve was scaled 15 % over it,
-        // "the stock figures felt flat": the Bronco did 0-100 in 5.7 s and 222 km/h.)
+        // Engines tuned ~15% over their factory ratings: rated torque is the crank's, and
+        // with the drivetrain's spinning mass counted the stock figures felt flat in the game.
+        for (VehicleSpec& s : v)
+            for (TorquePoint& tp : s.torque) tp.nm *= 1.15;
         // Tanks (and the trucks' spare cans).
         v[0].fuelCapacity = 45;                         // EF Civic
         v[1].fuelCapacity = 72;                         // Jesko
