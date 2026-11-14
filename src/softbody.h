@@ -747,20 +747,30 @@ public:
     // kingpin now sit (a crumpled corner can shove them): what a new or adjusted tie rod is set
     // to, within a tie rod's adjusting sleeve (kTieAdjust); past that it's a frame shop's job.
     static constexpr double kTieAdjust = 0.025;
-    double tieTarget(int wheel) const;
-    // (Within 2 mm of straight it's left at straight. Read only with the wheel on and on the ground:
+    double tieTarget(int wheel, double* perRad = nullptr) const;  // (perRad: m of rod length per radian of toe at that wheel, 0 if it can't be read)
+    // How far out a wheel has to be before it's worth setting: half a degree of toe, where a car
+    // starts to pull and scrub a tire (factory tolerances are +-0.1 to 0.2). As rod length that is
+    // ~1 mm on a small car's short steering arm and ~1.4 mm on a truck's; never more than 2 mm.
+    // (It was a flat 2 mm of rod, which is 0.95 degrees on the Civic: a kerb or a rock that
+    // shifted a rack mount a millimetre left it 0.7 degrees out with no repair offered.)
+    static constexpr double kToeBand = 0.5 * M_PI / 180;
+    // (Within that of straight it's left at straight. Read only with the wheel on and on the ground:
     // jacked up or off, its toe is wherever it hangs.)
     double tieSet(int wheel) const {
         const Wheel& w = wheels[wheel];
         if (w.detached || !w.mounted || (jackPlaced && jackHeight > 0.005)) return 0.0;
-        const double t = tieTarget(wheel);
-        return std::fabs(t) <= 0.002 ? 0.0 : t;
+        double k = 0;
+        const double t = tieTarget(wheel, &k);
+        return std::fabs(t) <= tieBand(k) ? 0.0 : t;
     }
     bool tieOut(int wheel) const {
         const Wheel& w = wheels[wheel];
         if (w.detached || !w.mounted || (jackPlaced && jackHeight > 0.005)) return std::fabs(w.tieOffset) > 0.002;  // (a bent rod still shows)
-        return std::fabs(w.tieOffset - tieSet(wheel)) > 0.002;
+        double k = 0;
+        const double t = tieTarget(wheel, &k), band = tieBand(k);
+        return std::fabs(w.tieOffset - (std::fabs(t) <= band ? 0.0 : t)) > band;
     }
+    static double tieBand(double perRad) { return perRad > 0 ? std::min(0.002, kToeBand * perRad) : 0.002; }
     int knuckleOf(int wheel) const;
     bool knuckleBent(int wheel) const;
     void newKnuckle(int wheel);

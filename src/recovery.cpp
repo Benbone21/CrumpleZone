@@ -192,8 +192,9 @@ double Car::repairSeconds() const {
     return t;
 }
 
-double Car::tieTarget(int wheel) const {
+double Car::tieTarget(int wheel, double* perRad) const {
     const Wheel& wh = wheels[wheel];
+    if (perRad) *perRad = 0;
     if (!wh.front || wh.tieRod < 0 || beams[wh.tieRod].broken || wh.lower < 0 || wh.top < 0 || wh.arm < 0) return wh.tieOffset;
     // An alignment: the wheel's toe read against the rear wheels' line (the thrust line), less
     // what the rack is steering it, and the tie rod lengthened or shortened by what turns it back.
@@ -220,6 +221,7 @@ double Car::tieTarget(int wheel) const {
     const V3 kp = nodes[wh.lower].p, k = norm(nodes[wh.top].p - nodes[wh.lower].p), arm = nodes[wh.arm].p;
     const double dLdT = dot(norm(arm - nodes[rack].p), cross(k * (dot(chassis.rot.rotate(V3(0, 1, 0)), k) < 0 ? -1.0 : 1.0), arm - kp));
     if (!std::isfinite(err) || !std::isfinite(dLdT) || std::fabs(dLdT) < 0.02) return wh.tieOffset;
+    if (perRad) *perRad = std::fabs(dLdT);
     return clampd(wh.tieOffset - err * dLdT, -kTieAdjust, kTieAdjust);
 }
 
