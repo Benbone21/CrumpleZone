@@ -67,8 +67,8 @@ void build(const World& w, bool skipPines, bool skipSnags, Set& out);
 // A generated shrub (a kind from plantgen::kShrubKindBase up, or with plantgen::everywhere() a kind a species `replaces`) has more
 // to it, and two plainer copies for further off (kBushLodAt).
 void buildBushes(const World& w, Set& out);
-constexpr float kGenLodAt[3] = {14, 36, 100};  // generated trees: full nearer than 16 m, then each far copy (classic trees: lodReach)
-constexpr float kBushLodAt[2] = {11, 30};  // a generated shrub nearer than these (m, at detail 1): its full model, its near copy; further its far one
+constexpr float kGenLodAt[3] = {11, 36, 100};  // generated trees: full nearer than 16 m, then each far copy (classic trees: lodReach)
+constexpr float kBushLodAt[2] = {8, 22};  // a generated shrub nearer than these (m, at detail 1): its full model, its near copy; further its far one
 // A plainer copy of a mesh: its corners within `cell` of each other (by material) drawn together into one,
 // the triangles left with no size dropped.
 mk::Mesh simplify(const mk::Mesh& m, double cell);

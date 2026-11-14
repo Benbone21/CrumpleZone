@@ -33,7 +33,7 @@ bigger cards and puffs. The budgets are in `tests/procplants.cpp`:
 
 | | full | near copy | far | farthest |
 |---|---|---|---|---|
-| tree, drawn | to 30 m | to 75 m | to 200 m | beyond (then pictures) |
+| tree, drawn | to 14 m | to 36 m | to 100 m | beyond (then pictures from 200 m) |
 | tree, triangles | 6500 | 2800 | 900 | 320 |
 | shrub, drawn | to 11 m | to 30 m | beyond | |
 | shrub, triangles | 1100 | 450 | 150 | |
@@ -50,12 +50,40 @@ baked from these meshes like any other tree's.
   classic models (reeds, tumbleweed). Moab's palette (`colorado_plateau_desert`) is procedural.
 - **Colliders** are as before: `World::plant` stands a `Pole` under every tree, as thick as the generated stem 1 m up
   (`forest::trunkRadius`, from `plantgen::trunkRadius`); foliage and shrubs are nothing to hit.
-- **Classic maps** (Frontier, Backcountry, Mountain, the procedural world, ...) keep their classic models. With
-  `--proc-plants` (or `CZ_PROC_PLANTS=1`) every classic tree and bush a species `replaces` is drawn generated
-  instead: at the tree's own height, its trunk made as thick as the classic one so the unchanged collider fits. This is
-  a look switch only: nothing in the world or the physics changes.
+- **Classic maps** (Frontier, Backcountry, Mountain, the procedural world, levels) are drawn with generated plants by
+  biome (below). `--classic-plants` (or `CZ_CLASSIC_PLANTS=1`) restores the classic models exactly. Either way it is a look
+  only: the trees and bushes stand where they did, with the classic colliders.
 - **The model kit** shows every species as a design of `tree_gen` and `shrub_gen` (the model lab, the proving ground's
   yard, `build/modelsheet tree_gen shrub_gen --set seed=3 --set lod=1`).
+
+## Biomes
+
+Each biome is a palette file in `assets/maps/vegetation/` (format: `src/vegetation.h`). One file serves both kinds of map:
+
+- **A real map** names it (`vegetation hot_desert` in the sidecar) and its `zone` rules grow the species by ground cover,
+  slope, elevation and distance to water. Choosing the palette from ecoregion or climate data for a whole-US map would set
+  this one key per tile.
+- **A classic map** keeps its trees and bushes; `forest.cpp` sorts each into a biome by the ground it stands on (water or
+  mud: riparian; sand: hot desert; red rock: high desert; snow: subalpine; on the big maps' plain green country, regions a
+  kilometre or so across of montane forest, temperate forest and prairie) and draws it as one of that palette's `stand`
+  species: `stand pine fir 5` (a classic pine here is a fir, weight 5), `stand bush creosote 30`, `stand bush:cactus cholla 3`
+  (a classic bush of that kind), `stand dead snag 2` with `dead 0.18` (that share of trees drawn dead), `stand deadbush ...`,
+  and `dry 0.45` (the share of shrubs in their dry colours). The biome is read a few metres off the plant's own spot, by its
+  hash, so two biomes mix over a couple of dozen metres at a border.
+
+| Palette | Trees | Shrubs and ground plants |
+|---|---|---|
+| `hot_desert` | mesquite, palo verde, catclaw, saguaro, snags | creosote, dry grass, thorn scrub, ocotillo, cholla, barrel cactus, prickly pear, yucca, tumbleweed, dead shrubs |
+| `colorado_plateau_desert` (high desert, canyon; Moab) | juniper, pinyon, cottonwood, tamarisk, snags | blackbrush, sagebrush, Mormon tea, saltbush, rabbitbrush, bunchgrass, yucca, prickly pear, dead shrubs |
+| `dry_prairie` | juniper, ponderosa, cottonwood in the draws | tall, dry and bunch grass, sagebrush, rabbitbrush, yucca |
+| `temperate_forest` | oak, maple, aspen, fir, spruce, snags, leaning snags | leafy shrubs, ferns, tall grass, stumps |
+| `riparian_wetland` | cottonwood, aspen, maple, snags | coyote willow, cattails, tall grass, ferns |
+| `montane_forest` | ponderosa, fir, spruce, aspen, snags, leaning snags | manzanita, bunchgrass, ferns, stumps, sagebrush |
+| `subalpine` | krummholz, spruce, fir, snags | alpine mats, bunchgrass, dry grass |
+
+A stand-in for a classic tree is drawn at that tree's height times the species' `stand_scale` (a mesquite stands 0.55 of the
+pine it replaces), with its trunk thickened toward the classic collider. A short desert or treeline tree can't believably
+carry a tall pine's trunk: there the classic `Pole` is wider than the drawn stem and stands hidden in the crown.
 
 ## Adding a species
 

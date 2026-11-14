@@ -17,8 +17,8 @@ start 0.45 0.4
 up 0.1 0.25 0.2
 gnarl 0.05 0.06 0.06
 segs 2 2 1
-trunk_radius 0.06
-twig 0.034
+trunk_radius 0.09
+twig 0.06
 taper 0
 pipe 6
 sides 5

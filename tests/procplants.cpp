@@ -145,14 +145,14 @@ SCENARIO(procPlantsDeterminism, "procplants/determinism", "The same species and 
     const uint64_t h0 = meshHash(grow(t, 1, 0)), h1 = meshHash(grow(t, 7, 2)), h2 = meshHash(grow(t, 2, 0, true));
     std::printf("  test tree hashes: %016llx %016llx %016llx\n", (unsigned long long)h0, (unsigned long long)h1, (unsigned long long)h2);
     ctx.check("pinned: seed 1, full", h0 == 0xa2444ba117a8d029ull);
-    ctx.check("pinned: seed 7, far", h1 == 0xedab52c4f8809a4cull);
+    ctx.check("pinned: seed 7, far", h1 == 0xb1827e7f3f7f5452ull);
     ctx.check("pinned: seed 2, snowy", h2 == 0x66b055588ca04b54ull);
 }
 
 SCENARIO(procPlantsBudgets, "procplants/budgets", "Every species at every seed the game uses: sound triangles, standing on the ground at the model's size, each far copy within its budget and lighter than the last") {
     // Triangles: a tree's full model is drawn within 30 m, then to 75 m, to 200 m and beyond (forest.h lodReach); a shrub's within
     // 11 m, to 30 m and beyond (kBushLodAt).
-    static const size_t treeBudget[4] = {6500, 2800, 900, 320}, shrubBudget[3] = {1100, 450, 150};
+    static const size_t treeBudget[4] = {6500, 2800, 480, 150}, shrubBudget[3] = {1100, 450, 150};
     size_t worst[4] = {};
     for (const plantgen::Species& s : plantgen::all()) {
         const int lods = s.tree ? 4 : 3;
@@ -186,7 +186,7 @@ SCENARIO(procPlantsBudgets, "procplants/budgets", "Every species at every seed t
         else if (s.v("cards") > 0 || s.v("green_stems") > 0 || !s.woody()) ctx.check(s.key + ": dry is another colour", meshHash(grow(s, 1, 0, false, 1)) != meshHash(grow(s, 1, 0)));  // (bare wood has nothing to dry)
     }
     ctx.metric("the heaviest tree, full", (double)worst[0], "tris", 500, 6500);
-    ctx.metric("the heaviest tree, farthest", (double)worst[3], "tris", 6, 320);
+    ctx.metric("the heaviest tree, farthest", (double)worst[3], "tris", 6, 150);
 }
 
 SCENARIO(procPlantsTrunks, "procplants/trunks", "A generated tree has a trunk to hit: wood at its foot, a Pole as thick as the drawn stem 1 m up; a snag has no foliage; a shrub has no collider") {

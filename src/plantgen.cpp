@@ -520,8 +520,8 @@ void puff(Out& out, const V3& c, const V3& axis, double r, double tall, const Cr
     }
 }
 
-const double kKeepPuff[4] = {1.0, 0.5, 0.26, 0.1};
-const double kGrowPuff[4] = {1.0, 1.35, 2.0, 2.9};
+const double kKeepPuff[4] = {1.0, 0.7, 0.11, 0.034};
+const double kGrowPuff[4] = {1.0, 1.15, 2.7, 4.4};
 const double kKeep[4] = {1.0, 0.36, 0.12, 0.04};
 const double kGrow[4] = {1.0, 1.55, 2.5, 4.0};
 
@@ -602,16 +602,19 @@ void woody(const Species& sp, const Options& o, Out& out, double scale) {
             cr.c.y = lerp(lo.y, hi.y, 0.4);
             cr.r = V3(std::max(0.03, (hi.x - lo.x) * 0.5 + cl), std::max(0.03, (hi.y - lo.y) * 0.6 + cl), std::max(0.03, (hi.z - lo.z) * 0.5 + cl));
             double puffR = sp.v("puff", 0);
-            // (The two farthest copies: solid tufts alone where the species has them, and cards drawn whole: a far crown is a
+            // (Every far copy: solid tufts alone where the species has them, and cards drawn whole: a far crown is a
             // mass, as cheap to fill as a classic one, and hides the ground behind it.)
-            const bool cutCards = sp.v("cut") > 0 && lod < 2;
-            const bool farMass = lod >= 2 && sp.tree;
+            const bool cutCards = sp.v("cut") > 0 && lod < 1;
+            const bool farMass = lod >= 1 && sp.tree;
             // (a species of cards alone, a fir's boughs: far off each clump is one flat tuft the size of its cards)
             const bool boughs = farMass && puffR <= 0;
             const double puffTall = boughs ? 0.4 : sp.v("puff", 1);
             if (boughs) puffR = cw * 1.15;
             const double ao = sp.v("ao"), grow = 1 + (kGrow[lod] - 1) * sp.v("far");
             Rng r(o.seed * 2654435761u + 99u);
+            size_t topSite = 0;
+            for (size_t si = 1; si < sites.size(); si++)
+                if (sites[si].p.y > sites[topSite].p.y) topSite = si;
             for (size_t si = 0; si < sites.size(); si++) {
                 const Site& s = sites[si];
                 Rng rs = r.fork((uint32_t)si);
@@ -621,8 +624,10 @@ void woody(const Species& sp, const Options& o, Out& out, double scale) {
                 if (puffR > 0) {
                     Rng rp = rs.fork(7);
                     const double keep = rp.u(), tone = rp.u(), sz = 0.8 + 0.4 * rp.u();
-                    if (keep < kKeepPuff[lod] * (boughs ? 0.42 : 1.0)) {
-                        const double pr = puffR * sz * (1 + (kGrowPuff[lod] - 1) * sp.v("far")) * (farMass ? 1.3 : 1.0);
+                    // (the crown's top clump stays in every copy: a far tree is as tall as it was)
+                    const bool crownTop = sp.tree && si == topSite;
+                    if (crownTop || keep < (lod == 1 && !sp.tree ? 0.5 : kKeepPuff[lod]) * (boughs ? 0.42 : 1.0)) {
+                        const double pr = puffR * sz * (1 + (kGrowPuff[lod] - 1) * sp.v("far") * (boughs ? 0.55 : 1.0)) * (farMass ? 1.3 : 1.0);
                         V3 pc = s.p;
                         pc.y = std::max(pc.y, pr * 0.6);
                         const V3 base = vmix(col.leaf, col.leaf2, tone) * shade * (0.9 + 0.2 * upper);
@@ -1007,8 +1012,17 @@ void generate(const Species& s, const Options& o, mk::Mesh& m) {
         k = kShrubRadius / w;
     }
     if (s.tree) {  // (exactly the model's height: the skeleton's fit allows for foliage it can only guess at)
+        // (...by the full model's top, whichever copy this is: every copy of an individual is the same size)
         double top = 0;
-        for (size_t i = from; i < m.v.size(); i++) top = std::max(top, (double)m.v[i].p[1]);
+        mk::Mesh full;
+        if (o.lod > 0 && s.woody()) {
+            Options o0 = o;
+            o0.lod = 0;
+            Out fo{full};
+            woody(s, o0, fo, kTreeHeight);
+        }
+        const std::vector<mk::MVert>& ref = o.lod > 0 && s.woody() ? full.v : m.v;
+        for (size_t i = o.lod > 0 && s.woody() ? 0 : from; i < ref.size(); i++) top = std::max(top, (double)ref[i].p[1]);
         if (top > 0.75 && top < 1.3) k /= top;
     }
     for (size_t i = from; i < m.v.size(); i++)

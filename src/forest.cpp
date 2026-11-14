@@ -143,6 +143,12 @@ int plantBiomeAt(const World& w, double x, double z, uint32_t h) {
     }
     if (w.map == MAP_MOUNTAIN) return y > 150 ? PB_SUBALPINE : y > 95 ? PB_MONTANE : PB_TEMPERATE;
     if (w.map == MAP_WILDS) return PB_PRAIRIE;
+    // The big maps' plain green country, in regions a kilometre or so across: montane pine forest, broadleaf forest, dry prairie.
+    // (Where in the world, not in this window: the procedural world's windows agree.)
+    if (w.halfSize() > 1000 || w.map == MAP_PROCEDURAL) {
+        const double n = valueNoise((x + (double)w.proc.ox) * 0.0016 + 7.3, (z + (double)w.proc.oz) * 0.0016 - 3.1);
+        return n > 0.56 ? PB_MONTANE : n < 0.24 ? PB_PRAIRIE : PB_TEMPERATE;
+    }
     return PB_TEMPERATE;
 }
 
@@ -376,9 +382,9 @@ void build(const World& w, bool skipPines, bool skipSnags, Set& out) {
         if (t.kind == kGenKind && !gen) continue;  // (a species this build doesn't know)
         anyGen |= gen;
         lk.seed = gen && t.kind != kGenKind ? 1 + seed % 4 : 1 + seed % 6;  // (a stand-in: four of each, there are more species)
-        if (gen && t.kind != kGenKind && lk.kind != 2) lk.classic = 0;      // (...and one trunk thickness a kind: the first design's)
+        if (!gen) lk.classic = 0;  // (only a stand-in's trunk depends on which classic design it stands for)
         lk.snow = w.surfaceAt(t.base.x, t.base.z) == SURF_SNOW;
-        const auto key = std::make_tuple(lk.kind, lk.design, lk.seed, lk.snow ? 1 : 0);
+        const auto key = std::make_tuple(lk.kind, lk.design, lk.seed + 16 * lk.classic, lk.snow ? 1 : 0);
         auto it = index.find(key);
         if (it == index.end()) {
             it = index.emplace(key, (int)out.shapes.size()).first;
@@ -585,8 +591,10 @@ void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& b
             if (out) continue;
             int lod = 0;
             while (lod < kLods - 1 && d > s.lodAt[lod] * v.detail) lod++;
-            lod = std::min(kLods - 1, lod + v.lodBias);
             const Shape& sh = s.shapes[in.shape];
+            // (a generated plant's shadow from a copy plainer still: its copies carry several times a classic one's triangles,
+            // and a shadow shows none of the difference)
+            lod = std::min(kLods - 1, lod + v.lodBias + (v.shadow && sh.look.design >= kGenDesign ? 1 : 0));
             while (lod > 0 && sh.lod[lod].v.empty()) lod--;
             buckets[in.shape * kLods + lod].push_back({i, fade});
         }
