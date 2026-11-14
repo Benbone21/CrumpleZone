@@ -47,8 +47,7 @@ in float vCut;
 // A leaf card's outline: the card kept where a noise fixed in the world (leaf-sized: a hand across) is high, so a card reads as
 // a spray of leaves with sky between them, not a flat tile. The pre-pass and the shading pass cut the same pixels.
 bool leafCut(vec3 p){
-  float a = vnoise(p.xy * 5.3 + p.z * 3.1), b = vnoise(p.zy * 6.1 - p.x * 2.7 + 9.3);
-  return a * 0.55 + b * 0.45 < 0.46;
+  return vnoise(vec2(p.x * 5.3 + p.z * 3.9, p.y * 5.3 - p.z * 2.7)) < 0.44;  // (one lookup: this runs for every layer of every crown)
 }
 void main(){
   if (vFade < ditherAt(gl_FragCoord.xy)) discard;  // (fading out at its reach)
@@ -110,8 +109,7 @@ in float vCut;
 // A leaf card's outline: the card kept where a noise fixed in the world (leaf-sized: a hand across) is high, so a card reads as
 // a spray of leaves with sky between them, not a flat tile. The pre-pass and the shading pass cut the same pixels.
 bool leafCut(vec3 p){
-  float a = vnoise(p.xy * 5.3 + p.z * 3.1), b = vnoise(p.zy * 6.1 - p.x * 2.7 + 9.3);
-  return a * 0.55 + b * 0.45 < 0.46;
+  return vnoise(vec2(p.x * 5.3 + p.z * 3.9, p.y * 5.3 - p.z * 2.7)) < 0.44;  // (one lookup: this runs for every layer of every crown)
 }
 void main(){
   if (vFade < ditherAt(gl_FragCoord.xy)) discard;
@@ -130,7 +128,7 @@ void main(){
 
 const char* const kTreeDepthVS = "#version 330 core\n" TREE_PLACE R"(
 uniform mat4 uLightVP;
-out vec3 vPos; out float vCut;
+out vec3 vPos; out float vCut;  // (for kTreeDepthFS; unused with the plain depth stage)
 void main(){ vPos = placed(); vCut = int(aCol.a + 0.5) == 16 ? 1.0 : 0.0; gl_Position = uLightVP * vec4(vPos, 1.0); })";
 // (leaf cards cast a leafy shadow: cut by a noise at the leaves' size, not the shading pass's own, which a shadow texel can't show)
 const char* const kTreeDepthFS = R"(#version 330 core
@@ -140,7 +138,7 @@ float dnoise(vec2 p){
   vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
   return mix(mix(dhash(i), dhash(i+vec2(1,0)), f.x), mix(dhash(i+vec2(0,1)), dhash(i+vec2(1,1)), f.x), f.y);
 }
-void main(){ if (vCut > 0.5 && dnoise(vPos.xy * 3.1 + vPos.z * 1.9) * 0.55 + dnoise(vPos.zy * 3.7 - vPos.x * 1.6 + 9.3) * 0.45 < 0.44) discard; })";
+void main(){ if (vCut > 0.5 && dnoise(vec2(vPos.x * 3.1 + vPos.z * 2.3, vPos.y * 3.1 - vPos.z * 1.6)) < 0.42) discard; })";
 
 // ---- Pictures (impostors) ----------------------------------------------------------------------------------------------------
 // Baking: a model seen from side k (k * 45 degrees round it, level), orthographic, into its layer's cell k: the base colour (alpha:

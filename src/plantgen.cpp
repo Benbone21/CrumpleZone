@@ -520,7 +520,7 @@ void puff(Out& out, const V3& c, const V3& axis, double r, double tall, const Cr
     }
 }
 
-const double kKeepPuff[4] = {1.0, 0.5, 0.2, 0.075};
+const double kKeepPuff[4] = {1.0, 0.5, 0.26, 0.1};
 const double kGrowPuff[4] = {1.0, 1.35, 2.0, 2.9};
 const double kKeep[4] = {1.0, 0.36, 0.12, 0.04};
 const double kGrow[4] = {1.0, 1.55, 2.5, 4.0};
@@ -601,8 +601,15 @@ void woody(const Species& sp, const Options& o, Out& out, double scale) {
             cr.c = (lo + hi) * 0.5;
             cr.c.y = lerp(lo.y, hi.y, 0.4);
             cr.r = V3(std::max(0.03, (hi.x - lo.x) * 0.5 + cl), std::max(0.03, (hi.y - lo.y) * 0.6 + cl), std::max(0.03, (hi.z - lo.z) * 0.5 + cl));
-            const double puffR = sp.v("puff", 0);
-            const bool cutCards = sp.v("cut") > 0;
+            double puffR = sp.v("puff", 0);
+            // (The two farthest copies: solid tufts alone where the species has them, and cards drawn whole: a far crown is a
+            // mass, as cheap to fill as a classic one, and hides the ground behind it.)
+            const bool cutCards = sp.v("cut") > 0 && lod < 2;
+            const bool farMass = lod >= 2 && sp.tree;
+            // (a species of cards alone, a fir's boughs: far off each clump is one flat tuft the size of its cards)
+            const bool boughs = farMass && puffR <= 0;
+            const double puffTall = boughs ? 0.4 : sp.v("puff", 1);
+            if (boughs) puffR = cw * 1.15;
             const double ao = sp.v("ao"), grow = 1 + (kGrow[lod] - 1) * sp.v("far");
             Rng r(o.seed * 2654435761u + 99u);
             for (size_t si = 0; si < sites.size(); si++) {
@@ -614,15 +621,15 @@ void woody(const Species& sp, const Options& o, Out& out, double scale) {
                 if (puffR > 0) {
                     Rng rp = rs.fork(7);
                     const double keep = rp.u(), tone = rp.u(), sz = 0.8 + 0.4 * rp.u();
-                    if (keep < kKeepPuff[lod]) {
-                        const double pr = puffR * sz * (1 + (kGrowPuff[lod] - 1) * sp.v("far"));
+                    if (keep < kKeepPuff[lod] * (boughs ? 0.42 : 1.0)) {
+                        const double pr = puffR * sz * (1 + (kGrowPuff[lod] - 1) * sp.v("far")) * (farMass ? 1.3 : 1.0);
                         V3 pc = s.p;
                         pc.y = std::max(pc.y, pr * 0.6);
                         const V3 base = vmix(col.leaf, col.leaf2, tone) * shade * (0.9 + 0.2 * upper);
-                        puff(out, pc, s.d, pr, sp.v("puff", 1), cr, base, base * (1 + col.tip), rp);
+                        puff(out, pc, s.d, pr, puffTall, cr, base, base * (1 + col.tip), rp);
                     }
                 }
-                for (int c = 0; c < nCards; c++) {
+                for (int c = 0; c < nCards && !farMass; c++) {
                     Rng rc = rs.fork(31 + (uint32_t)c);
                     const double keep = rc.u();
                     const V3 R1 = rc.unit(), R2 = rc.unit(), off = rc.unit() * (scat * rc.u());

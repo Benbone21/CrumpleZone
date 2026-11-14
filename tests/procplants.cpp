@@ -145,7 +145,7 @@ SCENARIO(procPlantsDeterminism, "procplants/determinism", "The same species and 
     const uint64_t h0 = meshHash(grow(t, 1, 0)), h1 = meshHash(grow(t, 7, 2)), h2 = meshHash(grow(t, 2, 0, true));
     std::printf("  test tree hashes: %016llx %016llx %016llx\n", (unsigned long long)h0, (unsigned long long)h1, (unsigned long long)h2);
     ctx.check("pinned: seed 1, full", h0 == 0xa2444ba117a8d029ull);
-    ctx.check("pinned: seed 7, far", h1 == 0xa2dede9ff64d23d8ull);
+    ctx.check("pinned: seed 7, far", h1 == 0xedab52c4f8809a4cull);
     ctx.check("pinned: seed 2, snowy", h2 == 0x66b055588ca04b54ull);
 }
 

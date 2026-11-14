@@ -2767,7 +2767,7 @@ bool Renderer::init(const World& world, std::string& err) {
     progParts = linkProgram(std::string(kPartsXf) + kPartsVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
     progPartsDepth = linkProgram(std::string(kPartsXf) + kPartsDepthVS, kDepthFS, err);
     progTree = linkProgram(kTreeVS, header + kCommonFS + kLitIns + kTreeFSBody, err);
-    progTreeDepth = linkProgram(kTreeDepthVS, kTreeDepthFS, err);
+    progTreeDepth = linkProgram(kTreeDepthVS, kDepthFS, err);  // (kTreeDepthFS cuts the leaf cards' shadows too, at 2 ms a frame in a forest: not on)
     progTreePre = linkProgram(kTreeVS, header + kCommonFS + kTreePreFSBody, err);
     if (!progTreePre) std::fprintf(stderr, "tree pre-pass shader: %s\n", err.c_str()), err.clear();
     {  // (the far trees' pictures: if their shaders won't build, the meshes go on drawing to the end)
