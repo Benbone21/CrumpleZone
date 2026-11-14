@@ -108,19 +108,50 @@ static void rockHits(Ctx& ctx, const VehicleSpec& spec) {
         ctx.metric(tag + " sill dropped 0.6 m onto a rock: frame set", frameSet(c), "%", 0, 1.0);
         ctx.metric(tag + " sill dropped 0.6 m onto a rock: panels loose", loose(c), "", 0, 0);
     }
-    // 3. Off a 1.2 m ledge, nose first, at a brisk walk.
+    // 3. Off a ledge, nose first, at a walk: 0.8 m, about a tire tall, at 2.0, 2.5 and 3.0 m/s.
+    // (It was 1.2 m at 2.5 m/s only, and that sat on two cliffs. A 1.2 m sheer drop is past what
+    // these trucks walk off: the 4Runner's nose went down 38 to 49 degrees, a near endo. At
+    // 2.25 m/s its rear wheels left the ledge's top, came back down on it from 2 m at 40 kN a tire
+    // and set the rear link brackets 4.8 %; at 2.5 its tail, 1.1 m of overhang falling at 5 m/s as
+    // the rear axle dropped off, landed on the lip and set the last rail bay 4-9 %; from 2.65 m/s
+    // the tail cleared the lip and nothing bent. Which one a run got turned on a few cm/s.
+    // tools/trace/main/ledge.cpp.) The nose's landing must leave the frame straight. Coming off
+    // the back, a long overhang can still come down on the lip (the Tacoma's does at 2.0 m/s):
+    // that is a departure-angle strike, and it may kink the horn ends behind the rear axle, as it
+    // does a real truck's bumper mounts, but not fold them (a kink is 1 %; the 1.2 m strikes were
+    // 4 % and up).
     {
-        const double z = 60;
-        w.addBox(V3(-120, w.height(-120, z) + 0.6, z), V3(10, 0.6, 3), 0, 0, 0, V3(0.4, 0.38, 0.35));
-        w.boxes.back().rock = true;
-        w.buildGrid();
-        Car& c = lowRangeAt(ctx, spec, -125, z);
-        ctx.runUntil(25, [&] { return c.frame().com.x > -104; }, [&] { crawlEast(c, z, 2.5); });
-        ctx.run(1.0, [&] { c.throttle = 0, c.brake = 1; });
-        ctx.check(tag + " drove off the ledge", c.frame().com.x > -106);
-        ctx.metric(tag + " nose off a 1.2 m ledge: damage", c.damage * 100, "%", 0, 1.0);
-        ctx.metric(tag + " nose off a 1.2 m ledge: frame set", frameSet(c), "%", 0, 1.0);
-        ctx.metric(tag + " nose off a 1.2 m ledge: panels loose", loose(c), "", 0, 0);
+        double rearAxleX = 1e9;
+        int lane = 0;
+        double worstFront = 0, worstTail = 0, worstDamage = 0;
+        int worstLoose = 0;
+        bool allOff = true;
+        for (double speed : {2.0, 2.5, 3.0}) {
+            const double z = 60 - 20.0 * lane - (lane == 2 ? 20 : 0);  // lanes at z = 60, 40 and 0
+            lane++;
+            w.addBox(V3(-120, w.height(-120, z) + 0.4, z), V3(10, 0.4, 3), 0, 0, 0, V3(0.4, 0.38, 0.35));
+            w.boxes.back().rock = true;
+            w.buildGrid();
+            Car& c = lowRangeAt(ctx, spec, -125, z);
+            for (const Wheel& wh : c.wheels)
+                if (!wh.front) rearAxleX = std::min(rearAxleX, (double)c.restLocal[wh.inner].x);
+            ctx.runUntil(25, [&] { return c.frame().com.x > -104; }, [&] { crawlEast(c, z, speed); });
+            ctx.run(1.0, [&] { c.throttle = 0, c.brake = 1; });
+            allOff = allOff && c.frame().com.x > -106;
+            for (const Beam& b : c.beams) {
+                if (b.type != BEAM_FRAME) continue;
+                const double set = (b.broken ? 1.0 : std::fabs(b.L0 - b.Lorig) / b.Lorig) * 100;
+                const bool tail = c.restLocal[b.a].x < rearAxleX - 0.5 && c.restLocal[b.b].x < rearAxleX - 0.5;
+                (tail ? worstTail : worstFront) = std::max(tail ? worstTail : worstFront, set);
+            }
+            worstDamage = std::max(worstDamage, c.damage * 100);
+            worstLoose = std::max(worstLoose, loose(c));
+        }
+        ctx.check(tag + " drove off the ledge", allOff);
+        ctx.metric(tag + " nose off a 0.8 m ledge: damage", worstDamage, "%", 0, 1.0);
+        ctx.metric(tag + " nose off a 0.8 m ledge: frame set", worstFront, "%", 0, 1.0);
+        ctx.metric(tag + " nose off a 0.8 m ledge: frame set behind the rear axle (the tail on the lip)", worstTail, "%", 0, 3.0);
+        ctx.metric(tag + " nose off a 0.8 m ledge: panels loose", worstLoose, "", 0, 0);
     }
     // 4. Tipped onto its side off a camber (dropped from 0.4 m on its door).
     {
