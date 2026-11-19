@@ -33,10 +33,25 @@ The sheets (`sheet-PALETTE.jpg`) show every species a palette draws, seed 2 (lea
 The 5% target is met in wide views and in four of seven drive-height views, not in the densest wood (6,500 trees in view:
 the near trees' full models and their shadows) nor where the camera stands in a crown.
 
+## Since this review (not yet re-shot)
+
+The shots and verdicts above are from before these changes; they have not been taken again.
+
+- The biome areas are marked by the maps' builders now, not a noise (`docs/procedural-plants.md`, "Where a biome is"). On the big
+  map: Badlands Wash, the Frontier's badlands and the Open Country's southern canyons are high desert; Ranger Flats and the Open
+  Country's meadows are prairie; the Frontier's own west and the dune bowl are hot desert. The spot called `dry_prairie` above
+  (-1842,2460) is Timber Basin: mountain forest now. Spots to shoot: prairie -2000,0 and -4300,0; canyon 1500,-4400 and
+  -4000,-2400 and 2000,-2000; hot desert the Frontier region's west (1050,-3650) and a desert level (wilds); in the procedural
+  world, seed 1: mesa country at global 1072,2717, dunes 1722,2342, plains 706,3217.
+- A classic tree is planted as its species: it is that species' height in the world and its `Pole` is that stem. The unseen
+  post over a short desert or treeline tree is gone, and each species has its own trunk.
+
 ## Still wrong
-- Hot desert, canyon and prairie have no ground of their own on the hand-made maps beyond small patches; the palettes are there, the places are not. The procedural world's biomes use the same ground rules (sand, red rock, snow, water) but no shot was taken there.
-- Short stand-ins (mesquite, palo verde, catclaw, saguaro, krummholz) keep the tall classic tree's collider: an unseen post inside or above a low crown.
-- One trunk thickness per classic kind: an aspen-grove tree's stand-in has the oak's thicker trunk on the aspen's thinner collider.
-- Regions of montane, temperate and prairie on the big maps come from a noise, not from the map's own design.
+- The layout is unchanged, so a biome has trees only where the map planted some: the Frontier's desert has a few snags, the dune
+  bowl a rim of trees, the procedural dunes almost none (their desert is shrubs and cacti). Prairie has a forest's tree count
+  on the Open Country's meadows.
+- With `--classic-plants` the classic models are drawn on the species' trees: a classic trunk thicker or thinner than its `Pole`.
+- The procedural world's far forest (the backdrop past the window) still draws classic heights: taller than the short desert
+  and treeline trees the window plants.
 - Leaf-card shadows are still whole cards: cutting them cost 2 ms a frame in a forest (the shader is there, unused).
 - Fallen logs are the game's own classic logs; the generator has stumps and leaning snags but no lying trunk.

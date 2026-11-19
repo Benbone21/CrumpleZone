@@ -368,6 +368,9 @@ SCENARIO(onemapSame, "onemap/same-every-time", "The big map builds the same on o
 // against what Linux builds. Linux, Windows and macOS (CI runs this on each) must all agree: a guest drives the world it built itself,
 // and a rock that's somewhere else on the guest's machine than on the host's is one it drives through, or hits where there is none.
 // If you changed the big map on purpose, run this on Linux and paste the new hashes it prints (WORLDPRINT lines) below.
+// (2026-11-18, plant biomes: trees, poles and rocks. A tree is planted as a species of its plant biome: the trees' hash takes in the
+// species and the biome areas, short species are shorter, each Pole is its species' stem; and the timber sections' boulders at the
+// feet of trees, set a crown's radius out, moved with the crowns: 62,937 rocks for 62,936 with code-made rocks.)
 namespace {
 struct Golden {
     const char* cat;
@@ -378,12 +381,12 @@ const Golden kBareGolden[] = {
     {"terrain", 0xc5de2d4181e488bbull},
     {"ground", 0x1909611ed75ea744ull},
     {"water", 0x47d33adb82c9070eull},
-    {"rocks", 0x5db8fecf561c4900ull},
-    {"trees", 0xff9c864722e88248ull},
+    {"rocks", 0x50cb7cebe421e00eull},
+    {"trees", 0x0f847b3f95e49461ull},
     {"logs", 0xe6e09f444f33c667ull},
     {"bushes", 0x9eaaa945cf5bffdaull},
     {"boxes", 0x523683be84d84aa8ull},
-    {"poles", 0x5d5b725f7c98047aull},
+    {"poles", 0xa91d3e7ad58f5c4bull},
     {"props", 0xfc3f438394b8e71aull},
     {"places", 0xc4663ffe163282d9ull},
     {"trails", 0x1abb6d010909b118ull}};
@@ -392,12 +395,12 @@ const Golden kScansGolden[] = {
     {"terrain", 0xc5de2d4181e488bbull},
     {"ground", 0x1909611ed75ea744ull},
     {"water", 0x47d33adb82c9070eull},
-    {"rocks", 0x55380c41b260a74bull},
-    {"trees", 0xfa0376f3b629c371ull},
+    {"rocks", 0x2246630dc56be8f4ull},
+    {"trees", 0x7a2f1cf1ab29772cull},
     {"logs", 0x80c84e715c3cbb51ull},
     {"bushes", 0x5bf9fa57b43c8df8ull},
     {"boxes", 0xe6747a6a31398e67ull},
-    {"poles", 0x12be7c26b987fb00ull},
+    {"poles", 0xa4edceeb34429cbeull},
     {"props", 0xa11ccbe7428b30b9ull},
     {"places", 0xc4663ffe163282d9ull},
     {"trails", 0x1abb6d010909b118ull}};
