@@ -26,11 +26,18 @@ SCENARIO(forestInstances, "forest/instances", "Every tree is one instance of a m
     ctx.check("pines, broadleaf and snags all drawn", kinds[0] && kinds[1] && kinds[2]);
 }
 
-SCENARIO(forestTrunks, "forest/trunks", "Each kind and design of tree: its trunk's Pole is as thick as the drawn trunk 1 m up") {
-    // (The classic models, which the Poles are made from: --classic-plants. The generated stand-ins' trunks are checked in
-    // procplants/switch and procplants/trunks, with a measure that tells a stem from the limbs crossing the plane.)
+SCENARIO(forestTrunks, "forest/trunks", "Each classic kind and design of tree: the trunk radius its Pole would be made from (forest::trunkRadius) is the classic model's drawn trunk 1 m up") {
+    // (The classic models' own trunks: what a tree's Pole is where no species stands in for it (no plant files). A tree a map plants
+    // grows as a species of its plant biome and its Pole is that stem's: procplants/stand-ins checks those against what is drawn.)
     plantgen::EverywhereHere classic(false);
-    World w(MAP_BACKCOUNTRY);
+    World w(MAP_PROVING_GROUND);
+    w.trees.clear();
+    for (int kind = 0; kind < 3; kind++)
+        for (int k = 0; k < 40; k++) {
+            Tree t;  // (straight into the list, not planted: the classic tree as it is)
+            t.base = V3(300 + 9.0 * k, 0, 300 + 30.0 * kind), t.height = 7 + 0.25 * k, t.radius = 2, t.tint = 1, t.kind = kind;
+            w.trees.push_back(t);
+        }
     forest::Set set;
     forest::build(w, false, false, set);
     std::map<std::pair<int, int>, int> seen;
@@ -39,13 +46,7 @@ SCENARIO(forestTrunks, "forest/trunks", "Each kind and design of tree: its trunk
         const auto key = std::make_pair(s.look.kind, s.look.design);
         if (seen[key]++ >= 2) continue;  // (a couple of each)
         const Tree& t = w.trees[in.tree];
-        const Pole* pole = nullptr;
-        for (const Pole& p : w.poles)
-            if (std::hypot(p.x - t.base.x, p.z - t.base.z) < 0.01) pole = &p;
-        if (!pole) {
-            ctx.check("a pole under every tree", false);
-            return;
-        }
+        const double poleR = forest::trunkRadius(s.look.kind, s.look.design, t.height);
         // The drawn wood cut 1 m above the ground (1.2 m above the base), in the world.
         const double y = 1.2 / in.scale;
         std::vector<double> d;
@@ -65,7 +66,7 @@ SCENARIO(forestTrunks, "forest/trunks", "Each kind and design of tree: its trunk
         const double drawn = d[d.size() / 2];
         char name[96];
         std::snprintf(name, sizeof name, "kind %d design %d, %.0f m tall: pole over drawn trunk", s.look.kind, s.look.design, t.height);
-        ctx.metric(name, pole->r / drawn, "", 0.85, 1.15);
+        ctx.metric(name, poleR / drawn, "", 0.85, 1.15);
     }
     ctx.metric("kinds and designs checked", (double)seen.size(), "", 6, 9);
 }
