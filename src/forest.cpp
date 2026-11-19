@@ -198,6 +198,11 @@ void settleSpecies(const World& w, Tree& t) {
     t.species = s->id, t.height *= k, t.radius *= k;
 }
 
+double plantedHeight(const Tree& t) {
+    const plantgen::Species* s = t.kind != kGenKind && t.species >= 0 ? plantgen::treeById(t.species) : nullptr;
+    return s ? t.height / std::clamp(s->v("stand_scale"), 0.2, 1.0) : t.height;
+}
+
 uint64_t standHash() {
     if (plantgen::all().empty()) return 0;
     const uint64_t h = (biomes().hash ^ plantgen::textHash()) * 1099511628211ull;

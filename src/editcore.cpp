@@ -1,3 +1,4 @@
+#include "forest.h"
 #include "editcore.h"
 
 #include <cctype>
@@ -1097,7 +1098,7 @@ bool EditCore::baseToObject(const EditPick& p, LevelObject& o, V3& key) const {
             return true;
         case 1: {
             const Tree& t = w.trees[i];
-            o.kind = OBJ_TREE, o.p = V3(t.base.x, 0, t.base.z), o.size = V3(0, t.height, 0), o.sub = t.kind, o.col[0] = t.tint;
+            o.kind = OBJ_TREE, o.p = V3(t.base.x, 0, t.base.z), o.size = V3(0, forest::plantedHeight(t), 0), o.sub = t.kind, o.col[0] = t.tint;  // (the height it was planted as: placing it settles its species, and that species' height, again)
             o.lift = t.base.y - (w.height(t.base.x, t.base.z) - 0.2);
             key = V3(t.base.x, 2, t.base.z);
             return true;

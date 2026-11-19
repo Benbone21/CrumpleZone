@@ -42,6 +42,9 @@ uint32_t plantHash(const World& w, double x, double z);
 // of them dead ones), by its plantHash. Sets Tree::species and makes the tree that species' height (`stand_scale` of what it was
 // planted as) and its crown as much smaller. Nothing where no palette or species file is found (the classic tree stays).
 void settleSpecies(const World& w, Tree& t);
+// The height a settled tree was planted as (its height over its species' `stand_scale`): what to plant again to get this tree back
+// (a level's tree object made from a tree of the map: World::addTree settles it once more).
+double plantedHeight(const Tree& t);
 // The seven palettes' text and every species file's, hashed (0: no species files found): what the worlds' trees and their trunks
 // are made from. Two machines must agree on it to build the same world (the world cache's key, multiplayer's welcome).
 uint64_t standHash();

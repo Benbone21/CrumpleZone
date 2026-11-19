@@ -30,14 +30,9 @@ SCENARIO(forestTrunks, "forest/trunks", "Each classic kind and design of tree: t
     // (The classic models' own trunks: what a tree's Pole is where no species stands in for it (no plant files). A tree a map plants
     // grows as a species of its plant biome and its Pole is that stem's: procplants/stand-ins checks those against what is drawn.)
     plantgen::EverywhereHere classic(false);
-    World w(MAP_PROVING_GROUND);
-    w.trees.clear();
-    for (int kind = 0; kind < 3; kind++)
-        for (int k = 0; k < 40; k++) {
-            Tree t;  // (straight into the list, not planted: the classic tree as it is)
-            t.base = V3(300 + 9.0 * k, 0, 300 + 30.0 * kind), t.height = 7 + 0.25 * k, t.radius = 2, t.tint = 1, t.kind = kind;
-            w.trees.push_back(t);
-        }
+    World w(MAP_BACKCOUNTRY);
+    // (The Backcountry's trees as they were planted, before their species: the classic kind and design at the planted height.)
+    for (Tree& t : w.trees) t.height = forest::plantedHeight(t), t.species = -1;
     forest::Set set;
     forest::build(w, false, false, set);
     std::map<std::pair<int, int>, int> seen;

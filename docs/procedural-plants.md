@@ -48,11 +48,15 @@ baked from these meshes like any other tree's.
   names. A tree becomes `World::Tree` kind 4 (`forest::kGenKind`) with `design` = the species' `id`; a shrub becomes a
   `World::Bush` whose kind is `plantgen::kShrubKindBase + id`. Names the generator doesn't know fall back to the
   classic models (reeds, tumbleweed). Moab's palette (`colorado_plateau_desert`) is procedural.
-- **Colliders** are as before: `World::plant` stands a `Pole` under every tree, as thick as the generated stem 1 m up
-  (`forest::trunkRadius`, from `plantgen::trunkRadius`); foliage and shrubs are nothing to hit.
-- **Classic maps** (Frontier, Backcountry, Mountain, the procedural world, levels) are drawn with generated plants by
-  biome (below). `--classic-plants` (or `CZ_CLASSIC_PLANTS=1`) restores the classic models exactly. Either way it is a look
-  only: the trees and bushes stand where they did, with the classic colliders.
+- **Colliders**: `World::plant` stands a `Pole` under every tree, as thick as its stem 1 m up (`forest::trunkRadius`, from
+  `plantgen::trunkRadius`) and 0.6 of the tree tall; foliage and shrubs are nothing to hit.
+- **Classic maps** (Frontier, Backcountry, Mountain, the procedural world, levels) still plant classic kinds (pine, broadleaf,
+  snag), but `World::plant` settles what each grows as: a species of the plant biome it stands in (below), stored in
+  `World::Tree::species`. The tree is that species in the world: its height (a mesquite stands 0.55 of the pine it was planted
+  as, `stand_scale`), its crown and its `Pole` (the species' own stem). `--classic-plants` (or `CZ_CLASSIC_PLANTS=1`) is a look
+  only: it draws the classic pine, broadleaf and snag models on those same trees, at their heights, so a classic trunk is drawn
+  thicker or thinner than the `Pole` under it (a classic pine on a mesquite's thin stem; a classic bush look for the shrubs).
+  The colliders never depend on the switch.
 - **The model kit** shows every species as a design of `tree_gen` and `shrub_gen` (the model lab, the proving ground's
   yard, `build/modelsheet tree_gen shrub_gen --set seed=3 --set lod=1`).
 
@@ -63,13 +67,49 @@ Each biome is a palette file in `assets/maps/vegetation/` (format: `src/vegetati
 - **A real map** names it (`vegetation hot_desert` in the sidecar) and its `zone` rules grow the species by ground cover,
   slope, elevation and distance to water. Choosing the palette from ecoregion or climate data for a whole-US map would set
   this one key per tile.
-- **A classic map** keeps its trees and bushes; `forest.cpp` sorts each into a biome by the ground it stands on (water or
-  mud: riparian; sand: hot desert; red rock: high desert; snow: subalpine; on the big maps' plain green country, regions a
-  kilometre or so across of montane forest, temperate forest and prairie) and draws it as one of that palette's `stand`
-  species: `stand pine fir 5` (a classic pine here is a fir, weight 5), `stand bush creosote 30`, `stand bush:cactus cholla 3`
-  (a classic bush of that kind), `stand dead snag 2` with `dead 0.18` (that share of trees drawn dead), `stand deadbush ...`,
-  and `dry 0.45` (the share of shrubs in their dry colours). The biome is read a few metres off the plant's own spot, by its
-  hash, so two biomes mix over a couple of dozen metres at a border.
+- **A classic map** plants classic trees and bushes; each grows as one of the `stand` species of the biome it stands in:
+  `stand pine fir 5` (a classic pine here is a fir, weight 5), `stand bush creosote 30`, `stand bush:cactus cholla 3`
+  (a classic bush of that kind), `stand dead snag 2` with `dead 0.18` (that share of trees dead), `stand deadbush ...`,
+  and `dry 0.45` (the share of shrubs in their dry colours).
+
+### Where a biome is (classic maps)
+
+The biome areas are marked by the map's builder, in `World::plantZones`: a grid over the map, 16 m a cell, one `PlantZone`
+(`world.h`) each. It is marked before anything is planted and saved with the map (the world cache). `forest::plantBiomeAt`
+reads, in this order:
+
+1. **The ground's own say**: in water or within 9 m of it, or on mud: `riparian_wetland`; on snow or ice: `subalpine`.
+2. **The builder's area** (`World::plantZone`).
+3. Where nothing is marked (the proving ground, a blank map): red rock paint `colorado_plateau_desert`, sand or desert paint
+   `hot_desert`, else `temperate_forest`.
+
+It is read up to 13 m off the plant's own spot, by the plant's hash, so two biomes mix over a couple of dozen metres at a
+border. The hash comes from where the plant stands in the world (`forest::plantHash`), not from its place in a list.
+
+| Map | What the builder marks |
+|---|---|
+| Wilds (levels) | the whole map by its kind: meadow `temperate_forest`, desert `hot_desert`, forest `montane_forest`, canyon `colorado_plateau_desert`, wetland `riparian_wetland`, upland `subalpine` (`World::buildWilds`) |
+| An obstacle section | its own ground (the trail, run-in and run-out): dunes `hot_desert`, rock wall and cliff shelf `colorado_plateau_desert`, timber `montane_forest`, mud pit `riparian_wetland`, steep hill `subalpine`; the rocky river keeps the country it lies in (`buildSection`) |
+| Mountain | by height: valley floor `temperate_forest`, from 45 m `montane_forest`, from 150 m `subalpine` |
+| Frontier | the west desert `hot_desert`, Blackwater Bayou `riparian_wetland`, Cold Creek `subalpine`, the northern range `montane_forest` (`subalpine` over 105 m), the rest `temperate_forest` |
+| Backcountry | Elk Valley `temperate_forest` (its north side `montane_forest`, `subalpine` up by the snow), the dune bowl `hot_desert`; the districts: Badlands Wash `colorado_plateau_desert`, Ranger Flats `dry_prairie`, the northern districts and Bear Creek Canyon `montane_forest` (and anything over 80 m; `subalpine` over 175 m), the Lakeshore and the south uplands `temperate_forest` |
+| The big map's regions | each old map's core brings its own areas and its trees as they grew there (`stitchRegionContent`); the grown country: the Mountain's `montane_forest` / `subalpine`, the Frontier's badlands `colorado_plateau_desert` and its cold bench `montane_forest` / `subalpine`, the Open Country's southern canyons `colorado_plateau_desert`, its northern hills `temperate_forest`, its meadows `dry_prairie`; the edge mountains `montane_forest` / `subalpine` |
+| The procedural world | each chunk marks its sixteen 16 m squares from the climate's biome with the most weight there (`Chunk::zone`): mesa country (badlands weight over 0.15) `colorado_plateau_desert`, dunes `hot_desert`, a meadow no wetter than the plains `dry_prairie` and a wetter one `temperate_forest`, forest `temperate_forest` (toward the ranges `montane_forest`), the mountains `montane_forest` and within the thinning band under the tree line `subalpine` |
+| A real map with a classic palette | the whole map, where its palette is one of the seven |
+
+In the procedural world a plant reads only its own 64 m chunk's cells, so a tree is the same species with the same trunk in
+every window that holds it (`procplants/procedural-world`).
+
+### What is settled when, and who must agree
+
+- **Trees: when planted.** `World::plant` calls `forest::settleSpecies`: the biome there, a species from its `stand` list by the
+  tree's `plantHash`, then the tree's height and crown times that species' `stand_scale`, and the `Pole` from its stem. A tree
+  added later (a level's objects, the editor) is settled the same way from the ground as it is then.
+- **Bushes: when the forest is built** (`forest::buildBushes`): nothing to hit, so `--classic-plants` can leave them classic.
+- The species is part of the world: `World::landHash` takes it in, `worldprint` hashes it with the trees (and the areas), the
+  world cache stores both and is keyed by `forest::standHash()` (the seven palettes' text and every species file's), and a
+  multiplayer host sends that hash in its welcome: a guest with other plant files is refused (their trunks would differ).
+  Changing a palette's `stand` lines or a species' stem or `stand_scale` changes the worlds: it is a new world version.
 
 | Palette | Trees | Shrubs and ground plants |
 |---|---|---|
@@ -81,9 +121,8 @@ Each biome is a palette file in `assets/maps/vegetation/` (format: `src/vegetati
 | `montane_forest` | ponderosa, fir, spruce, aspen, snags, leaning snags | manzanita, bunchgrass, ferns, stumps, sagebrush |
 | `subalpine` | krummholz, spruce, fir, snags | alpine mats, bunchgrass, dry grass |
 
-A stand-in for a classic tree is drawn at that tree's height times the species' `stand_scale` (a mesquite stands 0.55 of the
-pine it replaces), with its trunk thickened toward the classic collider. A short desert or treeline tree can't believably
-carry a tall pine's trunk: there the classic `Pole` is wider than the drawn stem and stands hidden in the crown.
+The layout of the maps is as it was: only what grows changed. So a biome has trees only where the map already planted some
+(the Frontier's desert has a few dead snags, the procedural dunes almost no trees: their desert shows in the shrubs and cacti).
 
 ## Adding a species
 
