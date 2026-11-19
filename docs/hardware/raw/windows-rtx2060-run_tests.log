@@ -1,0 +1,1606 @@
+PASS tracks/fade                          4.0 s sim,  0.8 s wall
+PASS tracks/pavement                      6.5 s sim,  1.2 s wall
+PASS perf/bench-file                      0.0 s sim,  0.1 s wall
+PASS perf/bench-suite                     0.0 s sim,  0.1 s wall
+PASS tracks/contact                      13.0 s sim,  2.2 s wall
+PASS allocs/net                           6.0 s sim,  2.3 s wall
+PASS recovery/winch-on-foot               1.5 s sim,  0.5 s wall
+PASS recovery/strap-on-foot               0.5 s sim,  0.4 s wall
+PASS entercar/offline                     2.4 s sim,  1.1 s wall
+PASS allocs/sim-drive                    10.0 s sim,  7.8 s wall
+PASS tracks/cap                          61.0 s sim,  9.6 s wall
+PASS net/take-over                       11.1 s sim,  4.8 s wall
+PASS net/take-contention                  5.0 s sim,  3.2 s wall
+PASS net/ride-along                       9.3 s sim,  3.5 s wall
+PASS baja/flat-drop                       7.0 s sim,  0.7 s wall
+PASS prompts/aim                          0.0 s sim,  0.1 s wall
+PASS prompts/pick                         1.0 s sim,  0.2 s wall
+PASS camera/hold                          0.0 s sim,  0.1 s wall
+PASS baja/kicker-jump                    15.6 s sim,  1.6 s wall
+PASS net/take-disconnect                  7.5 s sim,  3.4 s wall
+PASS tires/cold-warm                     10.1 s sim,  3.5 s wall
+PASS tires/grip-ranking                  39.1 s sim, 14.5 s wall
+PASS tires/warmup                        61.0 s sim, 13.3 s wall
+PASS tires/winter                         1.0 s sim,  0.3 s wall
+PASS blowout/ratings                      0.0 s sim,  0.1 s wall
+PASS blowout/stock-rating                 0.0 s sim,  0.1 s wall
+PASS components/steering-stops           98.5 s sim, 19.6 s wall
+PASS blowout/over-rating                 12.6 s sim,  2.5 s wall
+PASS blowout/remote                      21.0 s sim,  0.4 s wall
+PASS blowout/hud                          0.0 s sim,  0.1 s wall
+PASS tires/steady                         1.0 s sim, 14.6 s wall
+tracks-csv: t=0,marks=0,verts=0,build_ms=0.001,bytes=3200000
+tracks-csv: t=150,marks=7200,verts=42018,build_ms=0.396,bytes=3200000
+tracks-csv: t=300,marks=7200,verts=42018,build_ms=0.227,bytes=3200000
+tracks-csv: t=300,marks=7200,verts=42018,build_ms=0.275,bytes=3200000
+PASS tracks/five-minute-drive           301.0 s sim, 43.7 s wall
+PASS levels/test-pad                      0.0 s sim,  2.0 s wall
+PASS laps/lap                             0.0 s sim,  0.2 s wall
+PASS laps/no-cheating                     0.0 s sim,  0.2 s wall
+PASS levels/model-yard                    0.0 s sim,  3.6 s wall
+PASS laps/best-persists                   0.0 s sim,  0.2 s wall
+PASS hud/layout                           0.0 s sim,  0.1 s wall
+PASS hud/layout-prompts                   0.0 s sim,  0.1 s wall
+PASS hud/context                          0.0 s sim,  0.1 s wall
+PASS hud/context-full                     0.0 s sim,  0.1 s wall
+PASS speedo/big-tires                     1.6 s sim,  0.3 s wall
+PASS speedo/slip-lock-air                 1.6 s sim,  0.3 s wall
+PASS speedo/units                         0.0 s sim,  0.1 s wall
+PASS levels/proving-ground-edits          0.0 s sim, 12.9 s wall
+PASS speedo/gears                        16.0 s sim,  2.5 s wall
+PASS trafficlod/wake-before-contact      19.5 s sim,  2.7 s wall
+PASS trafficlod/damage-persists           7.0 s sim,  1.1 s wall
+PASS trafficlod/far-car-proxy            27.0 s sim,  7.1 s wall
+PASS trafficlod/no-pop                   18.0 s sim,  3.0 s wall
+PASS blowout/below-rating               181.0 s sim, 31.1 s wall
+PASS trafficlod/hit-takes-full-damage     0.0 s sim,  8.3 s wall
+PASS engine/simd-kernel                   0.3 s sim,  0.1 s wall
+PASS engine/simd-sim                      0.0 s sim,  2.2 s wall
+PASS engine/pool-jobs                     0.0 s sim,  0.2 s wall
+PASS engine/pool-stress                   0.0 s sim,  0.2 s wall
+PASS engine/simd-faces                    0.0 s sim,  0.2 s wall
+PASS watchdog/unit                        0.0 s sim,  3.7 s wall
+PASS loading/cache-hit-miss               0.0 s sim,  0.6 s wall
+PASS loading/cache-stale                  0.0 s sim,  0.4 s wall
+PASS loading/concurrent                   0.0 s sim,  0.7 s wall
+PASS loading/texture-cache                0.0 s sim,  0.4 s wall
+PASS occlusion/ridge                      0.0 s sim,  0.1 s wall
+PASS occlusion/sound                      0.0 s sim,  2.6 s wall
+PASS loading/world-on-worker              0.0 s sim,  3.4 s wall
+PASS texenc/round-trip                    0.0 s sim,  0.1 s wall
+PASS texenc/fallback                      0.0 s sim,  0.1 s wall
+PASS texenc/mips                          0.0 s sim,  0.1 s wall
+PASS net/clock-sync                       0.0 s sim,  0.1 s wall
+PASS net/timeline                         0.0 s sim,  0.4 s wall
+PASS net/delta-loss                       0.0 s sim,  0.2 s wall
+PASS net/day-clock                        0.0 s sim, 10.4 s wall
+PASS net/time-fuzz                        0.0 s sim,  0.3 s wall
+PASS trafficlod/wake-for-obstacle         0.0 s sim, 34.3 s wall
+PASS engine/gfx-detect-table              0.0 s sim,  0.1 s wall
+PASS engine/gfx-detect-guess              0.0 s sim,  0.1 s wall
+PASS trafficlod/same-speed                0.0 s sim, 27.8 s wall
+PASS engine/gfx-detect-probe              0.0 s sim,  0.1 s wall
+PASS render/water-mesh-budget             0.0 s sim,  2.7 s wall
+PASS damage/share/head-on                15.0 s sim,  4.2 s wall
+PASS damage/share/truck-civic            10.0 s sim,  2.8 s wall
+PASS damage/share/t-bone                 15.0 s sim,  3.5 s wall
+PASS damage/share/who-moves              33.0 s sim, 10.1 s wall
+PASS damage/share/blazer-nose            15.0 s sim,  4.3 s wall
+PASS damage/share/ai-asleep              33.0 s sim, 10.4 s wall
+PASS damage/share/side-rear              35.0 s sim, 10.0 s wall
+PASS perf/frame-stages                    0.0 s sim,  0.1 s wall
+PASS perf/bench-stats                     0.0 s sim,  0.1 s wall
+PASS perf/bench-path                      0.0 s sim,  0.1 s wall
+PASS perf/spikes                          0.0 s sim,  0.1 s wall
+PASS perf/sim-catch-up                    0.0 s sim,  0.1 s wall
+PASS meshopt/flat                         0.0 s sim,  0.1 s wall
+PASS meshopt/keeps                        0.0 s sim,  0.1 s wall
+PASS meshopt/hidden                       0.0 s sim,  0.1 s wall
+PASS meshopt/budgets                      0.0 s sim,  2.0 s wall
+PASS damage/share/side-roll              42.0 s sim, 14.4 s wall
+PASS recovery/winch-lower                19.0 s sim,  3.1 s wall
+PASS recovery/winch-payout               75.0 s sim, 10.0 s wall
+PASS recovery/winch-payout-input          0.0 s sim,  0.1 s wall
+PASS textedit/insert-and-edit             0.0 s sim,  0.1 s wall
+PASS textedit/filters                     0.0 s sim,  0.1 s wall
+PASS textedit/paste                       0.0 s sim,  0.1 s wall
+PASS textedit/copy-cut-secret             0.0 s sim,  0.1 s wall
+PASS textedit/keys-stay-in-the-field      0.0 s sim,  0.1 s wall
+PASS recovery/winch-slack-drawn          12.6 s sim,  1.7 s wall
+PASS grass/density                        0.0 s sim,  0.2 s wall
+PASS grass/adaptive-levels                0.0 s sim,  0.1 s wall
+PASS forest/instances                     0.0 s sim,  0.9 s wall
+PASS forest/trunks                        0.0 s sim,  0.9 s wall
+PASS grass/cull-frustum                   0.0 s sim,  1.9 s wall
+PASS net/bandwidth                        0.0 s sim, 44.0 s wall
+PASS forest/logs                          0.0 s sim,  0.9 s wall
+PASS plants/kinds                         0.0 s sim,  0.1 s wall
+PASS forest/budget                        0.0 s sim,  0.9 s wall
+PASS plants/level-kind                    0.0 s sim,  0.5 s wall
+PASS f3info/frame-stats                   0.0 s sim,  0.1 s wall
+PASS f3info/helpers                       0.0 s sim,  0.1 s wall
+PASS forest/culling                       0.0 s sim,  2.2 s wall
+PASS f3info/on-foot                       1.0 s sim,  0.2 s wall
+PASS f3info/parked-and-driving            3.9 s sim,  0.6 s wall
+PASS throttle/pedal                       0.0 s sim,  0.1 s wall
+PASS throttle/key                         0.0 s sim,  0.1 s wall
+PASS throttle/settings                    0.0 s sim,  0.1 s wall
+PASS throttle/pad                         0.5 s sim,  0.1 s wall
+PASS editor/delete                        0.0 s sim,  0.8 s wall
+PASS plants/scatter                       0.0 s sim,  4.0 s wall
+PASS editor/map-objects                   0.0 s sim,  1.5 s wall
+PASS editor/transform                     0.0 s sim,  0.4 s wall
+PASS editor/playtest                      0.0 s sim,  0.5 s wall
+PASS editor/pick-exact                    0.0 s sim,  0.9 s wall
+PASS editor/group                         0.0 s sim,  0.2 s wall
+PASS editor/map-props                     0.0 s sim,  1.0 s wall
+PASS editor/free-height                   0.0 s sim,  0.4 s wall
+PASS editor/live-section                  0.0 s sim,  0.5 s wall
+PASS editor/discard                       0.0 s sim,  0.4 s wall
+PASS editor/save-flow                     0.0 s sim,  3.3 s wall
+PASS editor/height-model                  0.0 s sim,  0.7 s wall
+PASS editor/pick-course                   0.0 s sim,  0.2 s wall
+PASS editor/drag-threshold                0.0 s sim,  0.1 s wall
+PASS throttle/crawl                      62.0 s sim,  8.7 s wall
+PASS editor/name-prefill                  0.0 s sim,  0.4 s wall
+PASS editor/drag-anchor                   0.0 s sim,  2.1 s wall
+PASS editor/drag-ride                     0.0 s sim,  0.2 s wall
+PASS editor/builtin-section-file          0.0 s sim,  5.9 s wall
+PASS editor/drag-axis                     0.0 s sim,  0.5 s wall
+PASS editor/turn-axis                     0.0 s sim,  0.2 s wall
+PASS editor/box-select                    0.0 s sim,  4.9 s wall
+PASS editor/model-pose                    0.0 s sim,  0.5 s wall
+PASS editor/mouse-rules                   0.0 s sim,  0.1 s wall
+PASS objshape/rays                        0.0 s sim,  0.1 s wall
+PASS editor/turn-free                     0.0 s sim,  1.1 s wall
+PASS objshape/nearest                     0.0 s sim,  0.1 s wall
+PASS objshape/wrap                        0.0 s sim,  0.1 s wall
+PASS objshape/walker                      0.5 s sim,  0.2 s wall
+PASS editor/brush-sizes                   0.0 s sim,  0.1 s wall
+PASS editor/atomic-save                   0.0 s sim,  0.6 s wall
+PASS editor/brush-falloff                 0.0 s sim,  0.1 s wall
+PASS editor/brush-styles                  0.0 s sim,  0.1 s wall
+PASS editor/brush-terrain                 0.0 s sim,  0.2 s wall
+PASS editor/brush-paint                   0.0 s sim,  0.4 s wall
+PASS editor/water-drain                   0.0 s sim,  0.3 s wall
+PASS objshape/anchors                     6.0 s sim,  1.0 s wall
+RUMBLE crash 14 m/s (60 fps)  duty   7.1 % mean 0.027 peak 0.50 pulses 1
+RUMBLE landing 3 m (60 fps)   duty  25.0 % mean 0.077 peak 0.50 pulses 3
+RUMBLE landing 1 m (60 fps)   duty  10.6 % mean 0.027 peak 0.32 pulses 2
+RUMBLE idle (60 fps)          duty   0.0 % mean 0.000 peak 0.00 pulses 0
+RUMBLE pavement 80 km/h (60 fps) duty   0.0 % mean 0.000 peak 0.00 pulses 0
+RUMBLE gravel 50 km/h (60 fps) duty   0.0 % mean 0.000 peak 0.00 pulses 0
+RUMBLE summit trail 40 km/h (60 fps) duty   0.0 % mean 0.000 peak 0.00 pulses 0
+RUMBLE crash 14 m/s (144 fps) duty   6.2 % mean 0.023 peak 0.46 pulses 1
+RUMBLE landing 3 m (144 fps)  duty  25.9 % mean 0.079 peak 0.50 pulses 4
+RUMBLE landing 1 m (144 fps)  duty  12.2 % mean 0.030 peak 0.32 pulses 3
+RUMBLE rock crawl (60 fps)    duty   2.0 % mean 0.004 peak 0.23 pulses 18
+RUMBLE whoops 55 km/h (60 fps) duty  35.7 % mean 0.101 peak 0.41 pulses 31
+PASS rumble/events                      105.2 s sim, 15.8 s wall
+PASS invmenu/slots                        3.0 s sim,  1.2 s wall
+PASS invmenu/layout                       1.5 s sim,  0.3 s wall
+PASS invmenu/take                         5.0 s sim,  0.7 s wall
+RUMBLE idle (144 fps)         duty   0.0 % mean 0.000 peak 0.00 pulses 0
+RUMBLE pavement 80 km/h (144 fps) duty   0.0 % mean 0.000 peak 0.00 pulses 0
+RUMBLE gravel 50 km/h (144 fps) duty   0.0 % mean 0.000 peak 0.00 pulses 0
+RUMBLE summit trail 40 km/h (144 fps) duty   0.0 % mean 0.000 peak 0.00 pulses 0
+PASS rumble/quiet                       120.2 s sim, 21.5 s wall
+RUMBLE rock crawl (144 fps)   duty   1.9 % mean 0.004 peak 0.22 pulses 18
+RUMBLE whoops 55 km/h (144 fps) duty  22.9 % mean 0.063 peak 0.40 pulses 24
+PASS rumble/rough                       136.0 s sim, 22.0 s wall
+PASS visual/body-shell                    0.0 s sim, 96.5 s wall
+PASS carframe/models                      0.0 s sim,  0.1 s wall
+PASS carframe/placed/honda civic si       1.0 s sim,  0.2 s wall
+PASS carframe/placed/koenigsegg jesko     1.0 s sim,  0.2 s wall
+PASS carframe/placed/ford bronco          1.0 s sim,  0.2 s wall
+PASS carframe/placed/toyota 4runner       1.0 s sim,  0.2 s wall
+PASS carframe/placed/rock buggy           1.0 s sim,  0.2 s wall
+PASS carframe/placed/turbo utv            1.0 s sim,  0.1 s wall
+PASS carframe/placed/toyota tacoma        1.0 s sim,  0.2 s wall
+PASS carframe/placed/chevy blazer         1.0 s sim,  0.2 s wall
+PASS carframe/placed/vw baja bug          1.0 s sim,  0.2 s wall
+PASS carframe/follows/honda civic si      1.0 s sim,  0.2 s wall
+PASS carframe/follows/koenigsegg jesko    1.0 s sim,  0.2 s wall
+PASS carframe/follows/ford bronco         1.0 s sim,  0.2 s wall
+PASS carframe/follows/toyota 4runner      1.0 s sim,  0.2 s wall
+PASS carframe/follows/rock buggy          1.0 s sim,  0.2 s wall
+PASS carframe/follows/turbo utv           1.0 s sim,  0.1 s wall
+PASS carframe/follows/toyota tacoma       1.0 s sim,  0.2 s wall
+PASS carframe/follows/chevy blazer        1.0 s sim,  0.2 s wall
+PASS carframe/follows/vw baja bug         1.0 s sim,  0.2 s wall
+PASS carframe/jack-lift/honda civic si    1.5 s sim,  0.2 s wall
+PASS carframe/jack-lift/koenigsegg jesko   1.5 s sim,  0.2 s wall
+  bronco corner 0: the jack went up 0.21 m (saddle 0.60 m over the ground, reach 0.40 m)
+PASS carframe/jack-lift/ford bronco       4.0 s sim,  0.6 s wall
+  4runner corner 0: the jack went up 0.21 m (saddle 0.72 m over the ground, reach 0.39 m)
+PASS carframe/jack-lift/toyota 4runner    4.0 s sim,  0.6 s wall
+PASS carframe/jack-lift/rock buggy        1.5 s sim,  0.2 s wall
+PASS carframe/jack-lift/turbo utv         1.5 s sim,  0.2 s wall
+PASS spawnpads/sections                  45.6 s sim,  8.8 s wall
+  tacoma corner 0: the jack went up 0.20 m (saddle 0.65 m over the ground, reach 0.49 m)
+PASS carframe/jack-lift/toyota tacoma     3.9 s sim,  0.6 s wall
+  blazer corner 0: the jack went up 0.18 m (saddle 0.66 m over the ground, reach 0.53 m)
+PASS carframe/jack-lift/chevy blazer      3.8 s sim,  0.6 s wall
+PASS carframe/jack-lift/vw baja bug       1.5 s sim,  0.2 s wall
+PASS net/sec-hmac                         0.0 s sim,  0.1 s wall
+PASS net/sec-menu-password                0.0 s sim,  0.8 s wall
+PASS net/sec-level                        0.0 s sim,  0.1 s wall
+PASS net/sec-password                     0.0 s sim,  2.1 s wall
+PASS net/sec-late-join                    0.0 s sim,  6.9 s wall
+PASS fieldrepair/steps                    0.3 s sim,  0.1 s wall
+PASS net/sec-fuzz                         0.0 s sim,  6.4 s wall
+PASS spawnpads/maps                      49.6 s sim, 23.0 s wall
+PASS fieldrepair/bare-hub                20.2 s sim,  2.7 s wall
+PASS spawnpads/levels                    94.3 s sim, 20.8 s wall
+PASS trunk/take                           1.5 s sim,  0.4 s wall
+PASS trunk/shut                          11.5 s sim,  1.6 s wall
+PASS fieldrepair/new-tire                33.5 s sim,  4.7 s wall
+PASS music/biome-lookup                   0.0 s sim,  1.8 s wall
+PASS fieldrepair/cv-axle                 61.7 s sim,  8.4 s wall
+PASS anchors/rules                        0.0 s sim,  0.1 s wall
+PASS music/biome-hysteresis               0.0 s sim,  1.6 s wall
+PASS anchors/counts                       1.0 s sim,  0.5 s wall
+PASS anchors/auto-pick                    2.0 s sim,  0.8 s wall
+PASS anchors/surfaces                     0.4 s sim,  1.7 s wall
+PASS anchors/station-refill               2.0 s sim,  0.4 s wall
+PASS sections/steep-hill                  0.0 s sim,  0.7 s wall
+PASS sections/mud-pit                     0.0 s sim,  0.7 s wall
+PASS trunk/gate                          38.0 s sim,  8.8 s wall
+PASS anchors/career                       0.0 s sim,  2.2 s wall
+PASS music/biome-pieces                   0.0 s sim,  4.6 s wall
+PASS sections/rocky-river                 0.0 s sim,  0.7 s wall
+PASS sections/rock-wall                   0.0 s sim,  0.8 s wall
+PASS sections/shelf-toe                   0.0 s sim,  0.2 s wall
+PASS sections/cliff-shelf                 0.0 s sim,  0.9 s wall
+PASS sections/dunes                       0.0 s sim,  1.2 s wall
+PASS sections/timber                      0.0 s sim,  0.7 s wall
+PASS sections/rocks-on-line               0.0 s sim,  1.4 s wall
+PASS sections/same-seed                   0.0 s sim,  3.1 s wall
+PASS sections/uneven-ground               0.0 s sim,  1.4 s wall
+PASS sections/park                        0.0 s sim,  1.7 s wall
+PASS sections/rocks-same-seed             0.0 s sim,  2.1 s wall
+PASS sections/new-canvas                  0.0 s sim,  1.7 s wall
+PASS sections/meta                        0.0 s sim,  2.5 s wall
+PASS sections/stamp                       0.0 s sim,  1.7 s wall
+PASS sections/local-frame                 0.0 s sim,  1.3 s wall
+PASS sections/files                       0.0 s sim,  0.9 s wall
+PASS sections/flow                        0.0 s sim,  0.7 s wall
+PASS sections/dune-profile                0.0 s sim,  0.1 s wall
+PASS carparts/placed/honda civic si       1.0 s sim,  0.2 s wall
+PASS carparts/placed/koenigsegg jesko     1.0 s sim,  0.2 s wall
+PASS carparts/placed/ford bronco          1.0 s sim,  0.2 s wall
+PASS carparts/placed/toyota 4runner       1.0 s sim,  0.2 s wall
+PASS carparts/placed/rock buggy           1.0 s sim,  0.2 s wall
+PASS carparts/placed/turbo utv            1.0 s sim,  0.2 s wall
+PASS carparts/placed/toyota tacoma        1.0 s sim,  0.2 s wall
+PASS sections/park-space                  0.0 s sim,  1.6 s wall
+PASS carparts/placed/chevy blazer         1.0 s sim,  0.2 s wall
+PASS carparts/placed/vw baja bug          1.0 s sim,  0.2 s wall
+PASS carparts/leaf-packs/honda civic si   1.0 s sim,  0.2 s wall
+PASS carparts/leaf-packs/koenigsegg jesko   1.0 s sim,  0.2 s wall
+PASS carparts/leaf-packs/ford bronco      1.0 s sim,  0.2 s wall
+PASS carparts/leaf-packs/rock buggy       1.0 s sim,  0.2 s wall
+PASS carparts/leaf-packs/toyota 4runner   1.0 s sim,  0.2 s wall
+PASS carparts/leaf-packs/turbo utv        1.0 s sim,  0.1 s wall
+PASS carparts/leaf-packs/toyota tacoma    1.0 s sim,  0.2 s wall
+PASS carparts/leaf-packs/chevy blazer     1.0 s sim,  0.2 s wall
+PASS carparts/leaf-packs/vw baja bug      1.0 s sim,  0.2 s wall
+PASS carparts/follow/honda civic si       1.0 s sim,  0.2 s wall
+PASS carparts/follow/koenigsegg jesko     1.0 s sim,  0.2 s wall
+PASS carparts/follow/ford bronco          1.0 s sim,  0.2 s wall
+PASS carparts/follow/toyota 4runner       1.0 s sim,  0.2 s wall
+PASS carparts/follow/rock buggy           1.0 s sim,  0.2 s wall
+PASS carparts/follow/turbo utv            1.0 s sim,  0.1 s wall
+PASS carparts/follow/toyota tacoma        1.0 s sim,  0.2 s wall
+PASS carparts/follow/chevy blazer         1.0 s sim,  0.2 s wall
+PASS carparts/follow/vw baja bug          1.0 s sim,  0.2 s wall
+PASS carparts/damage/honda civic si       1.0 s sim,  0.2 s wall
+PASS carparts/damage/koenigsegg jesko     1.0 s sim,  0.2 s wall
+PASS carparts/damage/ford bronco          1.0 s sim,  0.2 s wall
+PASS carparts/damage/toyota 4runner       1.0 s sim,  0.2 s wall
+PASS carparts/damage/rock buggy           1.0 s sim,  0.2 s wall
+PASS carparts/damage/turbo utv            1.0 s sim,  0.2 s wall
+PASS carparts/damage/toyota tacoma        1.0 s sim,  0.2 s wall
+PASS carparts/damage/chevy blazer         1.0 s sim,  0.2 s wall
+PASS carparts/damage/vw baja bug          1.0 s sim,  0.2 s wall
+PASS carparts/hover/honda civic si        1.0 s sim,  0.2 s wall
+PASS carparts/hover/koenigsegg jesko      1.0 s sim,  0.2 s wall
+PASS carparts/hover/ford bronco           1.0 s sim,  0.2 s wall
+PASS carparts/hover/toyota 4runner        1.0 s sim,  0.2 s wall
+PASS carparts/hover/rock buggy            1.0 s sim,  0.2 s wall
+PASS carparts/hover/turbo utv             1.0 s sim,  0.2 s wall
+PASS carparts/hover/toyota tacoma         1.0 s sim,  0.2 s wall
+PASS carparts/hover/chevy blazer          1.0 s sim,  0.2 s wall
+PASS carparts/hover/vw baja bug           1.0 s sim,  0.2 s wall
+PASS carparts/hover-fix                   1.0 s sim,  0.2 s wall
+  trail_sign       A ROUTED TIMBER             246 tris   0.48 x  0.50 x  1.79 m
+  trail_sign       B STEEL U-POST              277 tris   0.07 x  0.52 x  2.10 m
+  trail_sign       C CARVED ARROW              283 tris   0.32 x  0.79 x  1.57 m
+  map_board        A TIMBER KIOSK             1052 tris   1.29 x  2.36 x  2.34 m
+  map_board        B STEEL FRAME              1462 tris   0.77 x  2.20 x  2.38 m
+  map_board        C RUSTIC POST              1228 tris   1.11 x  1.92 x  2.45 m
+  marker_post      A FLEX POST                  62 tris   0.09 x  0.08 x  1.12 m
+  marker_post      B TIMBER STAKE               78 tris   0.11 x  0.11 x  1.10 m
+  marker_post      C ROCK AND POLE              82 tris   0.71 x  0.57 x  1.16 m
+  cairn            A FLAT STACK                194 tris   0.66 x  0.71 x  0.90 m
+  cairn            B ROUGH HEAP                213 tris   0.88 x  0.85 x  1.24 m
+  cairn            C BALANCED TOWER            240 tris   0.41 x  0.36 x  1.05 m
+  race_gate        A INFLATABLE ARCH          1808 tris   1.27 x 15.30 x  7.14 m
+  race_gate        B FLAG TOWERS              1124 tris   6.71 x 21.46 x  7.56 m
+  race_gate        C TIMING TRUSS             1762 tris   1.13 x 15.01 x  5.99 m
+  traffic_cone     A TALL CONE                 210 tris   0.38 x  0.38 x  0.70 m
+  traffic_cone     B SHORT CONE                158 tris   0.32 x  0.32 x  0.46 m
+  traffic_cone     C DELINEATOR                218 tris   0.30 x  0.30 x  1.02 m
+  oil_drum         A PAINTED STEEL             880 tris   0.60 x  0.59 x  0.89 m
+  oil_drum         B RUSTY DRUM                862 tris   0.60 x  0.59 x  0.89 m
+  oil_drum         C PLASTIC BLUE              896 tris   0.60 x  0.59 x  0.89 m
+  jersey_barrier   A CONCRETE JERSEY           212 tris   4.00 x  0.60 x  0.81 m
+  jersey_barrier   B WATER-FILLED              532 tris   4.00 x  0.64 x  0.83 m
+  jersey_barrier   C STEEL-CAPPED MEDIAN       248 tris   4.00 x  0.60 x  0.80 m
+  guardrail        A GALVANISED W-BEAM        1710 tris  20.15 x  0.37 x  0.78 m
+  guardrail        B STEEL BOX BEAM           1278 tris  20.19 x  0.32 x  0.70 m
+  guardrail        C TIMBER AND STEEL         1776 tris  20.20 x  0.40 x  0.85 m
+  lamp_post        A TAPERED COBRA             566 tris   3.15 x  0.40 x 10.09 m
+  lamp_post        B TWIN ARM                  732 tris   5.85 x  0.42 x 10.14 m
+  lamp_post        C WOODEN POLE               919 tris   4.03 x  0.76 x 10.04 m
+  sign_gantry      A STEEL TRUSS              3410 tris   1.40 x 39.20 x  8.78 m
+  sign_gantry      B TUBE PORTAL              2118 tris   1.21 x 39.04 x  8.70 m
+  sign_gantry      C CANTILEVER               5446 tris   1.46 x 38.58 x  8.70 m
+  spawn_pad        A POURED SLAB               165 tris  18.50 x  7.20 x  0.55 m
+  drive_shaft      A STEEL TUBE               1290 tris   1.20 x  0.10 x  0.10 m
+  drive_shaft      B ALUMINIUM BIG TUBE       1290 tris   1.20 x  0.12 x  0.12 m
+  drive_shaft      C DOUBLE CARDAN            1506 tris   1.12 x  0.10 x  0.10 m
+  tie_rod          A STOCK                    1466 tris   1.08 x  0.05 x  0.09 m
+  tie_rod          B HEIM CHROMOLY            1210 tris   1.09 x  0.05 x  0.09 m
+  tie_rod          C DRAG LINK                1384 tris   1.11 x  0.12 x  0.12 m
+  control_arm      A STAMPED A-ARM             894 tris   0.43 x  0.34 x  0.15 m
+  control_arm      B TUBULAR A-ARM             768 tris   0.43 x  0.34 x  0.15 m
+  control_arm      C RADIUS ARM                508 tris   0.58 x  0.09 x  0.10 m
+  spark_plug       A STANDARD                 1100 tris   0.10 x  0.02 x  0.02 m
+  spark_plug       B PACK OF FOUR             1204 tris   0.10 x  0.09 x  0.03 m
+  spark_plug       C PLUG AND SOCKET           988 tris   0.10 x  0.07 x  0.03 m
+  lug_nut          A ACORN NUT                  80 tris   0.03 x  0.02 x  0.02 m
+  lug_nut          B SPLINE NUT                108 tris   0.04 x  0.02 x  0.02 m
+  fp_hand          A WORK GLOVE               1093 tris   0.46 x  0.13 x  0.19 m
+  fp_hand          B NITRILE                  1085 tris   0.46 x  0.13 x  0.18 m
+  fp_hand          C BARE HAND                 993 tris   0.46 x  0.13 x  0.18 m
+  lug_wrench       A 4-WAY CROSS              1069 tris   0.38 x  0.38 x  0.04 m
+  lug_wrench       B FACTORY L                 760 tris   0.50 x  0.03 x  0.15 m
+  lug_wrench       C BREAKER BAR              1003 tris   0.62 x  0.04 x  0.10 m
+  wrench           A COMBINATION               538 tris   0.24 x  0.04 x  0.01 m
+  wrench           B ADJUSTABLE                740 tris   0.20 x  0.05 x  0.02 m
+  wrench           C RING SPANNER              751 tris   0.22 x  0.03 x  0.02 m
+  hammer           A CLAW HAMMER               801 tris   0.35 x  0.16 x  0.03 m
+  hammer           B CLUB HAMMER               684 tris   0.32 x  0.11 x  0.04 m
+  hammer           C DEAD-BLOW MALLET         1148 tris   0.35 x  0.14 x  0.07 m
+  ratchet          A STANDARD                  639 tris   0.21 x  0.04 x  0.05 m
+  ratchet          B LONG HANDLE              1145 tris   0.43 x  0.05 x  0.07 m
+  ratchet          C SOCKET CASE              1196 tris   0.38 x  0.31 x  0.27 m
+  pry_bar          A FLAT BAR                  162 tris   0.45 x  0.03 x  0.03 m
+  pry_bar          B CROWBAR                   280 tris   0.71 x  0.04 x  0.14 m
+  pry_bar          C PINCH BAR                 331 tris   1.19 x  0.05 x  0.07 m
+  pliers           A SLIP-JOINT                667 tris   0.19 x  0.04 x  0.01 m
+  pliers           B LOCKING                   802 tris   0.28 x  0.06 x  0.03 m
+  pliers           C SIDE CUTTERS              542 tris   0.15 x  0.04 x  0.02 m
+  screwdriver      A STANDARD                  798 tris   0.29 x  0.03 x  0.03 m
+  screwdriver      B STUBBY                    740 tris   0.13 x  0.04 x  0.04 m
+  screwdriver      C MULTI-BIT                1002 tris   0.22 x  0.04 x  0.04 m
+  tire_iron        A TYRE SPOONS               294 tris   0.43 x  0.11 x  0.04 m
+  tire_iron        B BEAD BREAKER             1156 tris   0.90 x  0.12 x  0.07 m
+  cv_axle          A NEW                      1436 tris   0.70 x  0.08 x  0.08 m
+  cv_axle          B USED GREASY              1492 tris   0.70 x  0.08 x  0.08 m
+  cv_axle          C HEAVY DUTY               1436 tris   0.68 x  0.08 x  0.08 m
+  torn_end         A TORN STEEL                110 tris   0.08 x  0.11 x  0.11 m
+  bush             A LEAFY BUSH                104 tris   1.64 x  1.50 x  0.94 m
+  bush             B SAGEBRUSH                  75 tris   1.30 x  1.25 x  0.89 m
+  bush             C JUNIPER                    70 tris   1.34 x  1.33 x  0.95 m
+  bush             D FLOWERING SHRUB            96 tris   1.73 x  1.16 x  0.93 m
+  bush             E FERN                       50 tris   1.71 x  1.75 x  0.63 m
+  bush             F REEDS                      57 tris   1.78 x  1.18 x  1.86 m
+  bush             G CACTUS                     67 tris   0.93 x  0.68 x  2.31 m
+  bush             H YUCCA                      71 tris   0.97 x  0.89 x  1.75 m
+  bush             I HEATHER                    78 tris   1.38 x  1.32 x  0.50 m
+  bush             J TUMBLEWEED                 78 tris   0.96 x  0.87 x  0.67 m
+  bush             K MUSHROOMS                  73 tris   1.18 x  1.05 x  0.66 m
+  bush             L MOSSY ROCKS                94 tris   1.32 x  0.96 x  0.74 m
+  bush             M WILDFLOWERS                81 tris   1.25 x  1.06 x  0.81 m
+  crate_engine_v8  A ON A STAND               2125 tris   0.98 x  0.74 x  0.95 m
+  crate_engine_v8  B ON A SKID                2124 tris   0.85 x  0.73 x  0.74 m
+  crate_engine_v8  C JUNKYARD PULL            2100 tris   0.84 x  0.73 x  0.66 m
+  crate_engine_flat4 A ON A STAND               2328 tris   0.98 x  0.81 x  0.90 m
+  crate_engine_flat4 B ON A SKID                2264 tris   0.72 x  0.93 x  0.69 m
+  crate_engine_flat4 C JUNKYARD PULL            2116 tris   0.69 x  0.81 x  0.68 m
+  crate_engine_v6  A ON A STAND               1992 tris   0.98 x  0.74 x  0.94 m
+  crate_engine_v6  B ON A SKID                1992 tris   0.80 x  0.63 x  0.72 m
+  crate_engine_v6  C JUNKYARD PULL            1958 tris   0.79 x  0.60 x  0.72 m
+  crate_engine_i4  A ON A STAND               1979 tris   0.98 x  0.74 x  0.89 m
+  crate_engine_i4  B ON A SKID                1976 tris   0.70 x  0.58 x  0.72 m
+  crate_engine_i4  C JUNKYARD PULL            1818 tris   0.70 x  0.58 x  0.72 m
+  gearbox_manual   A ALLOY 6-SPEED            1700 tris   0.96 x  0.43 x  0.65 m
+  gearbox_manual   B IRON TOP-LOADER          1576 tris   1.01 x  0.43 x  0.66 m
+  gearbox_auto     A CLASSIC 3-SPEED          1856 tris   0.92 x  0.42 x  0.44 m
+  gearbox_auto     B MODERN 6-SPEED           1634 tris   0.96 x  0.42 x  0.45 m
+  transfer_case    A GEAR-DRIVEN HD           1984 tris   0.75 x  0.31 x  0.57 m
+  transfer_case    B CHAIN-DRIVEN             1892 tris   0.82 x  0.30 x  0.52 m
+  differential     A AXLE WITH COVER          1878 tris   0.50 x  0.86 x  0.42 m
+  differential     B BARE THIRD MEMBER        1408 tris   0.59 x  0.30 x  0.33 m
+  coilover         A REMOTE RESERVOIR         1910 tris   0.77 x  0.29 x  0.16 m
+  coilover         B SHOCK AND SPRING         1602 tris   0.67 x  0.32 x  0.15 m
+  coilover         C BYPASS TRIPLE            1486 tris   0.80 x  0.18 x  0.19 m
+  leaf_pack        A CLASSIC MULTI-LEAF       1536 tris   1.38 x  0.44 x  0.24 m
+  leaf_pack        B PARABOLIC TAPER          1376 tris   1.36 x  0.44 x  0.23 m
+  supply_crate     A WOODEN MILITARY          1140 tris   1.18 x  0.77 x  0.64 m
+  supply_crate     B STEEL EXPEDITION         1244 tris   1.19 x  0.79 x  0.65 m
+  supply_crate     C TARP PALLET              1238 tris   1.10 x  0.76 x  0.72 m
+  tree_pine        A CLASSIC FIR               603 tris   5.21 x  4.53 x 10.15 m
+  tree_pine        B TALL SPRUCE               656 tris   2.52 x  2.65 x 10.15 m
+  tree_pine        C LODGEPOLE                 285 tris   4.48 x  3.07 x 10.20 m
+  tree_broadleaf   A OAK                       326 tris   7.14 x  7.30 x  9.83 m
+  tree_broadleaf   B POPLAR                    312 tris   2.86 x  2.82 x 10.22 m
+  tree_broadleaf   C WILLOW                    196 tris   6.91 x  6.20 x  9.52 m
+  tree_snag        A GREY SNAG                 190 tris   3.20 x  2.99 x  8.15 m
+  tree_snag        B BURNT                     109 tris   1.71 x  2.69 x  7.55 m
+  tree_snag        C BROKEN TRUNK               69 tris   2.13 x  1.93 x  7.35 m
+  stump            A SAW CUT                    72 tris   1.04 x  1.10 x  0.73 m
+  stump            B BROKEN                     59 tris   1.24 x  1.12 x  1.09 m
+  stump            C MOSSY OLD                  78 tris   1.00 x  1.12 x  0.73 m
+  person           A TRAIL RANGER             2266 tris   0.49 x  0.59 x  1.80 m
+  person           B MECHANIC                 2198 tris   0.31 x  0.59 x  1.80 m
+  person           C OFF-ROADER               2069 tris   0.35 x  0.59 x  1.82 m
+  jack             A FARM JACK                1078 tris   0.50 x  0.20 x  1.25 m
+  jack             B BOTTLE JACK              1467 tris   0.48 x  0.19 x  0.31 m
+  jack             C SCISSOR JACK             1635 tris   0.63 x  0.10 x  0.19 m
+  chain_bundle     A LOOSE HEAP               2476 tris   0.40 x  0.39 x  0.12 m
+  chain_bundle     B IN A BAG                 1832 tris   0.45 x  0.42 x  0.45 m
+  chain_bundle     C ON A HOOK                2187 tris   0.22 x  0.20 x  0.52 m
+  shovel           A ENTRENCHING TOOL          926 tris   0.66 x  0.16 x  0.05 m
+  shovel           B LONG SPADE                564 tris   1.37 x  0.19 x  0.11 m
+PASS models/instance                      0.0 s sim,  0.6 s wall
+  shovel           C D-HANDLE SHOVEL           540 tris   1.06 x  0.24 x  0.12 m
+  air_compressor   A CARRY CASE               1820 tris   0.58 x  0.31 x  0.51 m
+  air_compressor   B BARE UNIT                1815 tris   0.43 x  0.29 x  0.28 m
+  air_compressor   C TANK STYLE               2101 tris   0.40 x  0.35 x  0.44 m
+  toolbox          A CANTILEVER               1469 tris   0.52 x  0.52 x  0.20 m
+  toolbox          B TOOL ROLL                1048 tris   0.52 x  0.15 x  0.16 m
+  toolbox          C PLASTIC CASE             1102 tris   0.24 x  0.54 x  0.29 m
+  fuel_cell        A ALUMINIUM CELL           1390 tris   0.56 x  0.62 x  0.41 m
+  fuel_cell        B BED TANK                 1574 tris   0.67 x  0.90 x  0.56 m
+  fuel_cell        C BLADDER IN CAN           1194 tris   0.51 x  0.63 x  0.39 m
+PASS models/tree-trunks                   0.0 s sim,  0.1 s wall
+  light_bar        A LED BAR                  1239 tris   0.09 x  1.12 x  0.11 m
+  light_bar        B DRIVING LAMPS            1326 tris   0.14 x  0.81 x  0.36 m
+  light_bar        C CURVED ROOF BAR          1671 tris   0.18 x  1.11 x  0.12 m
+  traction_boards  A MOULDED NYLON            1890 tris   1.12 x  0.37 x  0.15 m
+  traction_boards  B ALUMINIUM LADDER         1936 tris   1.12 x  0.38 x  0.13 m
+  traction_boards  C OLD PLANKS               1833 tris   1.11 x  0.37 x  0.17 m
+  winch_hook       A FORGED CLEVIS             843 tris   0.33 x  0.12 x  0.04 m
+  winch_hook       B SOFT SHACKLE              548 tris   0.27 x  0.04 x  0.05 m
+  winch_hook       C STRAP HOOK               1011 tris   0.38 x  0.15 x  0.04 m
+  winch            A STEEL CABLE              2063 tris   0.51 x  0.54 x  0.22 m
+PASS models/picks                         0.0 s sim,  0.1 s wall
+  winch            B SYNTHETIC ROPE           2172 tris   0.51 x  0.58 x  0.23 m
+  winch            C BIG DRUM                 1978 tris   0.65 x  0.57 x  0.32 m
+  shackle          A BOW SHACKLE               618 tris   0.12 x  0.08 x  0.03 m
+  shackle          B SOFT SHACKLE              515 tris   0.14 x  0.05 x  0.03 m
+  shackle          C RECOVERY RING             614 tris   0.12 x  0.12 x  0.03 m
+  tow_strap        A ROLLED STRAP             1352 tris   0.32 x  0.21 x  0.06 m
+  tow_strap        B KINETIC ROPE             1422 tris   0.58 x  0.22 x  0.11 m
+  tow_strap        C RECOVERY BAG              598 tris   0.26 x  0.46 x  0.31 m
+  tree_saver       A WEBBING STRAP            1134 tris   0.78 x  0.42 x  0.13 m
+  tree_saver       B ROUND SLING               944 tris   0.68 x  0.47 x  0.15 m
+  tree_saver       C PADDED WRAP              1816 tris   0.72 x  0.45 x  0.16 m
+  ground_anchor    A STAKE PAIR               2198 tris   0.92 x  0.49 x  0.53 m
+  ground_anchor    B PLOUGH ANCHOR             776 tris   0.92 x  0.62 x  0.55 m
+  ground_anchor    C BURIED TYRE              1226 tris   1.05 x  0.94 x  0.26 m
+  ground_stake     A PLATE ANCHOR              701 tris   0.69 x  0.54 x  0.31 m
+  ground_stake     B DRIVEN STAKE              682 tris   0.34 x  0.25 x  0.85 m
+  rock_bolt        A EYE BOLT                  718 tris   0.29 x  0.29 x  0.14 m
+  rock_bolt        B PAD-EYE                   614 tris   0.40 x  0.39 x  0.10 m
+  ice_anchor       A SNOW PICKET               620 tris   0.48 x  0.44 x  0.68 m
+  ice_anchor       B ICE SCREW                 713 tris   0.41 x  0.37 x  0.15 m
+  chain_sling      A CHAIN CHOKER             2074 tris   1.65 x  1.14 x  0.12 m
+  chain_sling      B WEB CHOKER               1132 tris   1.37 x  1.10 x  0.11 m
+  jerry_can        A NATO STEEL                480 tris   0.18 x  0.35 x  0.52 m
+  jerry_can        B FLAT PACK                 431 tris   0.11 x  0.42 x  0.40 m
+  jerry_can        C PLASTIC CAN               332 tris   0.22 x  0.55 x  0.51 m
+  frame_rail       A BOXED RAIL                128 tris   0.42 x  0.08 x  0.18 m
+  frame_rail       B C-CHANNEL RAIL            300 tris   0.42 x  0.07 x  0.18 m
+  frame_cross      A CHANNEL                   232 tris   0.08 x  0.82 x  0.16 m
+  frame_cross      B TUBE                      460 tris   0.16 x  0.82 x  0.12 m
+  frame_cross      C DROPPED                   464 tris   0.12 x  0.84 x  0.23 m
+  frame_hanger     A STAMPED                   296 tris   0.40 x  0.26 x  0.24 m
+  frame_hanger     B CAST                      392 tris   0.40 x  0.26 x  0.24 m
+  frame_shackle    A STAMPED                   372 tris   0.40 x  0.27 x  0.22 m
+  frame_shackle    B CAST                      364 tris   0.40 x  0.26 x  0.22 m
+  frame_tower      A STAMPED BUCKET            252 tris   0.40 x  0.14 x  0.30 m
+  frame_tower      B PIVOT TABS                208 tris   0.40 x  0.13 x  0.31 m
+  frame_stay       A FLAT BAR                  104 tris   0.20 x  0.05 x  0.03 m
+  frame_stay       B TUBE                      104 tris   0.21 x  0.05 x  0.03 m
+  frame_bodymount  A PUCK                      252 tris   0.30 x  0.17 x  0.23 m
+  frame_bodymount  B CAGE                      160 tris   0.30 x  0.16 x  0.23 m
+  frame_hook       A D-RING                    252 tris   0.46 x  0.11 x  0.21 m
+  frame_hook       B TOW HOOK                  180 tris   0.47 x  0.11 x  0.21 m
+  frame_skid       A FLAT PLATE                224 tris   0.56 x  0.81 x  0.16 m
+  frame_skid       B RIBBED PLATE              344 tris   0.61 x  0.81 x  0.16 m
+  frame_jackpad    A PLATE                     236 tris   0.40 x  0.21 x  0.20 m
+  frame_jackpad    B PLATE AND SEAT            384 tris   0.40 x  0.21 x  0.20 m
+  tire_part        A ALL-TERRAIN              1784 tris   0.76 x  0.76 x  0.28 m
+  bed_gate         A PAINTED                   196 tris   0.06 x  1.25 x  0.38 m
+  repair_shed      A STEEL PORTAL             8451 tris  12.40 x  9.93 x  6.30 m
+  repair_shed      B POLE BARN                9096 tris  12.50 x 10.23 x  6.21 m
+  repair_shed      C QUONSET                 10027 tris  12.40 x  9.61 x  6.21 m
+PASS sections/cliff-shelf-drive          97.9 s sim, 17.0 s wall
+  cabin            A LOG CABIN                4280 tris   5.89 x  6.21 x  4.65 m
+  cabin            B PLANK SHACK              2822 tris   5.19 x  6.03 x  4.21 m
+  cabin            C ALPINE HUT               5459 tris   5.34 x  6.30 x  4.74 m
+  outhouse         A PLANK PRIVY              1003 tris   1.69 x  1.57 x  2.34 m
+  outhouse         B TIN PRIVY                 945 tris   1.49 x  1.56 x  2.23 m
+  outhouse         C LOG PRIVY                1614 tris   1.63 x  1.56 x  2.34 m
+  tent             A DOME TENT                1160 tris   3.74 x  3.39 x  1.40 m
+  tent             B RIDGE TENT                631 tris   3.96 x  3.10 x  1.36 m
+  tent             C TARP SHELTER              514 tris   3.72 x  3.09 x  1.15 m
+  campfire         A STONE RING               1653 tris   2.00 x  2.03 x  0.80 m
+  campfire         B STEEL PIT                1699 tris   1.93 x  1.90 x  1.06 m
+  campfire         C COLD FIRE                1497 tris   2.30 x  2.30 x  0.42 m
+  woodpile         A STACK AND ROOF           1502 tris   3.22 x  1.33 x  1.47 m
+  woodpile         B LOOSE HEAP               1539 tris   3.97 x  2.06 x  1.04 m
+  woodpile         C CORD RACK                1524 tris   3.10 x  1.46 x  1.23 m
+  picnic_table     A A-FRAME TIMBER            684 tris   1.71 x  1.80 x  0.79 m
+  picnic_table     B STEEL FRAME              1128 tris   1.90 x  1.80 x  0.77 m
+  picnic_table     C LOG TABLE                 320 tris   1.87 x  1.89 x  0.89 m
+  ore_cart         A V-TIPPER SKIP            2859 tris   3.20 x  1.45 x  1.34 m
+  ore_cart         B BOX CART                 2921 tris   3.20 x  1.45 x  1.28 m
+  ore_cart         C FLAT WAGON               2300 tris   3.20 x  1.45 x  1.19 m
+  mine_portal      A TIMBER SET               1872 tris   4.63 x  8.53 x  3.86 m
+  mine_portal      B CONCRETE PORTAL          1972 tris   4.86 x  9.39 x  3.75 m
+  mine_portal      C LOG CRIB                 2448 tris   4.76 x  8.80 x  3.88 m
+  fire_tower       A TIMBER TOWER             5632 tris   4.68 x  4.70 x 18.00 m
+  fire_tower       B STEEL LATTICE            6093 tris   4.64 x  4.65 x 18.00 m
+  wreck_pickup     A ON ITS SIDE              8185 tris   5.75 x  5.02 x  3.03 m
+  wreck_pickup     B UPSIDE DOWN              7596 tris   6.60 x  5.44 x  2.02 m
+  wreck_pickup     C STRIPPED HULK            5839 tris   7.90 x  4.51 x  2.25 m
+87 models, 242 designs
+PASS models/build                         0.0 s sim,  2.0 s wall
+PASS models/all-variants                  0.0 s sim,  0.1 s wall
+PASS career/ownership                     0.0 s sim,  0.1 s wall
+PASS career/shop                          0.0 s sim,  0.1 s wall
+PASS career/rewards                       0.0 s sim,  0.1 s wall
+PASS career/save                          0.0 s sim,  0.1 s wall
+PASS models/threads                       0.0 s sim,  2.0 s wall
+PASS sections/cliff-shelf-drive-scans    97.7 s sim, 21.1 s wall
+PASS models/stress                        0.0 s sim,  5.3 s wall
+  FRONTIER THE WALL TOP at (-337, 348): BLAZER: 454 BIG BLOCK
+  FRONTIER SUMMIT at (16, 403): RACE SLICKS
+  FRONTIER FROZEN TARN at (-102, 436): SNOW TIRES
+  FRONTIER MUD HILL at (362, -408): MUD-TERRAIN TIRES
+  FRONTIER THE WALLOW at (308, -471): BRONCO: 3 IN LIFT AND 37S
+  FRONTIER MESA STAIRS at (-336, 76): 4RUNNER: 4.88 AND LOCKERS
+  FRONTIER ABOVE THE LODGE at (470, 445): TACOMA: MAGNUSON SUPERCHARGER
+  FRONTIER SLICKROCK BOWL at (-436, -256): $1500
+  FRONTIER MUD DELTA at (-324, -294): $800
+  FRONTIER ECHO LAKE BEACH at (332, -166): $1000
+  BACKCOUNTRY OLD MINE at (-300, -194): BLAZER: ZZ4 CRATE 350
+  BACKCOUNTRY CLIFF OVERLOOK at (-23, 272): SWAP: 7.0 LS7
+  BACKCOUNTRY HEARTBREAK HILL at (100, -70): BLAZER: 4.56 GEARS AND LOCKERS
+  BACKCOUNTRY THE SINK at (261, -195): MUD-TERRAIN TIRES
+  BACKCOUNTRY WRECK SITE at (11, 274): 4RUNNER: LONG TRAVEL AND 37S
+  BACKCOUNTRY FIRE TOWER at (232, 426): ALL-TERRAIN TIRES
+  BACKCOUNTRY DEEP CROSSING at (-116, 8): TACOMA: CRAWL BOX
+  BACKCOUNTRY SLAB POINT at (-192, -77): $1200
+  BACKCOUNTRY DUNE BOWL at (352, -228): $900
+  BACKCOUNTRY TRAPPER'S CABIN at (331, 101): $2000
+KOENIGSEGG JESKO on semi-slicks: roll rate swing after the kick (deg/s rms, each 0.5 s): 5.53 0.54 0.13 0.06 0.15 0.19
+stock: flat out to 329 km/h, yaw swing 0.27 deg/s, roll swing 0.34 deg/s
+KOENIGSEGG JESKO on race slicks: roll rate swing after the kick (deg/s rms, each 0.5 s): 5.59 0.75 0.12 0.16 0.16 0.09
+PASS dynamics/roll-settle                18.0 s sim,  3.2 s wall
+stock: full power kicked, yaw swing a second later x0.016
+PASS career/caches                        0.5 s sim,  6.5 s wall
+PASS tires/chains-look                    2.5 s sim,  0.4 s wall
+PASS devmenu/hotkeys-off                  0.0 s sim,  0.1 s wall
+PASS devmenu/player-keys                  0.0 s sim,  0.1 s wall
+PASS tires/chains                         5.0 s sim,  0.8 s wall
+PASS devmenu/menu-reaches-everything      0.0 s sim,  0.1 s wall
+PASS keybinds/esc-opens-menu              0.0 s sim,  0.1 s wall
+PASS keybinds/remap                       0.0 s sim,  0.1 s wall
+PASS keybinds/settings                    0.0 s sim,  0.1 s wall
+PASS keybinds/table                       0.0 s sim,  0.1 s wall
+PASS keybinds/contexts                    0.0 s sim,  0.1 s wall
+PASS devmenu/teleport                     2.5 s sim,  0.5 s wall
+PASS keybinds/shift-and-held              0.0 s sim,  0.1 s wall
+PASS keybinds/reset-export                0.0 s sim,  0.1 s wall
+PASS keybinds/settings-file               0.0 s sim,  0.1 s wall
+PASS keybinds/hints                       0.0 s sim,  0.1 s wall
+race slicks: flat out to 325 km/h, yaw swing 0.30 deg/s, roll swing 0.26 deg/s
+race slicks: full power kicked, yaw swing a second later x0.015
+PASS towing/payload                      10.5 s sim,  1.5 s wall
+PASS towing/trailer                      15.5 s sim,  2.1 s wall
+boost, track setup, slicks: flat out to 359 km/h, yaw swing 0.27 deg/s, roll swing 0.32 deg/s
+PASS towing/incline                      10.5 s sim,  1.5 s wall
+PASS environment/crosswind                8.2 s sim,  0.9 s wall
+boost, track setup, slicks: full power kicked, yaw swing a second later x0.003
+PASS environment/cold-start              11.5 s sim,  1.2 s wall
+PASS environment/cruise                  15.3 s sim,  1.7 s wall
+full tune at ~400 fps: flat out to 359 km/h, yaw swing 0.28 deg/s, roll swing 0.33 deg/s
+PASS environment/rain                     8.2 s sim,  0.9 s wall
+PASS environment/heavy-load              10.5 s sim,  1.7 s wall
+full tune at a steady 150: yaw swing 0.21 deg/s, roll swing 0.25 deg/s
+PASS dynamics/jesko-straight-accel       18.8 s sim, 13.8 s wall
+PASS extreme/high-speed                   5.5 s sim,  0.6 s wall
+PASS extreme/rapid-acceleration           5.5 s sim,  0.6 s wall
+PASS extreme/suspension-breakage         10.5 s sim,  1.5 s wall
+PASS extreme/evasion                     10.4 s sim,  1.1 s wall
+PASS dynamics/momentum                    3.5 s sim,  0.8 s wall
+PASS dynamics/friction                    4.8 s sim,  0.6 s wall
+PASS extreme/offroad                     15.5 s sim,  2.3 s wall
+PASS dynamics/energy                     14.4 s sim,  1.6 s wall
+PASS dynamics/tire-slip                   8.4 s sim,  0.9 s wall
+PASS vehicle-physics/braking              7.7 s sim,  1.1 s wall
+PASS dynamics/suspension                 10.5 s sim,  1.6 s wall
+PASS tires/treads                        50.7 s sim, 14.7 s wall
+PASS vehicle-physics/offroad             21.0 s sim,  4.6 s wall
+PASS simulation/brake-fade                8.7 s sim,  1.0 s wall
+PASS simulation/tire-heat                15.5 s sim,  1.8 s wall
+PASS vehicle-physics/handling            27.5 s sim,  8.3 s wall
+PASS simulation/payload                   9.3 s sim,  2.1 s wall
+PASS simulation/altitude                  7.4 s sim,  0.8 s wall
+PASS vtools/names                         0.0 s sim,  0.1 s wall
+PASS vtools/remove                        0.0 s sim,  0.1 s wall
+PASS vtools/remove-all                    0.0 s sim,  0.1 s wall
+PASS vtools/pick                          0.0 s sim,  0.1 s wall
+PASS vtools/popup                         0.0 s sim,  0.1 s wall
+PASS simulation/long-duration            30.5 s sim,  3.3 s wall
+PASS vtools/go                            8.0 s sim,  2.7 s wall
+PASS tires/loose-wheel                   12.5 s sim,  1.9 s wall
+PASS tires/swap                          38.3 s sim,  5.3 s wall
+PASS tires/refit-lost                    31.5 s sim,  4.3 s wall
+FAIL vehicle-physics/acceleration        41.0 s sim, 21.5 s wall
+     FAIL invariant: no node faster than 150 m/s  -- TOYOTA 4RUNNER #3 at t=34.08 s (node 27, -3.82 m under PAVEMENT)
+PASS tires/wrong-size                    21.7 s sim,  3.4 s wall
+PASS tires/pressure                       0.0 s sim,  0.1 s wall
+PASS tires/jack-spots                     1.0 s sim,  0.8 s wall
+FAIL tires/shear                          8.0 s sim,  1.4 s wall
+     FAIL 45 km/h: a wheel comes off  -- 0
+PASS tires/wrench-axis                    1.0 s sim,  0.2 s wall
+PASS gamepad/shaping                      0.0 s sim,  0.1 s wall
+PASS gamepad/steer-ratio                  0.0 s sim,  0.1 s wall
+PASS gamepad/pedals                       0.0 s sim,  0.1 s wall
+PASS gamepad/bindings                     0.0 s sim,  0.1 s wall
+FAIL tires/debead                        13.7 s sim,  2.0 s wall
+     FAIL 8 psi: a tire rolls off its rim  -- 0
+PASS gamepad/lane-change-80               9.0 s sim,  1.3 s wall
+PASS gamepad/rumble                       5.0 s sim,  0.8 s wall
+PASS autopilot/nearby-solids              0.0 s sim,  0.1 s wall
+PASS gamepad/crawl-4l                    28.0 s sim,  3.9 s wall
+PASS autopilot/shop                      15.9 s sim,  2.2 s wall
+PASS autopilot/speed                     17.6 s sim,  3.3 s wall
+PASS tires/jack-lifts                    20.0 s sim, 13.3 s wall
+PASS autopilot/cross-country             33.5 s sim,  6.5 s wall
+PASS autopilot/around-boulders           18.8 s sim,  3.9 s wall
+PASS autopilot/rock-around               13.4 s sim,  2.5 s wall
+     ok   closest it came to the rock: 0.25 m  [0.15 .. 3.00]  -15% vs baseline
+PASS autopilot/follow                    41.0 s sim,  6.9 s wall
+PASS autopilot/rock-over                 14.5 s sim,  2.6 s wall
+PASS autopilot/ledge                     23.1 s sim,  4.0 s wall
+     ok   damage: 0.02 %  [0.00 .. 0.50]  +64% vs baseline
+PASS autopilot/step-table                 0.0 s sim,  0.1 s wall
+PASS autopilot/halfway-hut              114.5 s sim, 21.6 s wall
+PASS autopilot/buggy-ledge               44.3 s sim,  5.7 s wall
+PASS autopilot/wall-gap                  13.9 s sim,  2.4 s wall
+PASS autopilot/civic-rock                13.4 s sim,  1.9 s wall
+     ok   closest it came to the rock: 0.20 m  [0.10 .. 3.00]  -24% vs baseline
+PASS autopilot/parked-truck              13.6 s sim,  3.8 s wall
+PASS net/crawlers                         5.5 s sim,  1.3 s wall
+PASS net/rejoin                           2.5 s sim,  1.4 s wall
+FAIL net/find                             0.0 s sim,  0.1 s wall
+     FAIL with its name, map and port  -- HOSTY 192.168.56.1:27813
+PASS net/two-players                     21.0 s sim,  6.1 s wall
+     ok   client truck speed (it drove): 62.3 km/h  [10.0 .. 80.0]  +21% vs baseline
+     ok   client truck towed by the host: 18.2 m  [10.0 .. 40.0]  +27% vs baseline
+     ok   client upload for one truck: 3.97 KB/s  [0.50 .. 20.0]  -89% vs baseline
+PASS net/level                            0.0 s sim,  5.0 s wall
+PASS net/port-parse                       0.0 s sim,  0.1 s wall
+PASS net/async-join                       0.0 s sim,  2.5 s wall
+PASS net/custom-port                      0.0 s sim,  1.8 s wall
+PASS recovery/winch-stall                14.2 s sim,  2.2 s wall
+     ok   line reeled in while stalled: 1.54 cm  [0.00 .. 3.00]  +115% vs baseline
+PASS vehicle-physics/top-speed          122.0 s sim, 64.7 s wall
+PASS net/lan-discovery                    0.0 s sim, 11.5 s wall
+PASS recovery/upright                     8.0 s sim,  1.4 s wall
+PASS recovery/rebuild-on-slope           14.0 s sim,  3.7 s wall
+     ok   bronco across it: tires on the ground: 4.00   [3.00 .. 4.00]  +33% vs baseline
+     ok   4runner up the hill: damage: 0.34 %  [0.00 .. 0.50]  +1353% vs baseline
+PASS recovery/repair                     41.2 s sim,  6.4 s wall
+     ok   damage before the shop: 0.46 %  [0.01 .. 30.0]  +28% vs baseline
+     ok   moving resets the work: 0.43 s  [0.00 .. 1.20]  -35% vs baseline
+PASS recovery/pointer-picking             0.5 s sim,  0.3 s wall
+PASS recovery/healthy-car-tow            13.0 s sim,  3.9 s wall
+PASS recovery/winch-speed-control         0.5 s sim,  0.2 s wall
+PASS recovery/strap-tow                  53.3 s sim, 15.7 s wall
+     ok   towed truck stays in line (worst lateral): 0.04 m  [0.00 .. 1.50]  +21% vs baseline
+PASS recovery/winch-self                121.0 s sim, 20.2 s wall
+PASS recovery/trail-repair              118.1 s sim, 18.7 s wall
+PASS offroad/drive-modes                  9.0 s sim,  1.6 s wall
+     ok   2H: rear tread speed over front (wheelspin at the back): 1.16 x  [1.00 .. 3.00]  +11% vs baseline
+     ok   4H: front vs rear average wheel speed mismatch (driveline wind-up): 0.31 %  [0.00 .. 5.00]  -87% vs baseline
+PASS offroad/shaft-break                  2.8 s sim,  0.6 s wall
+FAIL structure/rock-hits/4runner         42.0 s sim, 16.7 s wall
+     ok   4runner nose off a 1.2 m ledge: damage: 0.40 %  [0.00 .. 1.00]  +752% vs baseline
+     FAIL 4runner nose off a 1.2 m ledge: frame set: 3.70 %  [0.00 .. 1.00]  +408% vs baseline
+     ok   4runner corner into a boulder at 10 km/h: damage: 1.00 %  [0.00 .. 3.00]  +129% vs baseline
+PASS structure/rock-hits/tacoma          44.7 s sim, 17.3 s wall
+PASS structure/rock-hits/bronco          61.7 s sim, 20.3 s wall
+     ok   bronco nose off a 1.2 m ledge: damage: 0.01 %  [0.00 .. 1.00]  -83% vs baseline
+     ok   bronco nose off a 1.2 m ledge: frame set: 0.00 %  [0.00 .. 1.00]  -100% vs baseline
+     ok   bronco corner into a boulder at 10 km/h: damage: 0.49 %  [0.00 .. 3.00]  -34% vs baseline
+PASS offroad/slickrock                   25.6 s sim,  4.7 s wall
+PASS offroad/twister-lockers             50.9 s sim,  8.6 s wall
+PASS maps/mountain                        5.0 s sim,  2.7 s wall
+     ok   worst damage settling at the trailhead: 0.01 %  [0.00 .. 0.50]  +21% vs baseline
+PASS offroad/twister-open                66.0 s sim, 11.1 s wall
+PASS offroad/ledges                      46.9 s sim,  8.7 s wall
+PASS maps/hard-lines                     11.5 s sim,  1.9 s wall
+     ok   damage from the fall: 25.7 %  [2.00 .. 100]  +209% vs baseline
+PASS offroad/air-down                    61.6 s sim, 16.9 s wall
+     ok   height up the slab at 35 psi: 1.90 m  [0.00 .. 3.00]  +35% vs baseline
+PASS offroad/widowmaker                 102.9 s sim, 15.3 s wall
+     ok   damage: 0.11 %  [0.00 .. 1.50]  +146% vs baseline
+PASS offroad/rti                         37.8 s sim, 17.7 s wall
+     ok   4Runner RTI, sway bar disconnected: 562   [525 .. 800]  -22% vs baseline
+PASS offroad/gully                      103.9 s sim, 16.7 s wall
+     ok   damage: 0.09 %  [0.00 .. 2.00]  +91% vs baseline
+PASS offroad/slickrock-crawlers          32.0 s sim,  7.6 s wall
+PASS offroad/slickrock-dome              51.0 s sim,  7.1 s wall
+PASS offroad/ledges-buggy                91.8 s sim, 13.6 s wall
+PASS offroad/twister-crawlers           115.9 s sim, 15.2 s wall
+PASS offroad/ledge-crawlers              45.0 s sim, 23.5 s wall
+PASS components/airborne-tires/honda civic si   1.1 s sim,  0.2 s wall
+     ok   wheel 0 tread/road speed: 0.10 m/s  [0.00 .. 0.20]  +79% vs baseline
+     ok   wheel 1 tread/road speed: 0.10 m/s  [0.00 .. 0.20]  +75% vs baseline
+     ok   wheel 2 tread/road speed: 0.07 m/s  [0.00 .. 0.20]  +15% vs baseline
+     ok   wheel 3 tread/road speed: 0.07 m/s  [0.00 .. 0.20]  +15% vs baseline
+PASS components/airborne-tires/koenigsegg jesko   1.1 s sim,  0.2 s wall
+     ok   wheel 0 tread/road speed: 0.04 m/s  [0.00 .. 0.20]  +17% vs baseline
+     ok   wheel 1 tread/road speed: 0.04 m/s  [0.00 .. 0.20]  +17% vs baseline
+     ok   wheel 2 tread/road speed: 0.03 m/s  [0.00 .. 0.20]  -30% vs baseline
+     ok   wheel 3 tread/road speed: 0.03 m/s  [0.00 .. 0.20]  -31% vs baseline
+PASS components/airborne-tires/ford bronco   1.1 s sim,  0.2 s wall
+     ok   wheel 3 tread/road speed: 0.08 m/s  [0.00 .. 0.20]  +29% vs baseline
+PASS components/airborne-tires/toyota 4runner   1.1 s sim,  0.2 s wall
+     ok   wheel 2 tread/road speed: 0.08 m/s  [0.00 .. 0.20]  -12% vs baseline
+     ok   wheel 3 tread/road speed: 0.05 m/s  [0.00 .. 0.20]  +40% vs baseline
+PASS components/airborne-tires/rock buggy   1.1 s sim,  0.2 s wall
+PASS components/airborne-tires/turbo utv   1.1 s sim,  0.1 s wall
+PASS components/airborne-tires/toyota tacoma   1.1 s sim,  0.2 s wall
+PASS components/airborne-tires/chevy blazer   1.1 s sim,  0.2 s wall
+PASS components/airborne-tires/vw baja bug   1.1 s sim,  0.2 s wall
+WHOOPS UTV 9.0 s up 0.94 | Bronco 13.4 s up 0.86 | 4Runner 12.3 s up 0.44 | buggy 9.5 s up 0.84
+PASS offroad/whoops                      66.7 s sim,  9.0 s wall
+PASS components/broken-halfshaft/honda civic si   2.0 s sim,  0.3 s wall
+PASS components/broken-halfshaft/koenigsegg jesko   2.0 s sim,  0.3 s wall
+PASS components/broken-halfshaft/ford bronco   2.0 s sim,  0.3 s wall
+PASS structure/rock-hits/utv             44.8 s sim,  7.3 s wall
+PASS components/broken-halfshaft/toyota 4runner   2.0 s sim,  0.3 s wall
+     ok   car cannot accelerate with shafts disconnected: 0.01 km/h  [0.00 .. 0.50]  -13% vs baseline
+PASS components/broken-halfshaft/rock buggy   2.0 s sim,  0.3 s wall
+PASS components/broken-halfshaft/turbo utv   2.0 s sim,  0.2 s wall
+PASS components/broken-halfshaft/toyota tacoma   2.0 s sim,  0.3 s wall
+PASS components/broken-halfshaft/vw baja bug   2.0 s sim,  0.3 s wall
+PASS components/broken-halfshaft/chevy blazer   2.0 s sim,  0.3 s wall
+PASS components/door-glass/honda civic si   1.2 s sim,  0.2 s wall
+PASS components/door-glass/koenigsegg jesko   1.2 s sim,  0.2 s wall
+PASS components/door-glass/rock buggy     0.0 s sim,  0.1 s wall
+PASS components/door-glass/ford bronco    1.2 s sim,  0.2 s wall
+PASS components/door-glass/turbo utv      0.0 s sim,  0.1 s wall
+PASS components/door-glass/toyota 4runner   1.2 s sim,  0.3 s wall
+PASS components/door-glass/toyota tacoma   1.2 s sim,  0.2 s wall
+PASS components/door-glass/chevy blazer   1.2 s sim,  0.2 s wall
+PASS components/door-glass/vw baja bug    1.2 s sim,  0.2 s wall
+PASS components/door-stops/honda civic si   5.0 s sim,  0.6 s wall
+PASS components/door-stops/koenigsegg jesko   5.0 s sim,  0.6 s wall
+PASS components/door-stops/rock buggy     0.0 s sim,  0.1 s wall
+PASS components/door-stops/turbo utv      0.0 s sim,  0.1 s wall
+PASS components/door-stops/ford bronco    5.0 s sim,  0.8 s wall
+PASS components/door-stops/toyota 4runner   5.0 s sim,  0.8 s wall
+PASS components/door-stops/chevy blazer   5.0 s sim,  0.7 s wall
+PASS components/door-stops/toyota tacoma   5.0 s sim,  0.8 s wall
+PASS components/locked-differential       2.0 s sim,  0.3 s wall
+     ok   surviving wheel can propel the car: 4.20 km/h  [1.00 .. 30.0]  +16% vs baseline
+PASS components/door-stops/vw baja bug    5.0 s sim,  0.5 s wall
+PASS structure/rock-hits/buggy           41.1 s sim, 10.8 s wall
+PASS components/brake-traction-control   10.0 s sim,  1.4 s wall
+PASS components/torque-converter         10.3 s sim,  1.4 s wall
+PASS components/tire-into-fender/honda civic si   3.0 s sim,  0.4 s wall
+PASS components/tire-into-fender/koenigsegg jesko   3.0 s sim,  0.4 s wall
+PASS components/tire-into-fender/ford bronco   3.0 s sim,  0.5 s wall
+FAIL components/tire-into-fender/rock buggy   3.0 s sim,  0.3 s wall
+     FAIL peak push of the tire on the body: 0.00 kN  [1.00 .. 400]
+PASS components/tire-into-fender/toyota 4runner   3.0 s sim,  0.5 s wall
+FAIL components/tire-into-fender/turbo utv   3.0 s sim,  0.3 s wall
+     FAIL sheet metal and structure bent: 0.00 beams  [1.00 .. 5000]
+PASS components/tire-into-fender/toyota tacoma   3.0 s sim,  0.5 s wall
+PASS components/tire-into-fender/chevy blazer   3.0 s sim,  0.4 s wall
+PASS components/tire-into-fender/vw baja bug   3.0 s sim,  0.4 s wall
+PASS components/sway-bar-bend             9.0 s sim,  1.0 s wall
+PASS components/frame-twist               3.3 s sim,  0.6 s wall
+FRAME Bronco: sag at 20 kN 1.8 mm, first set at 83 kN, kept 39 mm, damage 0.37 %
+PASS dynamics/settle/honda civic si       5.0 s sim,  0.6 s wall
+     ok   creep in 4 s: 0.32 cm  [0.00 .. 2.00]  -18% vs baseline
+     ok   left/right wheel load difference (worst axle): 2.05 %  [0.00 .. 12.0]  +11% vs baseline
+PASS dynamics/settle/koenigsegg jesko     5.0 s sim,  0.6 s wall
+     ok   creep in 4 s: 0.08 cm  [0.00 .. 2.00]  -20% vs baseline
+     ok   fastest node in the final second: 0.00 m/s  [0.00 .. 0.02]  -100% vs baseline
+     ok   left/right wheel load difference (worst axle): 0.03 %  [0.00 .. 12.0]  -38% vs baseline
+PASS dynamics/settle/ford bronco          5.0 s sim,  0.8 s wall
+     ok   creep in 4 s: 0.46 cm  [0.00 .. 2.00]  -21% vs baseline
+FRAME 4Runner: sag at 20 kN 4.9 mm, first set at 52 kN, kept 76 mm, damage 1.52 %
+PASS dynamics/settle/toyota 4runner       5.0 s sim,  0.7 s wall
+     ok   creep in 4 s: 0.54 cm  [0.00 .. 2.00]  -10% vs baseline
+     ok   fastest node in the final second: 0.00 m/s  [0.00 .. 0.02]  +13% vs baseline
+     ok   left/right wheel load difference (worst axle): 1.88 %  [0.00 .. 12.0]  +47% vs baseline
+PASS dynamics/settle/rock buggy           5.0 s sim,  0.5 s wall
+FAIL components/axle-landing             64.0 s sim,  8.0 s wall
+     FAIL Rock buggy 2 m flat: settles back level  -- pitch -1.570013 deg, rise 8.898761 cm
+     FAIL Rock buggy 1.5 m at 40 km/h: settles back level  -- pitch -1.210805 deg, rise 4.351133 cm
+     FAIL Rock buggy 2 m flat: axle past its spec bump (19 cm), squashing the stop: 8.65 cm  [-6.00 .. 8.00]
+     FAIL Rock buggy 2 m tail first: axle past its spec bump (19 cm), squashing the stop: 13.9 cm  [-6.00 .. 8.00]
+PASS dynamics/settle/turbo utv            5.0 s sim,  0.4 s wall
+FRAME Tacoma: sag at 20 kN 7.9 mm, first set at 43 kN, kept 204 mm, damage 2.35 %
+PASS components/frame-press              35.0 s sim,  5.0 s wall
+PASS dynamics/settle/toyota tacoma        5.0 s sim,  0.8 s wall
+PASS components/axle-articulation        62.0 s sim,  9.0 s wall
+PASS dynamics/settle/vw baja bug          5.0 s sim,  0.5 s wall
+PASS dynamics/settle/chevy blazer         5.0 s sim,  0.7 s wall
+PASS dynamics/acceleration/koenigsegg jesko   4.3 s sim,  0.5 s wall
+PASS dynamics/acceleration/honda civic si  10.5 s sim,  1.1 s wall
+PASS dynamics/acceleration/rock buggy     5.9 s sim,  0.6 s wall
+PASS dynamics/acceleration/ford bronco    6.8 s sim,  1.1 s wall
+     ok   0-100 km/h: 5.77 s  [5.60 .. 7.20]  -10% vs baseline
+PASS dynamics/acceleration/turbo utv      5.1 s sim,  0.4 s wall
+PASS dynamics/acceleration/toyota 4runner   9.9 s sim,  1.4 s wall
+     ok   0-100 km/h: 8.87 s  [8.50 .. 11.0]  -15% vs baseline
+PASS dynamics/braking/honda civic si      4.5 s sim,  0.5 s wall
+     ok   sideways drift while braking: 0.01 m  [0.00 .. 0.80]  +29% vs baseline
+     ok   heading change while braking: 0.59 deg  [0.00 .. 3.00]  +367% vs baseline
+PASS dynamics/acceleration/toyota tacoma   8.7 s sim,  1.3 s wall
+PASS dynamics/acceleration/vw baja bug    9.5 s sim,  0.9 s wall
+PASS dynamics/braking/koenigsegg jesko    3.6 s sim,  0.4 s wall
+PASS dynamics/acceleration/chevy blazer  11.8 s sim,  1.6 s wall
+PASS dynamics/braking/ford bronco         4.3 s sim,  0.6 s wall
+     ok   sideways drift while braking: 0.07 m  [0.00 .. 0.80]  -61% vs baseline
+     ok   heading change while braking: 0.30 deg  [0.00 .. 3.00]  -26% vs baseline
+PASS dynamics/braking/toyota 4runner      4.4 s sim,  0.7 s wall
+     ok   sideways drift while braking: 0.33 m  [0.00 .. 0.80]  +451% vs baseline
+     ok   heading change while braking: 0.73 deg  [0.00 .. 3.00]  +399% vs baseline
+PASS dynamics/braking/turbo utv           4.6 s sim,  0.4 s wall
+PASS dynamics/braking/rock buggy          5.7 s sim,  0.6 s wall
+PASS dynamics/braking/toyota tacoma       4.4 s sim,  0.7 s wall
+PASS dynamics/braking/vw baja bug         4.8 s sim,  0.5 s wall
+PASS dynamics/braking/chevy blazer        5.1 s sim,  0.7 s wall
+PASS dynamics/skidpad/honda civic si     41.0 s sim,  4.1 s wall
+PASS dynamics/skidpad/koenigsegg jesko   41.0 s sim,  4.3 s wall
+PASS dynamics/skidpad/ford bronco        41.0 s sim,  5.6 s wall
+PASS dynamics/skidpad/toyota 4runner     41.0 s sim,  5.6 s wall
+PASS dynamics/skidpad/turbo utv          41.0 s sim,  2.7 s wall
+PASS dynamics/skidpad/rock buggy         41.0 s sim,  4.0 s wall
+PASS dynamics/high-speed/honda civic si   4.5 s sim,  0.5 s wall
+     ok   heading wander: 0.10 deg  [0.00 .. 1.50]  +18% vs baseline
+PASS dynamics/high-speed/koenigsegg jesko   4.5 s sim,  0.5 s wall
+     ok   heading wander: 0.02 deg  [0.00 .. 1.50]  +17% vs baseline
+     ok   sideways drift: 0.02 m  [0.00 .. 1.00]  +27% vs baseline
+PASS dynamics/high-speed/ford bronco      4.5 s sim,  0.7 s wall
+     ok   heading wander: 0.61 deg  [0.00 .. 1.50]  +235% vs baseline
+     ok   sideways drift: 0.59 m  [0.00 .. 1.00]  +1101% vs baseline
+PASS dynamics/high-speed/toyota 4runner   4.5 s sim,  0.7 s wall
+     ok   heading wander: 0.32 deg  [0.00 .. 1.50]  +19% vs baseline
+     ok   sideways drift: 0.38 m  [0.00 .. 1.00]  +52% vs baseline
+PASS dynamics/skidpad/chevy blazer       41.0 s sim,  5.0 s wall
+PASS dynamics/high-speed/rock buggy       4.5 s sim,  0.5 s wall
+PASS dynamics/skidpad/vw baja bug        41.0 s sim,  3.7 s wall
+PASS dynamics/high-speed/turbo utv        4.5 s sim,  0.4 s wall
+PASS dynamics/high-speed/chevy blazer     4.5 s sim,  0.6 s wall
+PASS dynamics/skidpad/toyota tacoma      41.0 s sim,  5.8 s wall
+PASS dynamics/high-speed/toyota tacoma    4.5 s sim,  0.7 s wall
+PASS dynamics/high-speed/vw baja bug      4.5 s sim,  0.5 s wall
+PASS dynamics/lane-change/honda civic si   7.0 s sim,  0.7 s wall
+     ok   residual yaw wobble after the maneuver: 0.44 deg/s  [0.00 .. 4.00]  +12% vs baseline
+PASS dynamics/lane-change/koenigsegg jesko   7.0 s sim,  0.8 s wall
+PASS dynamics/lane-change/ford bronco     7.0 s sim,  1.0 s wall
+     ok   back on the original line: 0.02 m  [0.00 .. 0.60]  +17% vs baseline
+     ok   residual yaw wobble after the maneuver: 0.50 deg/s  [0.00 .. 4.00]  +26% vs baseline
+PASS dynamics/lane-change/toyota 4runner   7.0 s sim,  1.0 s wall
+     ok   residual yaw wobble after the maneuver: 0.49 deg/s  [0.00 .. 4.00]  +37% vs baseline
+PASS dynamics/lane-change/turbo utv       7.0 s sim,  0.6 s wall
+PASS dynamics/lane-change/rock buggy      7.0 s sim,  0.7 s wall
+PASS dynamics/lane-change/vw baja bug     7.0 s sim,  0.7 s wall
+PASS dynamics/lane-change/toyota tacoma   7.0 s sim,  1.1 s wall
+PASS dynamics/lane-change/chevy blazer    7.0 s sim,  0.9 s wall
+PASS dynamics/turning-circle/honda civic si  15.0 s sim,  1.5 s wall
+PASS dynamics/turning-circle/koenigsegg jesko  15.0 s sim,  1.6 s wall
+PASS dynamics/turning-circle/ford bronco  15.0 s sim,  2.1 s wall
+PASS dynamics/turning-circle/toyota 4runner  15.0 s sim,  2.1 s wall
+PASS dynamics/turning-circle/rock buggy  15.0 s sim,  1.5 s wall
+PASS dynamics/turning-circle/turbo utv   15.0 s sim,  1.1 s wall
+PASS dynamics/turning-circle/vw baja bug  15.0 s sim,  1.4 s wall
+PASS dynamics/slope-hold/honda civic si  12.0 s sim,  1.3 s wall
+PASS dynamics/turning-circle/chevy blazer  15.0 s sim,  2.0 s wall
+PASS dynamics/turning-circle/toyota tacoma  15.0 s sim,  2.1 s wall
+PASS dynamics/slope-hold/koenigsegg jesko  12.0 s sim,  1.3 s wall
+PASS dynamics/slope-hold/rock buggy      12.0 s sim,  1.3 s wall
+PASS dynamics/slope-hold/ford bronco     12.0 s sim,  1.8 s wall
+     ok   slide down the ramp in 8 s: 0.03 cm  [0.00 .. 5.00]  -20% vs baseline
+PASS dynamics/slope-hold/toyota 4runner  12.0 s sim,  1.8 s wall
+     ok   slide down the ramp in 8 s: 0.04 cm  [0.00 .. 5.00]  -96% vs baseline
+PASS dynamics/slope-hold/turbo utv       12.0 s sim,  0.9 s wall
+PASS dynamics/drop/honda civic si         7.0 s sim,  0.7 s wall
+PASS dynamics/slope-hold/vw baja bug     12.0 s sim,  1.3 s wall
+PASS dynamics/slope-hold/toyota tacoma   12.0 s sim,  1.9 s wall
+PASS dynamics/slope-hold/chevy blazer    12.0 s sim,  1.7 s wall
+PASS dynamics/drop/koenigsegg jesko       7.0 s sim,  0.8 s wall
+     ok   damage after 1.2 m drop: 0.05 %  [0.00 .. 0.50]  +198% vs baseline
+PASS dynamics/drop/turbo utv              7.0 s sim,  0.5 s wall
+PASS dynamics/drop/rock buggy             7.0 s sim,  0.7 s wall
+PASS dynamics/drop/ford bronco            7.0 s sim,  1.0 s wall
+PASS dynamics/drop/toyota 4runner         7.0 s sim,  1.0 s wall
+     ok   damage after 1.2 m drop: 0.05 %  [0.00 .. 0.50]  +181% vs baseline
+PASS dynamics/drop/vw baja bug            7.0 s sim,  0.7 s wall
+PASS dynamics/drop/chevy blazer           7.0 s sim,  0.9 s wall
+PASS dynamics/washboard/koenigsegg jesko   0.0 s sim,  0.1 s wall
+PASS dynamics/drop/toyota tacoma          7.0 s sim,  1.0 s wall
+PASS dynamics/washboard/rock buggy        9.0 s sim,  1.1 s wall
+PASS dynamics/washboard/honda civic si   14.4 s sim,  1.8 s wall
+     ok   average speed over the bumps: 22.9 km/h  [20.0 .. 45.0]  -29% vs baseline
+     ok   damage (cosmetic at most): 0.57 %  [0.00 .. 1.50]  +763% vs baseline
+     ok   drift off the line: 0.02 m  [0.00 .. 1.50]  +15% vs baseline
+PASS dynamics/washboard/toyota 4runner    9.3 s sim,  1.6 s wall
+PASS dynamics/washboard/ford bronco      10.6 s sim,  1.8 s wall
+     ok   average speed over the bumps: 31.9 km/h  [28.0 .. 45.0]  -11% vs baseline
+     ok   drift off the line: 0.01 m  [0.00 .. 1.50]  +11% vs baseline
+PASS dynamics/washboard/turbo utv         9.6 s sim,  0.8 s wall
+PASS dynamics/reverse/honda civic si      6.0 s sim,  0.7 s wall
+PASS dynamics/washboard/toyota tacoma    10.6 s sim,  1.9 s wall
+PASS dynamics/washboard/vw baja bug      11.3 s sim,  1.4 s wall
+PASS dynamics/washboard/chevy blazer     10.7 s sim,  1.7 s wall
+PASS dynamics/reverse/koenigsegg jesko    6.0 s sim,  0.7 s wall
+PASS dynamics/reverse/turbo utv           6.0 s sim,  0.5 s wall
+PASS dynamics/reverse/rock buggy          6.0 s sim,  0.6 s wall
+PASS dynamics/reverse/ford bronco         6.0 s sim,  0.9 s wall
+PASS dynamics/reverse/toyota 4runner      6.0 s sim,  0.9 s wall
+     ok   reverse speed after 5 s (rev-limited): 67.5 km/h  [12.0 .. 80.0]  +25% vs baseline
+PASS structure/torsion/honda civic si     1.1 s sim,  0.2 s wall
+PASS structure/torsion/koenigsegg jesko   1.1 s sim,  0.2 s wall
+PASS dynamics/reverse/vw baja bug         6.0 s sim,  0.7 s wall
+PASS dynamics/reverse/toyota tacoma       6.0 s sim,  0.9 s wall
+PASS structure/torsion/ford bronco        1.1 s sim,  0.2 s wall
+     ok   torsional stiffness: 25.2 kNm/deg  [6.00 .. 36.0]  -21% vs baseline
+PASS dynamics/reverse/chevy blazer        6.0 s sim,  0.8 s wall
+PASS structure/torsion/turbo utv          1.1 s sim,  0.2 s wall
+PASS structure/torsion/rock buggy         1.1 s sim,  0.2 s wall
+PASS structure/torsion/toyota 4runner     1.1 s sim,  0.2 s wall
+     ok   torsional stiffness: 15.7 kNm/deg  [6.00 .. 36.0]  -24% vs baseline
+PASS structure/torsion/toyota tacoma      1.1 s sim,  0.2 s wall
+PASS structure/torsion/vw baja bug        1.1 s sim,  0.2 s wall
+PASS structure/torsion/chevy blazer       1.1 s sim,  0.2 s wall
+PASS structure/bending/honda civic si     1.1 s sim,  0.2 s wall
+PASS structure/bending/koenigsegg jesko   1.1 s sim,  0.2 s wall
+PASS structure/bending/rock buggy         1.1 s sim,  0.2 s wall
+PASS structure/bending/ford bronco        1.1 s sim,  0.2 s wall
+     ok   bending stiffness: 21.0 kN/mm  [4.00 .. 40.0]  +53% vs baseline
+PASS structure/bending/toyota 4runner     1.1 s sim,  0.2 s wall
+PASS structure/bending/turbo utv          1.1 s sim,  0.1 s wall
+PASS structure/bending/vw baja bug        1.1 s sim,  0.2 s wall
+PASS structure/bending/chevy blazer       1.1 s sim,  0.2 s wall
+PASS structure/bending/toyota tacoma      1.1 s sim,  0.2 s wall
+PASS structure/jiggle/honda civic si     19.5 s sim,  2.3 s wall
+     ok   body flex braking from 80 km/h (rms): 0.03 mm  [0.00 .. 1.50]  -17% vs baseline
+     ok   body flex over the washboard at 40 km/h (rms): 1.35 mm  [0.00 .. 3.00]  +527% vs baseline
+PASS structure/jiggle/koenigsegg jesko   18.8 s sim,  2.4 s wall
+     ok   body flex over the washboard at 40 km/h (rms): 1.37 mm  [0.00 .. 3.00]  -23% vs baseline
+PASS structure/jiggle/toyota 4runner     15.6 s sim,  2.4 s wall
+     ok   body flex braking from 80 km/h (rms): 0.05 mm  [0.00 .. 1.50]  -59% vs baseline
+     ok   body flex over the washboard at 40 km/h (rms): 0.31 mm  [0.00 .. 3.00]  -14% vs baseline
+PASS structure/jiggle/ford bronco        15.8 s sim,  2.5 s wall
+     ok   body flex braking from 80 km/h (rms): 0.04 mm  [0.00 .. 1.50]  -57% vs baseline
+     ok   body flex over the washboard at 40 km/h (rms): 0.32 mm  [0.00 .. 3.00]  -21% vs baseline
+PASS structure/jiggle/turbo utv          16.1 s sim,  1.3 s wall
+PASS structure/jiggle/rock buggy         16.2 s sim,  1.7 s wall
+PASS structure/suspension-travel/honda civic si  10.5 s sim,  1.1 s wall
+     ok   ride height error at rest (worst coil-over vs design): 1.44 mm  [0.00 .. 12.0]  -43% vs baseline
+PASS structure/jiggle/chevy blazer       17.4 s sim,  2.5 s wall
+PASS structure/jiggle/toyota tacoma      16.1 s sim,  2.7 s wall
+PASS structure/jiggle/vw baja bug        16.7 s sim,  1.8 s wall
+PASS structure/suspension-travel/koenigsegg jesko  10.5 s sim,  1.1 s wall
+     ok   ride height error at rest (worst coil-over vs design): 0.14 mm  [0.00 .. 12.0]  -86% vs baseline
+PASS structure/suspension-travel/ford bronco  10.5 s sim,  1.4 s wall
+     ok   ride height error at rest (worst coil-over vs design): 4.06 mm  [0.00 .. 12.0]  -33% vs baseline
+PASS structure/suspension-travel/rock buggy  10.5 s sim,  1.0 s wall
+PASS structure/suspension-travel/toyota 4runner  10.5 s sim,  1.5 s wall
+     ok   ride height error at rest (worst coil-over vs design): 2.46 mm  [0.00 .. 12.0]  -42% vs baseline
+PASS structure/suspension-travel/turbo utv  10.5 s sim,  0.8 s wall
+PASS structure/suspension-travel/vw baja bug  10.5 s sim,  1.0 s wall
+PASS structure/bump-steer/honda civic si   8.5 s sim,  0.9 s wall
+     ok   worst front toe change within +-5 cm of travel: 0.15 deg  [0.00 .. 0.40]  -57% vs baseline
+PASS structure/suspension-travel/chevy blazer  10.5 s sim,  1.4 s wall
+PASS structure/suspension-travel/toyota tacoma  10.5 s sim,  1.5 s wall
+PASS structure/bump-steer/koenigsegg jesko   8.5 s sim,  1.0 s wall
+     ok   worst front toe change within +-5 cm of travel: 0.14 deg  [0.00 .. 0.40]  -37% vs baseline
+PASS structure/bump-steer/rock buggy      8.5 s sim,  0.9 s wall
+PASS structure/bump-steer/ford bronco     8.5 s sim,  1.2 s wall
+     ok   worst front toe change within +-5 cm of travel: 0.19 deg  [0.00 .. 0.40]  -41% vs baseline
+PASS structure/bump-steer/toyota 4runner   8.5 s sim,  1.3 s wall
+     ok   worst front toe change within +-5 cm of travel: 0.15 deg  [0.00 .. 0.40]  -51% vs baseline
+PASS structure/bump-steer/turbo utv       8.5 s sim,  0.7 s wall
+PASS structure/clearance/honda civic si   2.0 s sim,  0.3 s wall
+PASS structure/clearance/koenigsegg jesko   2.0 s sim,  0.3 s wall
+PASS structure/bump-steer/vw baja bug     8.5 s sim,  0.8 s wall
+PASS structure/bump-steer/toyota tacoma   8.5 s sim,  1.2 s wall
+PASS structure/clearance/ford bronco      2.0 s sim,  0.3 s wall
+PASS structure/bump-steer/chevy blazer    8.5 s sim,  1.2 s wall
+PASS structure/clearance/rock buggy       2.0 s sim,  0.3 s wall
+PASS structure/clearance/turbo utv        2.0 s sim,  0.2 s wall
+PASS structure/clearance/toyota 4runner   2.0 s sim,  0.3 s wall
+PASS structure/clearance/toyota tacoma    2.0 s sim,  0.3 s wall
+PASS structure/clearance/vw baja bug      2.0 s sim,  0.3 s wall
+PASS structure/clearance/chevy blazer     2.0 s sim,  0.3 s wall
+PASS structure/tilt-table/honda civic si  30.1 s sim,  2.9 s wall
+PASS structure/tilt-table/toyota 4runner  21.6 s sim,  3.0 s wall
+PASS structure/tilt-table/koenigsegg jesko  35.7 s sim,  3.6 s wall
+PASS structure/tilt-table/ford bronco    25.6 s sim,  3.5 s wall
+PASS structure/tilt-table/turbo utv      26.3 s sim,  1.8 s wall
+PASS structure/tilt-table/rock buggy     26.9 s sim,  2.6 s wall
+PASS structure/weight/honda civic si      2.0 s sim,  0.3 s wall
+FAIL structure/weight/koenigsegg jesko    2.0 s sim,  0.3 s wall
+     ok   pitch dynamic index k^2 / (a b): 1.06   [0.80 .. 1.20]  +15% vs baseline
+     FAIL center of gravity height: 0.46 m  [0.34 .. 0.46]  +3% vs baseline
+PASS structure/weight/ford bronco         2.0 s sim,  0.3 s wall
+PASS structure/weight/toyota 4runner      2.0 s sim,  0.3 s wall
+PASS structure/weight/rock buggy          2.0 s sim,  0.3 s wall
+PASS structure/weight/turbo utv           2.0 s sim,  0.2 s wall
+PASS structure/tilt-table/toyota tacoma  25.3 s sim,  3.5 s wall
+PASS structure/tilt-table/chevy blazer   26.6 s sim,  3.5 s wall
+PASS structure/tilt-table/vw baja bug    24.4 s sim,  2.4 s wall
+PASS structure/weight/vw baja bug         2.0 s sim,  0.2 s wall
+FAIL structure/weight/toyota tacoma       2.0 s sim,  0.3 s wall
+     FAIL weight on the front axle: 52.1 %  [53.0 .. 58.0]
+PASS structure/weight/chevy blazer        2.0 s sim,  0.3 s wall
+PASS damage/wall-50/honda civic si        3.5 s sim,  0.5 s wall
+     ok   crumple depth: 0.25 m  [0.12 .. 1.00]  -27% vs baseline
+     ok   peak deceleration (smoothed): 14.6 g  [8.00 .. 60.0]  +18% vs baseline
+     ok   body panels knocked loose: 0.00   [0.00 .. 6.00]  -100% vs baseline
+PASS damage/wall-50/koenigsegg jesko      3.5 s sim,  0.5 s wall
+     ok   crumple depth: 0.17 m  [0.12 .. 1.00]  -57% vs baseline
+     ok   peak deceleration (smoothed): 13.2 g  [8.00 .. 60.0]  +21% vs baseline
+     ok   broken glass panels: 14.0   [1.00 .. 60.0]  +17% vs baseline
+     ok   body panels knocked loose: 0.00   [0.00 .. 6.00]  -100% vs baseline
+PASS damage/wall-50/ford bronco           3.5 s sim,  0.6 s wall
+     ok   crumple depth: 0.17 m  [0.12 .. 1.00]  -52% vs baseline
+     ok   peak deceleration (smoothed): 14.0 g  [8.00 .. 60.0]  +20% vs baseline
+     ok   engine health: 0.87   [0.15 .. 0.99]  +10% vs baseline
+     ok   broken glass panels: 8.00   [1.00 .. 60.0]  -43% vs baseline
+     ok   body panels knocked loose: 0.00   [0.00 .. 6.00]  -100% vs baseline
+PASS damage/wall-50/toyota 4runner        3.5 s sim,  0.6 s wall
+     ok   peak deceleration (smoothed): 12.7 g  [8.00 .. 60.0]  +22% vs baseline
+     ok   broken glass panels: 13.0   [1.00 .. 60.0]  -24% vs baseline
+PASS damage/wall-50/rock buggy            3.5 s sim,  0.4 s wall
+PASS damage/wall-50/turbo utv             3.5 s sim,  0.3 s wall
+PASS damage/wall-50/vw baja bug           3.5 s sim,  0.4 s wall
+PASS damage/wall-50/chevy blazer          3.5 s sim,  0.5 s wall
+PASS damage/parking-bump/honda civic si   3.5 s sim,  0.5 s wall
+PASS damage/wall-50/toyota tacoma         3.5 s sim,  0.6 s wall
+PASS damage/parking-bump/koenigsegg jesko   3.5 s sim,  0.5 s wall
+PASS damage/parking-bump/rock buggy       3.5 s sim,  0.4 s wall
+PASS damage/parking-bump/ford bronco      3.5 s sim,  0.6 s wall
+PASS damage/parking-bump/toyota 4runner   3.5 s sim,  0.6 s wall
+PASS damage/parking-bump/turbo utv        3.5 s sim,  0.3 s wall
+PASS damage/parking-bump/vw baja bug      3.5 s sim,  0.5 s wall
+PASS damage/parking-bump/chevy blazer     3.5 s sim,  0.5 s wall
+PASS damage/parking-bump/toyota tacoma    3.5 s sim,  0.6 s wall
+PASS damage/wall-25/honda civic si        3.5 s sim,  0.5 s wall
+     ok   crumple depth: 1.81 cm  [0.50 .. 30.0]  -47% vs baseline
+     ok   damage: 1.91 %  [0.05 .. 8.00]  -13% vs baseline
+     ok   broken glass: 0.00   [0.00 .. 12.0]  -100% vs baseline
+PASS damage/wall-25/koenigsegg jesko      3.5 s sim,  0.5 s wall
+     ok   crumple depth: 0.95 cm  [0.50 .. 30.0]  -78% vs baseline
+     ok   damage: 0.94 %  [0.05 .. 8.00]  -50% vs baseline
+PASS damage/wall-25/ford bronco           3.5 s sim,  0.6 s wall
+     ok   crumple depth: 1.02 cm  [-1.00 .. 30.0]  -40% vs baseline
+     ok   panels knocked loose: 0.00   [0.00 .. 2.00]  -100% vs baseline
+PASS damage/wall-25/rock buggy            3.5 s sim,  0.4 s wall
+PASS damage/wall-25/toyota 4runner        3.5 s sim,  0.6 s wall
+     ok   crumple depth: 1.86 cm  [-1.00 .. 30.0]  +111% vs baseline
+     ok   damage: 3.39 %  [0.05 .. 8.00]  +429% vs baseline
+     ok   broken glass: 0.00   [0.00 .. 12.0]  -100% vs baseline
+PASS damage/wall-25/turbo utv             3.5 s sim,  0.4 s wall
+PASS damage/wall-25/vw baja bug           3.5 s sim,  0.5 s wall
+PASS damage/wall-25/toyota tacoma         3.5 s sim,  0.6 s wall
+PASS damage/wall-25/chevy blazer          3.5 s sim,  0.6 s wall
+PASS damage/pole                          4.0 s sim,  0.5 s wall
+     ok   damage: 5.81 %  [2.00 .. 60.0]  -14% vs baseline
+PASS damage/tree                          4.0 s sim,  0.5 s wall
+PASS damage/rear-end                      2.6 s sim,  0.8 s wall
+PASS damage/rollover                      6.0 s sim,  0.9 s wall
+     ok   damage: 7.42 %  [0.50 .. 80.0]  -18% vs baseline
+PASS damage/head-on                       4.0 s sim,  1.3 s wall
+     ok   worst deep intrusions (nodes inside the other car): 0.00   [0.00 .. 8.00]  -100% vs baseline
+     ok   damage A: 20.0 %  [8.00 .. 70.0]  +30% vs baseline
+     ok   damage B: 19.9 %  [8.00 .. 70.0]  +28% vs baseline
+PASS damage/t-bone                        4.0 s sim,  1.5 s wall
+     ok   worst deep intrusions: 0.00   [0.00 .. 10.0]  -100% vs baseline
+     ok   Jesko shoved sideways: 5.65 m  [1.00 .. 15.0]  +25% vs baseline
+PASS damage/jump                          6.0 s sim,  0.7 s wall
+PASS damage/crash-boxes                   6.0 s sim,  0.8 s wall
+     ok   furthest box thrown: 14.2 m  [3.00 .. 60.0]  +22% vs baseline
+     ok   Civic speed kept: 40.9 km/h  [25.0 .. 60.0]  +11% vs baseline
+PASS garage/swaps/civic/wheels           28.0 s sim,  5.7 s wall
+PASS garage/swaps/civic/tires            17.5 s sim,  3.5 s wall
+PASS garage/swaps/civic/engine           94.5 s sim, 18.2 s wall
+PASS garage/swaps/civic/suspension       98.0 s sim, 18.9 s wall
+PASS garage/swaps/civic/transmission     98.0 s sim, 19.0 s wall
+PASS garage/swaps/jesko/wheels           28.0 s sim,  5.9 s wall
+PASS garage/swaps/jesko/tires            17.5 s sim,  3.6 s wall
+PASS garage/swaps/jesko/engine           98.0 s sim, 19.6 s wall
+PASS garage/swaps/jesko/suspension       98.0 s sim, 19.7 s wall
+PASS garage/swaps/jesko/transmission     98.0 s sim, 19.7 s wall
+PASS garage/swaps/bronco/wheels          28.0 s sim,  6.5 s wall
+PASS garage/swaps/bronco/tires           17.5 s sim,  4.1 s wall
+PASS garage/swaps/bronco/engine          94.5 s sim, 22.3 s wall
+PASS garage/swaps/bronco/suspension      98.0 s sim, 23.1 s wall
+PASS garage/swaps/bronco/transmission    98.0 s sim, 22.5 s wall
+PASS garage/swaps/4runner/wheels         28.0 s sim,  6.3 s wall
+PASS garage/swaps/4runner/tires          17.5 s sim,  4.0 s wall
+PASS garage/swaps/4runner/engine         94.5 s sim, 21.9 s wall
+PASS garage/swaps/4runner/suspension     98.0 s sim, 22.6 s wall
+PASS garage/swaps/4runner/transmission   98.0 s sim, 22.6 s wall
+PASS garage/swaps/buggy/wheels           28.0 s sim,  5.4 s wall
+PASS garage/swaps/buggy/tires            17.5 s sim,  3.7 s wall
+PASS garage/swaps/buggy/engine           98.0 s sim, 19.3 s wall
+PASS garage/swaps/buggy/suspension      101.5 s sim, 20.1 s wall
+PASS garage/swaps/buggy/transmission    101.5 s sim, 20.5 s wall
+PASS garage/swaps/utv/wheels             28.0 s sim,  5.0 s wall
+PASS garage/swaps/utv/engine             98.0 s sim, 17.4 s wall
+PASS garage/swaps/utv/tires              17.5 s sim,  3.2 s wall
+PASS garage/swaps/utv/suspension        101.5 s sim, 17.5 s wall
+PASS garage/swaps/utv/transmission      101.5 s sim, 17.7 s wall
+PASS garage/swaps/tacoma/wheels          28.0 s sim,  7.1 s wall
+PASS garage/swaps/tacoma/tires           17.5 s sim,  4.2 s wall
+PASS garage/swaps/tacoma/engine          98.0 s sim, 24.6 s wall
+PASS garage/swaps/tacoma/suspension      98.0 s sim, 24.6 s wall
+PASS garage/swaps/tacoma/transmission    98.0 s sim, 24.5 s wall
+PASS garage/swaps/blazer/wheels          28.0 s sim,  6.6 s wall
+PASS garage/swaps/blazer/engine          94.5 s sim, 22.2 s wall
+PASS garage/swaps/blazer/tires           17.5 s sim,  4.2 s wall
+PASS garage/swaps/blazer/suspension     101.5 s sim, 24.1 s wall
+PASS garage/swaps/blazer/transmission   101.5 s sim, 24.0 s wall
+PASS garage/swaps/baja/wheels            28.0 s sim,  5.6 s wall
+PASS garage/swaps/baja/tires             17.5 s sim,  3.6 s wall
+PASS garage/swaps/baja/engine            98.0 s sim, 19.5 s wall
+PASS mods/civic/engine/d16-cam-and-header   9.4 s sim,  2.1 s wall
+PASS garage/swaps/baja/suspension       101.5 s sim, 20.5 s wall
+PASS mods/civic/engine/b16a-vtec-swap     9.4 s sim,  2.0 s wall
+PASS mods/civic/engine/b18c-type-r-swap   9.4 s sim,  2.0 s wall
+PASS mods/civic/suspension/lowering-springs   9.4 s sim,  2.1 s wall
+PASS mods/civic/suspension/coilovers      9.4 s sim,  2.0 s wall
+PASS mods/civic/suspension/rally-kit      9.4 s sim,  2.0 s wall
+PASS mods/civic/transmission/short-final-drive   9.4 s sim,  2.0 s wall
+PASS mods/civic/transmission/close-ratio-and-lsd   9.4 s sim,  2.0 s wall
+PASS mods/civic/transmission/sequential-race-box   9.4 s sim,  2.1 s wall
+PASS mods/jesko/engine/e85-flex-fuel      5.2 s sim,  1.2 s wall
+PASS mods/jesko/engine/race-fuel-and-boost   5.2 s sim,  1.2 s wall
+PASS mods/jesko/suspension/track-setup    5.2 s sim,  1.2 s wall
+PASS mods/jesko/suspension/comfort-and-lift   5.2 s sim,  1.2 s wall
+PASS mods/jesko/suspension/absolut-low-drag-body   5.3 s sim,  1.3 s wall
+PASS mods/jesko/transmission/short-final-drive   5.2 s sim,  1.4 s wall
+PASS mods/jesko/transmission/top-speed-gearing   5.2 s sim,  1.5 s wall
+PASS garage/swaps/baja/transmission     101.5 s sim, 21.0 s wall
+PASS mods/jesko/transmission/track-diff-map   5.2 s sim,  1.3 s wall
+PASS mods/bronco/engine/2.7-stage-1-tune   6.6 s sim,  2.2 s wall
+PASS mods/bronco/engine/2.3-ecoboost-i4   6.9 s sim,  2.4 s wall
+PASS mods/bronco/engine/raptor-3.0-v6-swap   6.6 s sim,  2.3 s wall
+PASS mods/bronco/suspension/sasquatch-package   6.8 s sim,  2.4 s wall
+     ok   ride height change vs the parts (mm off): -0.41 mm  [-15.0 .. 15.0]  +57% vs baseline
+PASS mods/bronco/suspension/street-lowered   6.6 s sim,  2.3 s wall
+     ok   ride height change vs the parts (mm off): 0.36 mm  [-15.0 .. 15.0]  +25% vs baseline
+PASS mods/bronco/suspension/3-in-lift-and-37s   6.9 s sim,  2.4 s wall
+     ok   ride height change vs the parts (mm off): -0.49 mm  [-15.0 .. 15.0]  +79% vs baseline
+PASS mods/bronco/transmission/4.70-gears   6.6 s sim,  2.2 s wall
+PASS mods/bronco/transmission/4.70-and-lockers   6.6 s sim,  2.2 s wall
+PASS mods/bronco/transmission/7-speed-manual   7.5 s sim,  2.5 s wall
+PASS mods/4runner/engine/4.0-v6-1gr-swap   8.7 s sim,  2.9 s wall
+PASS mods/4runner/engine/factory-3.4-v6  10.0 s sim,  3.3 s wall
+PASS mods/4runner/engine/1gr-supercharged   8.7 s sim,  2.9 s wall
+PASS mods/4runner/suspension/factory-height   8.7 s sim,  3.1 s wall
+     ok   ride height change vs the parts (mm off): 0.79 mm  [-15.0 .. 15.0]  -80% vs baseline
+PASS mods/4runner/suspension/long-travel-and-37s   8.8 s sim,  3.2 s wall
+     ok   ride height change vs the parts (mm off): -0.68 mm  [-15.0 .. 15.0]  +32% vs baseline
+PASS mods/4runner/transmission/4.88-regear   8.7 s sim,  3.0 s wall
+PASS mods/4runner/suspension/street-sport   8.7 s sim,  3.1 s wall
+     ok   ride height change vs the parts (mm off): 0.64 mm  [-15.0 .. 15.0]  -38% vs baseline
+PASS mods/buggy/engine/7.0-ls7            5.8 s sim,  1.4 s wall
+PASS mods/buggy/engine/blown-6.2          5.8 s sim,  1.4 s wall
+PASS mods/4runner/transmission/4.88-and-lockers   8.7 s sim,  2.9 s wall
+PASS mods/4runner/transmission/crawl-box   8.7 s sim,  2.9 s wall
+PASS mods/buggy/suspension/42-in-tires    6.0 s sim,  1.4 s wall
+PASS mods/buggy/suspension/desert-setup   5.9 s sim,  1.4 s wall
+PASS mods/buggy/transmission/th400-3-speed   5.8 s sim,  1.3 s wall
+PASS mods/utv/engine/stage-2-tune         5.5 s sim,  0.9 s wall
+PASS mods/utv/engine/eco-tune             5.9 s sim,  0.9 s wall
+PASS mods/buggy/transmission/atlas-5.0-low   5.8 s sim,  1.3 s wall
+PASS mods/utv/suspension/race-shocks      5.5 s sim,  0.9 s wall
+PASS mods/utv/suspension/soft-trail-setup   5.5 s sim,  0.8 s wall
+PASS mods/utv/transmission/short-gearing   5.5 s sim,  0.9 s wall
+PASS mods/utv/transmission/rear-locker    5.5 s sim,  0.8 s wall
+PASS mods/tacoma/engine/intake-and-tune   8.4 s sim,  2.6 s wall
+PASS mods/tacoma/engine/magnuson-supercharger   8.4 s sim,  2.5 s wall
+PASS mods/tacoma/suspension/3-in-lift-and-33s   8.5 s sim,  2.6 s wall
+PASS mods/tacoma/suspension/long-travel-and-35s   9.1 s sim,  2.8 s wall
+PASS mods/tacoma/suspension/street-lowered   8.4 s sim,  2.5 s wall
+PASS mods/tacoma/transmission/4.88-regear   8.4 s sim,  2.5 s wall
+PASS mods/tacoma/transmission/4.88-and-front-locker   8.4 s sim,  2.6 s wall
+PASS mods/tacoma/transmission/crawl-box   8.4 s sim,  2.6 s wall
+PASS mods/blazer/engine/350-4-barrel     10.2 s sim,  2.8 s wall
+PASS mods/blazer/engine/454-big-block    10.2 s sim,  2.8 s wall
+PASS mods/blazer/engine/zz4-crate-350    10.2 s sim,  2.8 s wall
+PASS mods/blazer/suspension/4-in-lift-and-35s  10.2 s sim,  2.8 s wall
+PASS mods/baja/engine/1835-street-motor   8.7 s sim,  1.9 s wall
+PASS mods/blazer/suspension/soft-trail-leaves  10.2 s sim,  2.9 s wall
+PASS mods/blazer/transmission/th350-automatic  10.2 s sim,  2.8 s wall
+PASS mods/blazer/transmission/4.56-gears-and-lockers  10.2 s sim,  2.8 s wall
+PASS mods/baja/engine/2332-stroker        7.8 s sim,  1.6 s wall
+PASS mods/baja/suspension/desert-race-and-33s   8.2 s sim,  1.7 s wall
+PASS mods/baja/suspension/street-bug      8.3 s sim,  1.6 s wall
+PASS mods/baja/transmission/weddle-lsd    7.8 s sim,  1.6 s wall
+PASS mods/baja/transmission/sand-box      8.2 s sim,  1.6 s wall
+PASS ai/lap/koenigsegg jesko            136.3 s sim, 16.6 s wall
+     ok   damage: 0.00 %  [0.00 .. 0.50]  -98% vs baseline
+PASS ai/lap/honda civic si              155.9 s sim, 18.2 s wall
+     ok   worst lane error: 0.17 m  [0.00 .. 2.60]  -11% vs baseline
+PASS ai/lap/ford bronco                 146.0 s sim, 22.4 s wall
+     ok   worst lane error: 0.25 m  [0.00 .. 2.60]  +14% vs baseline
+PASS ai/lap/toyota 4runner              148.4 s sim, 22.1 s wall
+PASS ai/lap/turbo utv                   147.9 s sim, 10.9 s wall
+PASS ai/lap/rock buggy                  143.9 s sim, 14.5 s wall
+PASS ai/lap/chevy blazer                144.4 s sim, 20.3 s wall
+PASS ai/lap/vw baja bug                 152.4 s sim, 15.7 s wall
+PASS ai/lap/toyota tacoma               147.1 s sim, 22.8 s wall
+PASS ai/lap-reverse                     156.6 s sim, 17.7 s wall
+PASS ai/obstacle                         40.0 s sim,  4.5 s wall
+PASS ai/off-road-return                  20.0 s sim,  2.3 s wall
+PASS ai/oncoming                         25.0 s sim,  6.5 s wall
+PASS engine/determinism                   0.0 s sim,  1.8 s wall
+PASS ai/stuck-recovery                   40.0 s sim,  4.8 s wall
+     ok   road progress after 40 s: 461 m  [100 .. 5000]  +28% vs baseline
+PASS engine/timestep                      0.0 s sim,  1.5 s wall
+PASS engine/sleep                         9.0 s sim,  2.4 s wall
+PASS structure/steering-snap/honda civic si   5.0 s sim,  0.6 s wall
+PASS structure/steering-snap/koenigsegg jesko   5.0 s sim,  0.6 s wall
+PASS ai/follow                           60.0 s sim, 15.2 s wall
+     ok   follower damage: 0.01 %  [0.00 .. 0.10]  -65% vs baseline
+PASS structure/steering-snap/ford bronco   5.0 s sim,  0.8 s wall
+PASS structure/steering-snap/rock buggy   5.0 s sim,  0.5 s wall
+PASS structure/steering-snap/toyota 4runner   5.0 s sim,  0.8 s wall
+PASS structure/steering-snap/turbo utv    5.0 s sim,  0.4 s wall
+FAIL engine/performance                   3.5 s sim,  5.7 s wall
+     FAIL real-time factor (single core, may vary under load): 0.62 x  [1.00 .. 1000]
+PASS structure/steering-snap/toyota tacoma   5.0 s sim,  0.8 s wall
+PASS structure/steering-snap/chevy blazer   5.0 s sim,  0.7 s wall
+PASS structure/steering-snap/vw baja bug   5.0 s sim,  0.6 s wall
+PASS damage/barrier-bump/honda civic si   0.0 s sim,  1.2 s wall
+     ok   body beams torn (square): 0.00   [0.00 .. 2.00]  -100% vs baseline
+     ok   damage (25 deg): 0.90 %  [0.00 .. 3.00]  -36% vs baseline
+PASS damage/barrier-bump/koenigsegg jesko   0.0 s sim,  1.2 s wall
+     ok   body beams torn (square): 0.00   [0.00 .. 2.00]  -100% vs baseline
+     ok   damage (square): 0.31 %  [0.00 .. 3.00]  -71% vs baseline
+     ok   damage (25 deg): 0.12 %  [0.00 .. 3.00]  -82% vs baseline
+PASS damage/barrier-bump/ford bronco      0.0 s sim,  1.5 s wall
+     ok   damage (25 deg): 0.73 %  [0.00 .. 3.00]  -22% vs baseline
+PASS damage/barrier-bump/rock buggy       0.0 s sim,  1.1 s wall
+PASS damage/barrier-bump/toyota 4runner   0.0 s sim,  1.5 s wall
+     ok   damage (square): 0.62 %  [0.00 .. 3.00]  +85% vs baseline
+     ok   damage (25 deg): 0.15 %  [0.00 .. 3.00]  -17% vs baseline
+PASS damage/barrier-bump/turbo utv        0.0 s sim,  0.9 s wall
+PASS damage/barrier-bump/vw baja bug      0.0 s sim,  1.1 s wall
+PASS damage/barrier-bump/chevy blazer     0.0 s sim,  1.5 s wall
+PASS damage/barrier-bump/toyota tacoma    0.0 s sim,  1.6 s wall
+TAP HONDA CIVIC SI slip 1.7 deg, 0.42 g, yaw 12 deg/s
+PASS handling/key-tap-130/honda civic si   4.0 s sim,  0.5 s wall
+TAP KOENIGSEGG JESKO slip 1.4 deg, 0.61 g, yaw 24 deg/s
+PASS handling/key-tap-130/koenigsegg jesko   4.0 s sim,  0.5 s wall
+     ok   worst body sideslip: 1.39 deg  [0.00 .. 2.50]  -12% vs baseline
+     ok   peak lateral acceleration: 0.61 g  [0.05 .. 1.00]  -25% vs baseline
+TAP FORD BRONCO slip 1.3 deg, 0.28 g, yaw 11 deg/s
+PASS handling/key-tap-130/ford bronco     4.0 s sim,  0.6 s wall
+     ok   worst body sideslip: 1.31 deg  [0.00 .. 2.50]  -44% vs baseline
+     ok   peak lateral acceleration: 0.28 g  [0.05 .. 1.00]  -40% vs baseline
+TAP ROCK BUGGY slip 1.3 deg, 0.43 g, yaw 9 deg/s
+PASS handling/key-tap-130/rock buggy      4.0 s sim,  0.5 s wall
+TAP TOYOTA 4RUNNER slip 1.3 deg, 0.25 g, yaw 12 deg/s
+PASS handling/key-tap-130/toyota 4runner   4.0 s sim,  0.6 s wall
+     ok   worst body sideslip: 1.29 deg  [0.00 .. 2.50]  -37% vs baseline
+     ok   peak lateral acceleration: 0.25 g  [0.05 .. 1.00]  -41% vs baseline
+TAP TURBO UTV slip 1.6 deg, 0.33 g, yaw 12 deg/s
+PASS handling/key-tap-130/turbo utv       4.0 s sim,  0.3 s wall
+TAP VW BAJA BUG slip 1.5 deg, 0.28 g, yaw 10 deg/s
+PASS handling/key-tap-130/vw baja bug     4.0 s sim,  0.4 s wall
+TAP TOYOTA TACOMA slip 1.2 deg, 0.25 g, yaw 10 deg/s
+PASS handling/key-tap-130/toyota tacoma   4.0 s sim,  0.6 s wall
+TAP CHEVY BLAZER slip 1.6 deg, 0.28 g, yaw 10 deg/s
+PASS handling/key-tap-130/chevy blazer    4.0 s sim,  0.6 s wall
+HOLD HONDA CIVIC SI slip 6.6 deg, 0.88 g, yaw 25 deg/s
+PASS handling/key-hold-130/honda civic si   4.0 s sim,  0.5 s wall
+HOLD KOENIGSEGG JESKO slip 3.0 deg, 1.32 g, yaw 26 deg/s
+PASS handling/key-hold-130/koenigsegg jesko   4.0 s sim,  0.5 s wall
+     ok   worst body sideslip (street tires slip ~9 deg at their peak): 3.01 deg  [0.00 .. 11.0]  -24% vs baseline
+HOLD FORD BRONCO slip 5.3 deg, 0.72 g, yaw 22 deg/s
+PASS handling/key-hold-130/ford bronco    4.0 s sim,  0.6 s wall
+     ok   worst body sideslip (street tires slip ~9 deg at their peak): 5.30 deg  [0.00 .. 11.0]  -27% vs baseline
+HOLD TURBO UTV slip 5.3 deg, 0.78 g, yaw 21 deg/s
+PASS handling/key-hold-130/turbo utv      4.0 s sim,  0.3 s wall
+HOLD ROCK BUGGY slip 7.6 deg, 0.68 g, yaw 23 deg/s
+PASS handling/key-hold-130/rock buggy     4.0 s sim,  0.5 s wall
+HOLD TOYOTA 4RUNNER slip 8.4 deg, 0.70 g, yaw 21 deg/s
+PASS handling/key-hold-130/toyota 4runner   4.0 s sim,  0.7 s wall
+HOLD VW BAJA BUG slip 6.1 deg, 0.70 g, yaw 20 deg/s
+PASS handling/key-hold-130/vw baja bug    4.0 s sim,  0.5 s wall
+HOLD TOYOTA TACOMA slip 8.9 deg, 0.71 g, yaw 23 deg/s
+PASS handling/key-hold-130/toyota tacoma   4.0 s sim,  0.6 s wall
+HOLD CHEVY BLAZER slip 8.1 deg, 0.64 g, yaw 20 deg/s
+PASS handling/key-hold-130/chevy blazer   4.0 s sim,  0.6 s wall
+BRAKE PAVEMENT     7.4 m
+BRAKE WET PAVEMENT 11.2 m
+BRAKE GRAVEL       11.2 m
+LOCK pad 10.9/12.1 gravel 19.5/15.7
+PASS surfaces/gravel-lockup              12.1 s sim,  1.3 s wall
+BRAKE SAND         13.6 m
+BRAKE MUD          17.5 m
+MUD FORD BRONCO 50.2 m in 7.0 s, clog 0.63
+BRAKE SNOW         20.8 m
+SAND coast 35 psi 14.1 m (sink 0.067), 15 psi 31.3 m (sink 0.045)
+MUD KOENIGSEGG JESKO 1.8 m in 23.0 s, clog 0.43
+PASS surfaces/mud                        23.0 s sim,  2.7 s wall
+BRAKE ICE          68.5 m
+PASS surfaces/braking                    31.4 s sim,  4.3 s wall
+PASS surfaces/sand                       30.7 s sim,  4.3 s wall
+     ok   ... aired down to 15 psi (floats: rolls further): 2.22 x  [1.15 .. 3.00]  +43% vs baseline
+     ok   parked: how far the tires settle: 4.56 cm  [2.00 .. 7.00]  +18% vs baseline
+PASS surfaces/ice                         4.0 s sim,  0.5 s wall
+     ok   sideways grip: 0.05 g  [0.03 .. 0.16]  -33% vs baseline
+PASS surfaces/utv-mud-sand               24.8 s sim,  2.7 s wall
+PASS surfaces/autopilot-ice              17.8 s sim,  2.3 s wall
+     ok   top speed on the ice: 8.62 km/h  [5.00 .. 32.0]  -64% vs baseline
+PASS surfaces/autopilot-sand             16.5 s sim,  2.9 s wall
+LAND 5 m flat               ROCK       damage  0.52 % popped 0 broken 0 frame set  5.7 % peak 60.0 g sink 0 cm
+LAND 5 m flat               PAVEMENT   damage  0.53 % popped 0 broken 0 frame set  5.8 % peak 59.7 g sink 0 cm
+LAND 5 m flat               MUD        damage  0.02 % popped 0 broken 0 frame set  0.3 % peak 39.5 g sink 18 cm
+LAND 5 m flat               SNOW       damage  0.01 % popped 0 broken 0 frame set  0.2 % peak 40.8 g sink 16 cm
+LAND 5 m flat               SAND       damage  0.01 % popped 0 broken 0 frame set  0.1 % peak 39.9 g sink 20 cm
+LAND 8 m flat               ROCK       damage  0.84 % popped 2 broken 0 frame set  8.8 % peak 56.1 g sink 0 cm
+LAND 8 m flat               SAND       damage  0.03 % popped 0 broken 0 frame set  0.5 % peak 46.3 g sink 22 cm
+PASS surfaces/ruts                       15.5 s sim,  5.2 s wall
+LAND jump, nose down 35 deg ROCK       damage  3.50 % popped 0 broken 0 frame set  8.8 % peak 20.0 g sink 0 cm
+LAND jump, nose down 35 deg SAND       damage  1.04 % popped 0 broken 0 frame set  0.0 % peak 13.3 g sink 9 cm
+PASS surfaces/soft-landing               42.3 s sim,  6.0 s wall
+SCRAPE 0.0
+TOP HONDA CIVIC SI 210 km/h after 3.6 km, 70 s, gear 5, rpm 6391
+PASS freeway/top-speed/honda civic si    70.3 s sim,  8.9 s wall
+     ok   worst drift from the lane center: 0.08 m  [0.00 .. 1.20]  -53% vs baseline
+SCRAPE 0.0
+TOP KOENIGSEGG JESKO 458 km/h after 8.1 km, 71 s, gear 9, rpm 7534
+PASS freeway/top-speed/koenigsegg jesko  70.9 s sim,  9.3 s wall
+     ok   top speed: 458 km/h  [370 .. 470]  +11% vs baseline
+     ok   distance driven: 8.06 km  [0.15 .. 40.0]  +23% vs baseline
+     ok   worst drift from the lane center: 0.16 m  [0.00 .. 1.20]  -82% vs baseline
+SCRAPE 0.0
+TOP FORD BRONCO 222 km/h after 3.4 km, 62 s, gear 8, rpm 5221
+PASS freeway/top-speed/ford bronco       61.6 s sim, 10.5 s wall
+     ok   top speed: 222 km/h  [210 .. 234]  +39% vs baseline
+     ok   distance driven: 3.41 km  [0.15 .. 40.0]  +143% vs baseline
+     ok   worst drift from the lane center: 0.30 m  [0.00 .. 1.20]  -66% vs baseline
+SCRAPE 0.0
+TOP TURBO UTV 143 km/h after 0.3 km, 9 s, gear 5, rpm 8301
+PASS freeway/top-speed/turbo utv          9.2 s sim,  0.8 s wall
+SCRAPE 0.0
+TOP TOYOTA 4RUNNER 207 km/h after 3.0 km, 60 s, gear 4, rpm 3477
+PASS freeway/top-speed/toyota 4runner    60.0 s sim,  9.9 s wall
+     ok   top speed: 207 km/h  [196 .. 218]  +22% vs baseline
+     ok   distance driven: 2.97 km  [0.15 .. 40.0]  +89% vs baseline
+     ok   worst drift from the lane center: 0.34 m  [0.00 .. 1.20]  -63% vs baseline
+SCRAPE 0.0
+TOP ROCK BUGGY 222 km/h after 3.3 km, 59 s, gear 4, rpm 4781
+PASS freeway/top-speed/rock buggy        59.1 s sim,  6.7 s wall
+SCRAPE 0.0
+TOP TOYOTA TACOMA 220 km/h after 2.6 km, 50 s, gear 5, rpm 4005
+PASS freeway/top-speed/toyota tacoma     50.5 s sim,  8.8 s wall
+SCRAPE 0.0
+TOP CHEVY BLAZER 174 km/h after 2.2 km, 50 s, gear 4, rpm 4577
+PASS freeway/top-speed/chevy blazer      50.3 s sim,  8.0 s wall
+STATION TRAILHEAD CAMP at (0, 28.2, -440) relief 0.00 m
+STATION SAWMILL CAMP at (170, 10.5, -68) relief 0.00 m
+STATION FAR SIDE CAMP at (20, 2.9, 105) relief 0.00 m
+STATION PASS HUT at (91, 80.6, 478) relief 0.00 m
+SURF PAVEMENT       0.24%
+SURF GRASS         73.19%
+SURF DIRT           0.95%
+SURF ROCK           3.97%
+SURF SCREE          0.07%
+SURF GRAVEL         2.31%
+SURF SAND           1.79%
+SURF MUD            0.24%
+SURF SNOW          17.18%
+SURF ICE            0.04%
+SURF WET PAVEMENT   0.01%
+TRAIL mud          579 m
+TRAIL creek        375 m
+TRAIL ridge        443 m
+TRAIL ridgeroad    232 m
+TRAIL hill         175 m
+TRAIL wash         519 m
+TRAIL shelf        266 m
+TRAIL pass         435 m
+TRAIL tower        669 m
+TRAIL cabin        175 m
+TRAIL wreck        200 m
+FORD 0.39 m, DEEP CROSSING 0.93 m
+rocks 900 trees 3399 bushes 3466 boxes 65 logs 200
+SCRAPE 0.0
+TOP VW BAJA BUG 176 km/h after 2.7 km, 60 s, gear 4, rpm 5093
+PASS freeway/top-speed/vw baja bug       59.5 s sim,  6.8 s wall
+PASS maps/backcountry                     4.0 s sim,  2.8 s wall
+PASS backcountry/ford                    21.1 s sim,  3.9 s wall
+PASS freeway/wrap                        31.0 s sim,  8.4 s wall
+PASS backcountry/bog-civic               46.0 s sim,  5.8 s wall
+PASS backcountry/deep-crossing           64.5 s sim,  8.4 s wall
+PASS backcountry/hill                    56.1 s sim,  9.2 s wall
+PASS backcountry/bog-bronco             106.5 s sim, 17.1 s wall
+PASS backcountry/slickrock-ridge        115.3 s sim, 18.1 s wall
+PASS backcountry/creek-crawl            175.8 s sim, 29.4 s wall
+PASS backcountry/shelf-road             120.6 s sim, 18.2 s wall
+ROUTE to creekfoot  ok     62 m
+ROUTE to mine       ok    410 m
+ROUTE to slab       ok    564 m
+ROUTE to deepbank   ok    691 m
+ROUTE to fordbank   ok    746 m
+ROUTE to hilltop    ok    699 m
+ROUTE to mudstart   ok     35 m
+ROUTE to bog3       ok    480 m
+ROUTE to washmid    ok    587 m
+ROUTE to dunering   ok    451 m
+ROUTE to shelf      ok    875 m
+ROUTE to overlook   ok   1037 m
+ROUTE to wreck      ok   1013 m
+ROUTE to snowcorner ok   1289 m
+ROUTE to towerlook  ok   1314 m
+ROUTE to cabinend   ok   1078 m
+ROUTE to passhut    ok   1340 m
+ROUTE to sawmill    ok    626 m
+ROUTE to farside    ok    865 m
+PASS backcountry/routes                   0.5 s sim,  1.3 s wall
+PASS ai/traffic                          90.0 s sim, 95.9 s wall
+     ok   worst damage: 0.11 %  [0.00 .. 0.30]  +751% vs baseline
+FORD ford1 at (271, 213) depth 0.50 flow 1.58
+FORD ford2 at (309, -39) depth 0.40 flow 0.98
+FORD ford3 at (158, -312) depth 0.40 flow 0.35
+FORD ford4 at (-90, -332) depth 0.40 flow 0.37
+SURF PAVEMENT        2.5%
+SURF GRASS          53.7%
+SURF DIRT            4.2%
+SURF ROCK            7.5%
+SURF SCREE           0.5%
+SURF GRAVEL          3.5%
+SURF SAND           16.6%
+SURF MUD             4.3%
+SURF SNOW            6.7%
+SURF ICE             0.3%
+SURF WET PAVEMENT    0.1%
+summit 149.6 mesa top 13.8 start 4.5 wall foot 22.9
+rocks 480 trees 2340 bushes 1992 boxes 28 stations 5
+PASS maps/frontier                        4.0 s sim,  3.4 s wall
+     ok   time to build the map: 1.40 s  [0.00 .. 6.00]  +178% vs baseline
+PASS frontier/ford                       14.5 s sim,  3.8 s wall
+PASS frontier/current                    12.0 s sim,  2.8 s wall
+     ok   drift downstream in 12 s: 3.40 m  [1.50 .. 40.0]  +33% vs baseline
+PASS backcountry/creek-civic             91.0 s sim, 12.1 s wall
+PASS frontier/mesa-climb                 43.2 s sim, 10.0 s wall
+PASS frontier/the-wall                   91.2 s sim, 20.8 s wall
+PASS frontier/mesa-stairs                62.7 s sim, 13.1 s wall
+bayou trail 738 m, 18 puddles 0.04..0.50 m deep
+PASS maps/frontier-bayou                  0.0 s sim,  1.4 s wall
+snow road 298 m: snow 173 ice 25 of 198, steepest 8.6%
+PASS maps/frontier-snow                   0.0 s sim,  1.4 s wall
+route length 722 m
+PASS backcountry/autopilot-far          203.4 s sim, 39.8 s wall
+PASS frontier/autopilot-river           130.7 s sim, 27.0 s wall
+PASS frontier/wallow-civic               46.0 s sim,  6.7 s wall
+PASS frontier/wall-stairs                61.5 s sim, 11.8 s wall
+     ok   damage on the way up: 0.00 %  [0.00 .. 2.00]  -29% vs baseline
+PASS frontier/wallow-bronco              53.8 s sim,  9.6 s wall
+PASS frontier/mud-hill                   44.7 s sim,  8.3 s wall
+CIRCUIT 702 points, 1405 m, tightest radius 20.0 m
+PASS frontier/circuit-corners             0.0 s sim,  0.1 s wall
+PASS frontier/snow-road                  39.7 s sim,  7.3 s wall
+JESKO lap 51.4 s, peak 1.24 g, slowest corner 54 km/h, worst off line 2.5 m, spun 0
+PASS frontier/circuit-jesko             103.5 s sim, 13.3 s wall
+JESKO KEYS lap 52.7 s, peak 1.29 g, slowest corner 53 km/h, worst off line 2.0 m, spun 0
+PASS frontier/circuit-jesko-keys        106.4 s sim, 13.8 s wall
+PASS levels/format                        0.0 s sim,  0.3 s wall
+PASS frontier/circuit-banking             0.0 s sim,  1.4 s wall
+LEVEL FRONTIER GP          7 gates, longest leg 230 m
+PASS levels/run-sprint                    8.3 s sim,  1.3 s wall
+PASS levels/run-race                      0.5 s sim,  0.2 s wall
+LEVEL THE WALL             3 gates, longest leg 26 m
+PASS frontier/autopilot-bayou            92.5 s sim, 18.3 s wall
+PASS levels/legacy                        0.0 s sim,  0.5 s wall
+PASS editor/brush                         0.0 s sim,  0.3 s wall
+LEVEL MESA CLIMB           3 gates, longest leg 48 m
+PASS editor/undo                          0.0 s sim,  0.2 s wall
+PASS frontier/autopilot-lodge           132.1 s sim, 25.1 s wall
+PASS editor/objects                       0.0 s sim,  0.9 s wall
+PASS editor/course                        0.0 s sim,  0.2 s wall
+PASS editor/water                         0.0 s sim,  0.2 s wall
+PASS walker/basics                        1.0 s sim,  0.2 s wall
+LEVEL SNAKE RIVER FORD     3 gates, longest leg 33 m
+PASS editor/repair-shop                   0.0 s sim,  0.3 s wall
+LEVEL SUMMIT RUN           10 gates, longest leg 214 m
+PASS levels/sections                      0.0 s sim,  4.0 s wall
+PASS jobs/convoy-scout                    0.0 s sim,  0.1 s wall
+LEVEL WIDOWMAKER           5 gates, longest leg 44 m
+PASS props/hulls                          0.0 s sim,  0.2 s wall
+PASS jobs/recover                         3.0 s sim,  0.9 s wall
+LEVEL BOULDER GULLY        3 gates, longest leg 58 m
+LEVEL STEEP HILL           4 gates, longest leg 60 m
+LEVEL MUD PIT              5 gates, longest leg 40 m
+LEVEL ROCKY RIVER          4 gates, longest leg 60 m
+PASS props/rest-on-rock                   5.0 s sim,  0.8 s wall
+PASS props/lod-budgets                    0.0 s sim,  0.1 s wall
+LEVEL ROCK WALL            5 gates, longest leg 40 m
+PASS props/lod0-unchanged                 0.0 s sim,  0.1 s wall
+PASS props/culling                        0.0 s sim,  0.1 s wall
+PASS engine/thread-cache                  0.0 s sim,  0.1 s wall
+PASS engine/collision-bounds              0.0 s sim,  0.1 s wall
+LEVEL DUNES                12 gates, longest leg 40 m
+PASS engine/collision-cache               0.0 s sim,  0.1 s wall
+LEVEL CLIFF SHELF          5 gates, longest leg 60 m
+PASS props/bronco-boulder                11.3 s sim,  1.8 s wall
+LEVEL TIMBER               4 gates, longest leg 60 m
+PASS levels/builtin                       0.0 s sim,  8.0 s wall
+PASS engine/tri-grid                      0.0 s sim,  0.3 s wall
+PASS net/state-engine-lamps               0.0 s sim,  0.2 s wall
+PASS net/state-jitter                     0.0 s sim,  0.2 s wall
+PASS net/state-fragments                  0.0 s sim,  0.2 s wall
+PASS gameplay/fuel                       18.5 s sim,  3.2 s wall
+PASS drivetrain/manual-neutral/honda civic si   5.8 s sim,  0.7 s wall
+PASS drivetrain/manual-neutral/koenigsegg jesko   5.0 s sim,  0.6 s wall
+PASS drivetrain/manual-neutral/ford bronco   5.5 s sim,  0.9 s wall
+PASS drivetrain/manual-neutral/toyota 4runner   6.1 s sim,  0.9 s wall
+PASS drivetrain/manual-neutral/turbo utv   5.1 s sim,  0.4 s wall
+PASS drivetrain/manual-neutral/rock buggy   5.8 s sim,  0.6 s wall
+PASS drivetrain/manual-neutral/toyota tacoma   5.9 s sim,  1.0 s wall
+PASS drivetrain/manual-neutral/chevy blazer   6.2 s sim,  0.9 s wall
+PASS drivetrain/manual-neutral/vw baja bug   5.9 s sim,  0.7 s wall
+PASS drivetrain/reverse-release/honda civic si   9.4 s sim,  1.2 s wall
+PASS engine/physics-workers               0.0 s sim,  5.1 s wall
+PASS drivetrain/reverse-release/koenigsegg jesko   9.4 s sim,  1.2 s wall
+PASS drivetrain/reverse-release/ford bronco   9.4 s sim,  1.4 s wall
+PASS drivetrain/reverse-release/toyota 4runner   9.4 s sim,  1.4 s wall
+PASS drivetrain/reverse-release/rock buggy   9.4 s sim,  1.0 s wall
+PASS drivetrain/reverse-release/turbo utv   9.4 s sim,  0.7 s wall
+PASS drivetrain/reverse-release/toyota tacoma   9.4 s sim,  1.3 s wall
+PASS drivetrain/reverse-release/chevy blazer   9.4 s sim,  1.2 s wall
+PASS drivetrain/reverse-release/vw baja bug   9.4 s sim,  0.9 s wall
+PASS drivetrain/shift-match               1.6 s sim,  0.3 s wall
+PASS drivetrain/converter-shift           1.0 s sim,  0.2 s wall
+PASS drivetrain/low-range-crawler         6.5 s sim,  1.8 s wall
+PASS drivetrain/low-range-swap           36.0 s sim, 14.4 s wall
+PASS drivetrain/4runner-front-abuse       1.4 s sim,  0.6 s wall
+PASS carsleep/driven-identical            0.0 s sim,  1.2 s wall
+PASS drivetrain/low-range-buggy-engines  38.4 s sim, 19.4 s wall
+PASS engine/adaptive-quality              0.0 s sim,  0.1 s wall
+PASS engine/adaptive-keeps-props          0.0 s sim,  0.1 s wall
+PASS engine/adaptive-spikes               0.0 s sim,  0.1 s wall
+PASS engine/quality-presets               0.0 s sim,  0.1 s wall
+PASS engine/adaptive-target               0.0 s sim,  0.1 s wall
+PASS engine/fps-target                    0.0 s sim,  0.1 s wall
+PASS carsleep/player-away-hit            30.0 s sim,  8.3 s wall
+PASS drivetrain/4runner-front-durability  54.5 s sim, 61.3 s wall
+PASS net/crash-share                      0.0 s sim, 88.4 s wall
+
+973 scenarios: 962 passed, 11 failed, 174 metrics drifted from baseline, 940.9 s. Report: build/test_report.html
+Failed: vehicle-physics/acceleration tires/shear tires/debead net/find structure/rock-hits/4runner components/axle-landing components/tire-into-fender/rock buggy components/tire-into-fender/turbo utv structure/weight/koenigsegg jesko structure/weight/toyota tacoma engine/performance
