@@ -414,6 +414,14 @@ public:
         std::vector<int> housing;   // the housing but for the hubs, which takes the reaction
     };
     std::vector<HubDamper> hubDampers;
+    // A leaf pack's interleaf friction against the axle winding up: a damper along the wind-up
+    // link's beam, stepped implicitly (Car::integrate), so however strong it is it needs no extra
+    // mass on the link's light bracket to stay stable. Built from the spec: nothing to save.
+    struct WrapDamper {
+        int beam = -1;
+        double c = 0;  // N s/m along the beam
+    };
+    std::vector<WrapDamper> wrapDampers;
     int bodyNodes = 0;
     // Ladder frame (body-on-frame trucks): its nodes, station by station (left rail's four
     // section corners, then the right rail's), and the rubber body mounts.
