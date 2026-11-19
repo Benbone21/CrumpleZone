@@ -30,6 +30,22 @@ int designFor(int kind, uint32_t seed, double x, double z, double height);
 // How thick the drawn trunk is 1 m off the ground on a tree `height` tall: what its Pole is.
 double trunkRadius(int kind, int design, double height);
 
+// ---- Plant biomes (docs/procedural-plants.md "Biomes") ----
+// The plant biome (world.h PlantZone, never PZ_NONE) a plant at (x, z) grows in: the ground's own say (in or by water, on mud: riparian;
+// on snow: subalpine), else the area the map's builder marked (World::plantZones), else by what the ground is made of. `h`, the plant's
+// own hash: the spot read is up to 13 m off by it, so two biomes mix at a border. plantBiome: at the very spot.
+int plantBiomeAt(const World& w, double x, double z, uint32_t h);
+int plantBiome(const World& w, double x, double z);
+// A plant's hash from where it stands in the world (the same in every window of the procedural world, whatever its place in a list).
+uint32_t plantHash(const World& w, double x, double z);
+// World::plant: the species a classic tree (kind 0..3) grows as where it stands, from its biome's palette (`stand` lines; a share
+// of them dead ones), by its plantHash. Sets Tree::species and makes the tree that species' height (`stand_scale` of what it was
+// planted as) and its crown as much smaller. Nothing where no palette or species file is found (the classic tree stays).
+void settleSpecies(const World& w, Tree& t);
+// The seven palettes' text and every species file's, hashed (0: no species files found): what the worlds' trees and their trunks
+// are made from. Two machines must agree on it to build the same world (the world cache's key, multiplayer's welcome).
+uint64_t standHash();
+
 // Far copies: 0 the full model, 1 and 2 the models' own plainer ones (the "lod" param: fewer sides, small
 // bits left out), 3 the plainest of those boiled down (simplify) for trees far off.
 constexpr int kLods = 4;
@@ -38,7 +54,7 @@ double lodReach(int lod);  // a tree nearer than this draws at `lod` (else a coa
 struct Look {
     int kind = 0, design = 0, seed = 1;
     bool snow = false;
-    int classic = 0;  // (a generated look standing in for a classic tree: that tree's design)
+    int classic = 0;  // (unused: 0)
 };
 struct Shape {
     Look look;

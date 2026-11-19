@@ -149,6 +149,11 @@ std::string mapPickName(int map) {
     return mapName(map);
 }
 
+const char* plantZoneName(int zone) {
+    static const char* const names[PZ_COUNT] = {"", "temperate_forest", "hot_desert", "colorado_plateau_desert", "dry_prairie", "riparian_wetland", "montane_forest", "subalpine"};
+    return zone >= 0 && zone < PZ_COUNT ? names[zone] : "";
+}
+
 const char* wildsKindName(int kind) {
     static const char* names[WILDS_COUNT] = {"MEADOW", "DESERT", "FOREST", "CANYON", "WETLAND", "UPLAND"};
     return kind >= 0 && kind < WILDS_COUNT ? names[kind] : "MEADOW";
@@ -960,6 +965,11 @@ void World::buildWilds() {
         }
     spawn = V3(0, height(0, 0), 0);
     spawnYaw = 0;
+    // The plant biome: one kind of country all the way out (docs/procedural-plants.md "Biomes"). The upland's scree is the treeline's.
+    {
+        static const int kZone[WILDS_COUNT] = {PZ_TEMPERATE, PZ_HOT_DESERT, PZ_MONTANE, PZ_HIGH_DESERT, PZ_RIPARIAN, PZ_SUBALPINE};
+        markPlantZones([&](double, double) { return kZone[kind]; });
+    }
 
     // ---- Growth ----
     uint32_t rng = 4242 + (uint32_t)kind * 977;
@@ -1746,9 +1756,12 @@ void World::addTree(double x, double z, double treeHeight, int kind, float tint)
 }
 
 void World::plant(Tree t) {
-    // Its design settled (forest.h), and a trunk that stops what the drawn one would: as thick as the model's 1 m up.
+    // Its design settled (forest.h), and what it grows as in the plant biome it stands in (a classic kind: the species, and the height
+    // that goes with it). Then a trunk that stops what the drawn one would: as thick as that stem 1 m up, as tall as the tree's.
     if (t.design < 0) t.design = forest::designFor(t.kind, (uint32_t)trees.size() + 1, t.base.x, t.base.z, t.height);
-    poles.push_back({t.base.x, t.base.z, t.base.y - 0.5, t.base.y + t.height * 0.6, forest::trunkRadius(t.kind, t.design, t.height)});
+    forest::settleSpecies(*this, t);
+    const double r = t.species >= 0 && t.kind != forest::kGenKind ? forest::trunkRadius(forest::kGenKind, t.species, t.height) : forest::trunkRadius(t.kind, t.design, t.height);
+    poles.push_back({t.base.x, t.base.z, t.base.y - 0.5, t.base.y + t.height * 0.6, r});
     trees.push_back(t);
 }
 
@@ -1875,6 +1888,12 @@ uint64_t World::landHash() const {
     mix(trees.size()), mix(rocks.size()), mix(logs.size()), mix(bushes.size()), mix(boxes.size());
     auto at = [&](const V3& p) { mix(cm(p.x)), mix(cm(p.z)); };
     for (const Tree& t : trees) at(t.base);
+    {  // (What the trees grow as, where the map's biomes settled it: a tree's trunk is its species'. A map with none: as it was.)
+        uint64_t sp = 1469598103934665603ull;
+        bool any = false;
+        for (const Tree& t : trees) any |= t.species >= 0, sp = (sp ^ (uint64_t)(int64_t)t.species) * 1099511628211ull;
+        if (any) mix(sp);
+    }
     for (const Rock& r : rocks) at(r.c);
     for (const Log& l : logs) at(l.a);
     for (const Box& b : boxes) at(b.c);

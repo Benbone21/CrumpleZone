@@ -1376,6 +1376,23 @@ SectionFootprint sectionFootprint(SectionType t) { return {specOf(t).length, spe
 SectionBuilt buildSection(World& w, SectionType t, uint32_t seed, const SectionFrame& f, std::vector<LevelObject>* record) {
     Canvas c(w, t, seed, f, record);
     c.clearGround();
+    {
+        // The section's own ground is its own plant biome (docs/procedural-plants.md "Biomes"; as its music's, biome.cpp): the trail,
+        // its run-in and run-out. (The rocky river's is whatever country it lies in: its water makes its banks riparian.)
+        static const int kZone[] = {PZ_SUBALPINE, PZ_RIPARIAN, -1, PZ_HIGH_DESERT, PZ_HOT_DESERT, PZ_HIGH_DESERT, PZ_MONTANE};
+        static const SectionType kType[] = {SEC_STEEP_HILL, SEC_MUD_PIT, SEC_ROCKY_RIVER, SEC_ROCK_WALL, SEC_DUNES, SEC_CLIFF_SHELF, SEC_TIMBER};
+        int zone = -1;
+        for (int k = 0; k < 7; k++)
+            if (kType[k] == t) zone = kZone[k];
+        if (zone >= 0) {
+            const SectionFootprint fp = sectionFootprint(t);
+            const double reach = fp.length + 2 * fp.apron + fp.half, ch = dm::cos(f.heading), sh = dm::sin(f.heading);
+            w.markPlantZones(f.entry.x - reach, f.entry.z - reach, f.entry.x + reach, f.entry.z + reach, [&](double x, double z) {
+                const double dx = x - f.entry.x, dz = z - f.entry.z, u = dx * ch - dz * sh, v = dx * sh + dz * ch;
+                return u > -fp.apron && u < fp.length + fp.apron && std::fabs(v) < fp.half ? zone : -1;
+            });
+        }
+    }
     switch (t) {
         case SEC_STEEP_HILL: steepHill(c); break;
         case SEC_MUD_PIT: mudPit(c); break;

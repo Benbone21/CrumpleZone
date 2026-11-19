@@ -4,6 +4,7 @@
 #include "thread_cache.h"
 // Multiplayer session: see net.h.
 #include "net.h"
+#include "forest.h"
 #include "procworld.h"
 
 #include <algorithm>
@@ -1005,6 +1006,16 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
                     return;
                 }
             }
+            // (What the trees grow as: the biomes' palettes and the species files, forest.h standHash. A tree's trunk is its species':
+            // other files, other trunks. 0: that side has no plant files (a bare dedicated server, which hits nothing).)
+            {
+                const uint64_t plants = r.ok && r.at + 8 <= r.n ? r.get<uint64_t>() : 0, mine = forest::standHash();
+                if (plants && mine && plants != mine) {
+                    error = "the host's plant files (assets/plants, assets/maps/vegetation) aren't this game's: the trees would differ. Use the same files";
+                    role = OFF;
+                    return;
+                }
+            }
             self = id;
             map = m;
             udpToken = token;
@@ -1184,6 +1195,7 @@ void NetSession::welcome(Sim& sim, Conn& c) {
         w.put<double>(pendingShift.t);
     }
     if (map == MAP_REAL) w.put<uint64_t>(realterrain::activeHash()), w.str(realterrain::activeName());  // (which real terrain: a guest needs the same file)
+    w.put<uint64_t>(forest::standHash());  // (what the trees grow as: a guest needs the same plant files)
     sendTo(c, frame(MSG_WELCOME, w));
     for (int k = 0; k < net::kMaxPeers; k++)
         if (players[k].active && k != c.peer) {

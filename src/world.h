@@ -148,6 +148,11 @@ struct Tree {
     float tint;
     int kind = 0;  // 0 pine, 1 broadleaf, 2 dead snag, 3 dry-country (forest.h DrylandDesign: juniper, pinyon, cottonwood, tamarisk)
     int design = -1;  // its model's variant (forest.h designFor; -1: worked out when drawn)
+    // The generated species (plantgen.h: a tree's id) a classic tree (kind 0..3) grows as, settled when it is planted from the plant
+    // biome it stands in (World::plant, forest.h settleSpecies): its height and crown are then that species' (a mesquite stands short
+    // of the pine it was planted as) and its Pole its stem. -1: none (the classic model's trunk). Part of the world: the same on every
+    // machine, whatever the player's --classic-plants says (that only picks which model is drawn on it).
+    int species = -1;
 };
 
 enum Surface : uint8_t {
@@ -183,6 +188,10 @@ enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BA
 // What the wilds look like: which ground and growth surround the obstacle (the section's biome, biome.h).
 enum WildsKind { WILDS_MEADOW, WILDS_DESERT, WILDS_FOREST, WILDS_CANYON, WILDS_WETLAND, WILDS_UPLAND, WILDS_COUNT };
 const char* wildsKindName(int kind);
+// The plant biomes (docs/procedural-plants.md "Biomes"): which vegetation palette (assets/maps/vegetation/NAME.txt) grows on a piece of
+// ground. A map's builder marks its areas (World::plantZones); PZ_NONE: not marked (forest.cpp reads the ground there).
+enum PlantZone : uint8_t { PZ_NONE, PZ_TEMPERATE, PZ_HOT_DESERT, PZ_HIGH_DESERT, PZ_PRAIRIE, PZ_RIPARIAN, PZ_MONTANE, PZ_SUBALPINE, PZ_COUNT };
+const char* plantZoneName(int zone);  // its palette file's name ("" for PZ_NONE)
 const char* mapName(int map);  // as the menu shows it
 // A map as a pick on the map list: the Mountain, the Frontier and the Open Country are start points on the Backcountry's big map now
 // (onemap.h): "BACKCOUNTRY: MOUNTAIN".
@@ -296,6 +305,28 @@ public:
     double loopLength = 0;
     std::vector<Tree> trees;
     std::vector<Pole> poles;
+    // The plant biome areas, as the map's builder marked them: a grid over the map, kZoneRes m a cell (zoneN a side; empty: none
+    // marked). Marked before anything is planted: a tree's species (and so its trunk) comes from it.
+    static constexpr double kZoneRes = 16.0;
+    std::vector<uint8_t> plantZones;
+    int zoneN = 0;
+    int plantZone(double x, double z) const {  // PZ_NONE: not marked there
+        if (plantZones.empty()) return PZ_NONE;
+        const int i = std::min(std::max((int)std::floor((x + half) / kZoneRes), 0), zoneN - 1), j = std::min(std::max((int)std::floor((z + half) / kZoneRes), 0), zoneN - 1);
+        return plantZones[(size_t)i * zoneN + j];
+    }
+    // Marks the cells whose middles lie in the rectangle: zone(x, z) gives each one's PlantZone (below 0: left as it is).
+    template <class F> void markPlantZones(double x0, double z0, double x1, double z1, F zone) {
+        if (plantZones.empty()) zoneN = std::max(1, (int)std::ceil(2 * half / kZoneRes)), plantZones.assign((size_t)zoneN * zoneN, PZ_NONE);
+        const int i0 = std::max(0, (int)std::floor((x0 + half) / kZoneRes)), i1 = std::min(zoneN - 1, (int)std::floor((x1 + half) / kZoneRes));
+        const int j0 = std::max(0, (int)std::floor((z0 + half) / kZoneRes)), j1 = std::min(zoneN - 1, (int)std::floor((z1 + half) / kZoneRes));
+        for (int i = i0; i <= i1; i++)
+            for (int j = j0; j <= j1; j++) {
+                const int v = zone(-half + (i + 0.5) * kZoneRes, -half + (j + 0.5) * kZoneRes);
+                if (v >= 0 && v < PZ_COUNT) plantZones[(size_t)i * zoneN + j] = (uint8_t)v;
+            }
+    }
+    template <class F> void markPlantZones(F zone) { markPlantZones(-half, -half, half, half, zone); }
     std::vector<Rock> rocks;
     std::vector<Log> logs;
     std::vector<Bush> bushes;
@@ -581,7 +612,9 @@ public:
     void setCellWater(int id, float level);   // -1e9: dry
     // A tree (with its trunk to hit) and a log, as the maps add them.
     void addTree(double x, double z, double height, int kind, float tint = 1);
-    void plant(Tree t);  // a tree made up elsewhere (base, height, radius, tint, kind): its design settled, its trunk's Pole stood up
+    // A tree made up elsewhere (base, height, radius, tint, kind): its design settled, and (a classic kind) the species it grows as in
+    // the plant biome there, which may make it shorter; its trunk's Pole stood up, as thick and as tall as that stem.
+    void plant(Tree t);
     void addLog(V3 a, V3 b, double r);
     // Removes whatever object is nearest (x, z) within r: rocks, trees, logs, boxes,
     // stations. Returns what it removed ("" nothing).

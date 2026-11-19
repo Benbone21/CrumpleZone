@@ -628,6 +628,12 @@ void World::buildMountain() {
         V3 n = normal(x, z);
         return std::sqrt(std::max(0.0, 1 - n.y * n.y)) / std::max(n.y, 0.1);
     };
+    // The plant biomes (docs/procedural-plants.md "Biomes"), before anything is planted: broadleaf woods on the valley floor, the
+    // mountain's pine forest up its flanks, the treeline's stunted growth under the snow.
+    markPlantZones([&](double x, double z) {
+        const double y = groundAt(x, z);
+        return (int)(y > 150 ? PZ_SUBALPINE : y > 45 ? PZ_MONTANE : PZ_TEMPERATE);
+    });
     for (int attempt = 0; attempt < 90000 && trees.size() < 2400; attempt++) {
         double x = rng.range(-540, 540), z = rng.range(-540, 540);
         if (!clearOfPaths(x, z, 4)) continue;

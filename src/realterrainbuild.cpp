@@ -1014,6 +1014,9 @@ void World::buildReal() {
         // A vegetation palette (vegetation.h) wants each spot's distance to water and to a dry wash, and how far above it the spot
         // stands: on a 16 m grid, from the water as built and the plan's wash cells, spread outward (a two-pass chamfer).
         const veg::Palette* pal = sp.hasVeg ? &sp.veg : nullptr;
+        // (The map's plant biome is its palette's, where that is one of the biomes': what a classic tree or bush grows as here.)
+        for (int zone = 1; zone < PZ_COUNT; zone++)
+            if (sp.vegetation == plantZoneName(zone)) markPlantZones([&](double, double) { return zone; });
         struct NearField {
             int n = 0;
             double cs = 16, half = 0;

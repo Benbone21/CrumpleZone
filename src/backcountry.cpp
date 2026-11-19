@@ -1289,6 +1289,37 @@ void World::buildBackcountry() {
     stream(cany, 20, (double)cany.size() - 40, 1.6, 0.14, 1.0, true);
     stream(wreckT, 20, (double)wreckT.size() - 1, 1.3, 0.12, 0.9, true);
 
+    // ---- The plant biomes (docs/procedural-plants.md "Biomes"), before anything is planted: which palette grows where, by the
+    // country the map is made of. Elk Valley's woods (its north side the mountain's, the treeline's up by the snow), the dune bowl's
+    // desert; round it the districts: Badlands Wash high desert, Ranger Flats prairie, the north and Bear Creek Canyon mountain forest,
+    // the Lakeshore and the south uplands broadleaf woods; the regions' grown country each its own (onemap.h). A region's old map
+    // brings its own areas with it (stitchRegionContent). ----
+    markPlantZones([&](double x, double z) -> int {
+        const double h = hgrid[at(x, z)], m = std::max(std::fabs(x), std::fabs(z));
+        if (stitch && m > kSeamFrom) {
+            double w[3];
+            weightsAt(x, z, w);
+            const int k = w[0] >= w[1] && w[0] >= w[2] ? 0 : w[1] >= w[2] ? 1 : 2;
+            if (w[k] > 0.5) switch (mapRegions()[k].map) {
+                    case MAP_MOUNTAIN: return h > 150 ? PZ_SUBALPINE : PZ_MONTANE;  // alpine ranges
+                    case MAP_FRONTIER: return frontierCold(x, z) > 0.5 ? (h > 125 ? PZ_SUBALPINE : PZ_MONTANE) : PZ_HIGH_DESERT;  // the cold bench; mesas and washes
+                    default: return openCanyon(x, z) > 0.5 ? PZ_HIGH_DESERT : openWoods(x, z) > 0.5 ? PZ_TEMPERATE : PZ_PRAIRIE;  // the Open Country
+                }
+            if (m > kOldBackcountryHalf) return h > 165 ? PZ_SUBALPINE : PZ_MONTANE;  // (the big map's edge mountains)
+        }
+        if (m > kInner) {
+            const Districts d = districtsAt(x, z);
+            const double rowMid = std::max(0.0, 1 - d.n - d.s);
+            if (d.s * d.e > 0.35) return PZ_HIGH_DESERT;
+            if (d.w * rowMid > 0.5) return PZ_PRAIRIE;
+            if (h > 175) return PZ_SUBALPINE;
+            if (d.n > 0.5 || d.e * rowMid > 0.5 || h > 80) return PZ_MONTANE;
+            return PZ_TEMPERATE;
+        }
+        if (dm::hypot(x - kDunes.x, z - kDunes.z) < 95) return PZ_HOT_DESERT;
+        if (smoothstep(150, 260, z - riverZ(x)) > 0.5) return h > 36 ? PZ_SUBALPINE : PZ_MONTANE;
+        return PZ_TEMPERATE;
+    });
     steps.next("bc.boulders ledges and");
     // ---- Boulders, ledges and the like on the trails ---------------------------------------------
     uint32_t seedCounter = 40000;

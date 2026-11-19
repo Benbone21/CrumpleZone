@@ -1157,6 +1157,15 @@ void World::buildFrontier() {
                 dw > 0.5 ? 1.15f : (float)(0.85 + rnd() * 0.2));
     }
 
+    // ---- The plant biomes (docs/procedural-plants.md "Biomes"), before anything is planted: the desert in the west, the bayou, the
+    // range in the north (its high slopes and Cold Creek's valley the treeline's), the meadows and the lakeshore between ----
+    markPlantZones([&](double x, double z) {
+        if (desertness(x, z) > 0.5) return (int)PZ_HOT_DESERT;
+        if (bayouMask(x, z) > 0.3) return (int)PZ_RIPARIAN;
+        if (coldMask(x, z) > 0.5) return (int)PZ_SUBALPINE;
+        if (smoothstep(120, 220, z) > 0.2) return (int)(hgrid[at(x, z)] > 105 ? PZ_SUBALPINE : PZ_MONTANE);
+        return (int)PZ_TEMPERATE;
+    });
     steps.next("fr.trees pines through");
     // ---- Trees: pines through the range up to the treeline, broadleaf along the water and
     // the south meadows, a few dead snags on the desert edge ----------------------------------

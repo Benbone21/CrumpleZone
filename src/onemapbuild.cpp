@@ -230,6 +230,12 @@ void World::stitchRegionContent(const std::vector<RegionBuild*>& builds) {
                     paint[id] = R.cellPaint(rid), surf[id] = R.cellSurface(rid);
                 }
         }
+        // ---- Its plant biome areas (World::plantZones): the old map's own, over its core (its trees come with the species they grew as there) ----
+        if (!R.plantZones.empty())
+            markPlantZones(r.x0(), r.z0(), r.x1(), r.z1(), [&](double x, double z) {
+                const int zone = R.plantZone(x - r.mx, z - r.mz);
+                return inCore(x - r.mx, z - r.mz) && zone != PZ_NONE ? zone : -1;
+            });
         // ---- Everything on it (in the core), moved over ----
         for (const Tree& tr : R.trees)
             if (inCore(tr.base.x, tr.base.z)) {

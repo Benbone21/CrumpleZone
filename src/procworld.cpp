@@ -2649,6 +2649,7 @@ uint64_t Chunk::hash() const {
     for (const BushSpec& b : bushes) bytes(&b.x, sizeof(float) * 4), bytes(&b.habitat, 2);
     for (const LogSpec& l : logs) bytes(&l.ax, sizeof(float) * 5);
     for (const StumpSpec& t : stumps) bytes(&t.x, sizeof(float) * 5);
+    bytes(zone, sizeof zone);
     return hh;
 }
 
@@ -3489,6 +3490,25 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
     // land 32 m round over it, from a 16 m lattice of the land: gullies hold snow). Only worked out where the snow could lie.)
     const AlpineRule& AR = rules().alpine;
     auto treeLineAt = [&](double x, double z) { return AR.treeLine + AR.treeLineWobble * (2 * fbm(P.s[S_SNOW] + 1, x * 0.0022, z * 0.0022, 2) - 1); };
+    // The plant biomes (procworld.h Chunk::zone): every 16 m, by the climate's biome with the most weight there. Mesa country is high
+    // desert right across (as its ground is), the dunes hot desert, the plains (a meadow no wetter than its climate's own spot) prairie
+    // and a wetter meadow broadleaf woods, the forest broadleaf woods and mountain forest toward the ranges, the mountains mountain
+    // forest up to the treeline's stunted belt.
+    for (int za = 0; za < 4; za++)
+        for (int zb = 0; zb < 4; zb++) {
+            const Macro& m = M[(size_t)(3 + 4 * za) * L + (3 + 4 * zb)];
+            const double x = (double)gx0 + 8 + 16 * za, z = (double)gz0 + 8 + 16 * zb;
+            int b1 = 0;
+            for (int b = 1; b < PB_COUNT; b++)
+                if (m.w[b] > m.w[b1]) b1 = b;
+            int zone = PZ_TEMPERATE;
+            if (m.w[PB_BADLANDS] > 0.15) zone = PZ_HIGH_DESERT;
+            else if (b1 == PB_DUNES) zone = PZ_HOT_DESERT;
+            else if (b1 == PB_MOUNTAINS) zone = m.h > treeLineAt(x, z) - AR.treeLineFade ? PZ_SUBALPINE : PZ_MONTANE;
+            else if (b1 == PB_FOREST) zone = m.w[PB_MOUNTAINS] > 0.2 ? PZ_MONTANE : PZ_TEMPERATE;
+            else zone = m.w[PB_MOUNTAINS] > 0.3 ? PZ_MONTANE : m.wet < 0.56 ? PZ_PRAIRIE : PZ_TEMPERATE;
+            c->zone[za * 4 + zb] = (uint8_t)zone;
+        }
     double hollowLat[5][5] = {};
     bool snowy = false;
     {
@@ -4579,6 +4599,12 @@ void World::buildProcedural() {
                 }
             }
         }
+    // The plant biome areas (World::plantZones), from the chunks' own: before anything is planted.
+    markPlantZones([&](double x, double z) {
+        const int a = (int)std::floor((x + half) / World::kZoneRes), b = (int)std::floor((z + half) / World::kZoneRes);
+        const int ci = std::min(cn - 1, a / 4), cj = std::min(cn - 1, b / 4);
+        return (int)ch[(size_t)ci * cn + cj]->zone[(a & 3) * 4 + (b & 3)];
+    });
     // What stands on it: only from the chunks wholly inside the window (so nothing is cut at its edge).
     {
         loadprof::Scope lp("proc.objects");

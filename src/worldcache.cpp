@@ -8,13 +8,14 @@
 #include <type_traits>
 
 #include "bytepack.h"
+#include "forest.h"
 #include "meshcache.h"
 #include "props.h"
 #include "world.h"
 
 namespace {
 const char kMagic[8] = {'C', 'Z', 'W', 'O', 'R', 'L', 'D', '1'};
-constexpr uint64_t kFormat = 7;  // 5: the big map's regions' starts and roads (World::regionStarts, regionRoads); 6: its marked trails (World::trails); 7: maps built with detmath (the same on every machine)
+constexpr uint64_t kFormat = 8;  // 8: the plant biome areas (World::plantZones) and each tree's species; 5: the big map's regions' starts and roads (World::regionStarts, regionRoads); 6: its marked trails (World::trails); 7: maps built with detmath (the same on every machine)
 // bump with any change to what's written below or to how a map is built that the build id misses
 
 struct Out {
@@ -116,7 +117,8 @@ struct WorldIO {
         });
         io.list(w.loopRoad, [&](auto& p) { io.v3(p); });
         io.arr(w.loopAlong), io.pod(w.loopLength);
-        io.list(w.trees, [&](auto& t) { io.v3(t.base), io.pod(t.height), io.pod(t.radius), io.pod(t.tint), io.pod(t.kind), io.pod(t.design); });
+        io.list(w.trees, [&](auto& t) { io.v3(t.base), io.pod(t.height), io.pod(t.radius), io.pod(t.tint), io.pod(t.kind), io.pod(t.design), io.pod(t.species); });
+        io.arr(w.plantZones), io.pod(w.zoneN);
         io.list(w.poles, [&](auto& p) { io.pod(p.x), io.pod(p.z), io.pod(p.y0), io.pod(p.y1), io.pod(p.r); });
         io.list(w.rocks, [&](auto& r) {
             io.v3(r.c), io.pod(r.r), io.pod(r.tint), io.pod(r.seed);
@@ -173,7 +175,7 @@ struct WorldIO {
         auto tilesFit = [&](int side) { return side == 0 || side == w.hN; };
         return w.hN >= 2 && w.hgrid.size() == n && fits(w.surf.size()) && fits(w.paint.size()) && tilesFit(w.roadLat.side()) &&
                tilesFit(w.roadAlong.side()) && tilesFit(w.roadNear.side()) && tilesFit(w.waterY.side()) && tilesFit(w.flowX.side()) &&
-               tilesFit(w.flowZ.side());
+               tilesFit(w.flowZ.side()) && w.zoneN >= 0 && w.zoneN < 4096 && w.plantZones.size() == (size_t)w.zoneN * w.zoneN;
     }
     // The heights: noted for the delta-and-shuffle that makes them pack small.
     // (Where the map's land before anything was laid on it can be made again, each height is stored as its bits' difference
@@ -289,6 +291,7 @@ uint64_t keyFor(int map) {
     h.bytes(kMagic, sizeof kMagic), h.u64(kFormat), h.u64(meshcache::codeVersion());
     h.u64((uint64_t)map), h.num(World::halfSizeFor(map));
     if (map == MAP_REAL) h.u64(realterrain::activeHash());  // (the real terrain's DEM file and sidecar)
+    h.u64(forest::standHash());  // (the biomes' palettes and the species files: what each tree grows as, and so its trunk)
     // The scanned rocks in use (the rocks' hulls come from them): which, and what they are.
     if (const props::HullLibrary* lib = props::activeRockScans()) {
         h.u64(lib->hulls.size());

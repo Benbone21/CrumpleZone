@@ -110,9 +110,12 @@ inline Print print(const World& w, FILE* dump = nullptr) {
         D("rock %s %s %s r %s seed %u scan %d v %zu parts %zu ax %s %s %s\n", H(k.c.x).c_str(), H(k.c.y).c_str(), H(k.c.z).c_str(), H(k.r).c_str(), k.seed, k.scan, k.v.size(), k.parts.size(), H(k.axis[0].x).c_str(), H(k.axis[0].y).c_str(), H(k.axis[0].z).c_str());
     }
     for (const Tree& t : w.trees) {
-        f[TREES].p(t.base), f[TREES].mm(t.height), f[TREES].mm(t.radius), f[TREES].mm(t.tint), f[TREES].u(t.kind), f[TREES].u((uint64_t)(int64_t)t.design);
-        D("tree %s %s %s h %s r %s kind %d design %d\n", H(t.base.x).c_str(), H(t.base.y).c_str(), H(t.base.z).c_str(), H(t.height).c_str(), H(t.radius).c_str(), t.kind, t.design);
+        f[TREES].p(t.base), f[TREES].mm(t.height), f[TREES].mm(t.radius), f[TREES].mm(t.tint), f[TREES].u(t.kind), f[TREES].u((uint64_t)(int64_t)t.design), f[TREES].u((uint64_t)(int64_t)t.species);
+        D("tree %s %s %s h %s r %s kind %d design %d species %d\n", H(t.base.x).c_str(), H(t.base.y).c_str(), H(t.base.z).c_str(), H(t.height).c_str(), H(t.radius).c_str(), t.kind, t.design, t.species);
     }
+    // (The plant biome areas the builder marked: what the trees' species, and the bushes' looks, come from.)
+    f[TREES].u(w.plantZones.size());
+    for (uint8_t z : w.plantZones) f[TREES].h = (f[TREES].h ^ z) * 1099511628211ull;
     for (const Log& l : w.logs) {
         f[LOGS].p(l.a), f[LOGS].p(l.b), f[LOGS].mm(l.r);
         D("log %s %s %s  %s %s %s r %s\n", H(l.a.x).c_str(), H(l.a.y).c_str(), H(l.a.z).c_str(), H(l.b.x).c_str(), H(l.b.y).c_str(), H(l.b.z).c_str(), H(l.r).c_str());
