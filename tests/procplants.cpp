@@ -305,6 +305,24 @@ World wilds(int kind) {
     World::wildsKind = was;
     return w;
 }
+// Where a biome's living trees stand thickest on a map: the 128 m square with the most trees of its palette's species (not its dead
+// ones) on ground marked for it, as text.
+std::string densest(const World& w, int zone) {
+    std::set<int> ids = standTrees(zone);
+    for (const char* dead : {"snag", "snag_broken", "snag_burnt", "deadfall"})
+        if (const plantgen::Species* sp = plantgen::find(dead)) ids.erase(sp->id);
+    std::map<std::pair<int, int>, int> cells;
+    int total = 0;
+    for (const Tree& t : w.trees)
+        if (ids.count(t.species) && w.plantZone(t.base.x, t.base.z) == zone) cells[{(int)std::floor(t.base.x / 128), (int)std::floor(t.base.z / 128)}]++, total++;
+    if (!total) return "no living trees of its palette on ground marked for it";
+    auto best = cells.begin();
+    for (auto it = cells.begin(); it != cells.end(); ++it)
+        if (it->second > best->second) best = it;
+    char b[160];
+    std::snprintf(b, sizeof b, "%d living trees of its palette on its ground, most (%d) round %d,%d", total, best->second, best->first.first * 128 + 64, best->first.second * 128 + 64);
+    return b;
+}
 const Pole* poleOf(const World& w, const Tree& t) {
     for (const Pole& p : w.poles)
         if (std::hypot(p.x - t.base.x, p.z - t.base.z) < 0.01) return &p;
@@ -520,14 +538,18 @@ SCENARIO(procPlantsAreas, "procplants/biome-areas", "The plant biomes are areas 
             const double prairie = share(w, PZ_PRAIRIE, -2600, 1200, 2600, 2600, &n) - share(w, PZ_MONTANE, -2600, 1200, 2600, 2600);
             ctx.check("the northern forests are forest, not prairie", n > 1000 && prairie < 0, std::to_string(n));
         }
-        // How much of the map each biome is.
+        // How much of the map each biome is, and where most of its trees stand (a 128 m square: somewhere to go and look).
         size_t count[PZ_COUNT] = {};
         for (uint8_t z : w.plantZones) count[z]++;
-        for (int z = 1; z < PZ_COUNT; z++) {
-            char b[96];
-            std::snprintf(b, sizeof b, "%s: %.1f%% of the big map", plantZoneName(z), 100.0 * count[z] / w.plantZones.size());
-            ctx.note(b);
-        }
+        for (int z = 1; z < PZ_COUNT; z++) ctx.note(std::string(plantZoneName(z)) + ": " + std::to_string((int)std::lround(1000.0 * count[z] / w.plantZones.size()) / 10.0).substr(0, 4) + "% of the big map; " + densest(w, z));
+    }
+    for (int map : {MAP_FRONTIER, MAP_MOUNTAIN}) {
+        const World w(map);
+        for (int z = 1; z < PZ_COUNT; z++) ctx.note(std::string(mapName(map)) + " (the old map, --map " + std::to_string(map) + "), " + plantZoneName(z) + ": " + densest(w, z));
+    }
+    {
+        const World w = wilds(WILDS_DESERT);
+        ctx.note(std::string("a desert level's wilds, hot_desert: ") + densest(w, PZ_HOT_DESERT));
     }
     {
         const World f(MAP_FRONTIER), m(MAP_MOUNTAIN);
