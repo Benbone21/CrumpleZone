@@ -62,6 +62,9 @@ const std::vector<KeyInfo>& keyTable() {
         {"sides", "8", "the most sides a stem is drawn with"},
         {"green_stems", "0", "1: the branches are the foliage (leafless green stems: Mormon tea); 2: the stems too (a cactus)"},
         {"lean", "0", "a single stem leans at least this share of stem_spread (a toppling dead tree)"},
+        {"ribs", "0 0.12", "a cactus: this many ribs up each stem and how deep the grooves are (a share of the radius); the ridges pale with spines (deadwood)"},
+        {"barrel", "0", "1: a single stem swells and rounds over to a dome (a barrel cactus), flower heads in a ring on top"},
+        {"lying", "0", "1: the stem lies along the ground, its middle at the foot (a fallen log); `width` is half its length"},
         {"stand_scale", "1", "standing in for a classic map's tree, it is drawn this share of that tree's height (a desert tree is short)"},
         // Foliage.
         {"leaf_order", "2", "branches of this order and above carry foliage"},
@@ -91,6 +94,7 @@ const std::vector<KeyInfo>& keyTable() {
         {"flower_share", "0", "the share of the upper cards in flower"},
         // Grass, rosettes, pads.
         {"blades", "50", "bunchgrass: blades; rosette: leaves"},
+        {"pinnae", "0", "bunchgrass: each blade a frond of this many pairs of leaflets off a midrib (a fern), in the full model"},
         {"blade", "1.0 0.035", "a blade's length and width"},
         {"spread", "35", "how far the blades lean out"},
         {"stalks", "0 0", "flower or seed stalks (least, most)"},
@@ -239,6 +243,7 @@ struct Woody {
         if (broken > 0 && (order > 0 || r.u() < broken)) length *= 1 - broken * r.u() * (order == 0 ? 0.5 : 1), snapped = true;
         if (dead && order > 0) length *= 0.55 + 0.45 * r.u(), snapped = snapped || r.u() < 0.5;
         const int segs = std::max(1, (int)sp.v("segs", order));
+        const bool lying = sp.v("lying") > 0;
         const double floorY = 0.06 * sp.v("trunk_len");
         const double step = length / segs, gn = sp.v("gnarl", order), upk = sp.v("up", order);
         std::vector<V3> pts;
@@ -246,7 +251,8 @@ struct Woody {
         pts.push_back(p);
         for (int i = 0; i < segs; i++) {
             d = norm(d + r.unit() * gn + V3(0, upk / segs, 0));
-            if (order == 0 && d.y < 0.25) d = norm(V3(d.x, 0.25, d.z));  // (a stem never turns back down)
+            if (order == 0 && lying) d = norm(V3(d.x, std::min(0.04, std::max(-0.02, d.y)), d.z));  // (a log: along the ground)
+            else if (order == 0 && d.y < 0.25) d = norm(V3(d.x, 0.25, d.z));  // (a stem never turns back down)
             if (order > 0 && p.y + d.y * step < floorY) d = norm(V3(d.x, 0.15 + 0.5 * std::fabs(d.y), d.z));  // (nor a limb into the ground)
             p = p + d * step;
             pts.push_back(p);
@@ -294,8 +300,9 @@ struct Woody {
             const double az = a0 + 2 * kPi * s / stems + (stems > 1 ? 0.5 * r.sym() : 0);
             const double lean = stems > 1 ? spread * (0.45 + 0.55 * r.u()) : spread * (sp.v("lean") + (1 - sp.v("lean")) * r.u());
             const V3 out(dm::cos(az), 0, dm::sin(az));
-            const V3 d = norm(UP * dm::cos(lean) + out * dm::sin(lean));
-            const V3 o = out * (stems > 1 ? ring * (0.6 + 0.4 * r.u()) : 0.0) - UP * 0.02;
+            const bool lying = sp.v("lying") > 0 && stems == 1;
+            const V3 d = lying ? norm(out + UP * 0.02) : norm(UP * dm::cos(lean) + out * dm::sin(lean));
+            const V3 o = lying ? UP * (sp.v("trunk_radius") * 0.75) - out * (tl * 0.5) : out * (stems > 1 ? ring * (0.6 + 0.4 * r.u()) : 0.0) - UP * 0.02;
             const bool deadTop = sp.v("dead_top") > 0 && s == 0 && r.u() < sp.v("dead_top");
             grow(-1, 0, o, d, tl * (s == 0 ? 1.0 : 0.72 + 0.28 * r.u()), 0, false, -1, r.fork(77 + (uint32_t)s));
             if (deadTop) {  // the leader died back: a bare spike out of the top
@@ -321,9 +328,10 @@ struct Woody {
         const double margin = sp.v("cards") > 0 ? sp.v("card", 0) * 0.8 + sp.v("scatter") : 0;
         for (const Br& b : br)
             for (const V3& q : b.p) top = std::max(top, q.y + (b.snapped ? sp.v("trunk_radius") * 1.1 : b.dead ? 0 : margin)), wide = std::max(wide, std::sqrt(q.x * q.x + q.z * q.z) + margin);
-        const double k = 1 / top;
+        double k = 1 / top;
         double kx = k;
         if (sp.v("width") > 0) kx = k * std::min(1.7, std::max(0.6, sp.v("width") / (wide * k)));
+        if (sp.v("lying") > 0) k = kx = (sp.v("width") > 0 ? sp.v("width") : 0.5) / wide;  // (by its length: it has no height to fit)
         for (Br& b : br) {
             double L = 0;
             for (size_t i = 0; i < b.p.size(); i++) {
@@ -420,7 +428,16 @@ Colours coloursOf(const Species& sp, const Options& o) {
     return c;
 }
 
-void tube(Out& out, const Br& b, int sides, int stride, const V3& c0, const V3& c1, mk::Mat mat, uint32_t seed, bool point) {
+// ribs: the tube has 2 x ribs sides, every other one a groove `depth` of the radius in and darker, the ridges toward `ridge` (spines).
+// capFoot: its foot closed too (a log's butt).
+struct TubeX {
+    int ribs = 0;
+    double depth = 0;
+    V3 ridge;
+    bool capFoot = false;
+};
+void tube(Out& out, const Br& b, int sides, int stride, const V3& c0, const V3& c1, mk::Mat mat, uint32_t seed, bool point, const TubeX& x = TubeX()) {
+    if (x.ribs > 0) sides = 2 * x.ribs;
     std::vector<int> ring;
     const int n = (int)b.p.size();
     for (int i = 0; i < n - 1; i += stride) ring.push_back(i);
@@ -443,9 +460,13 @@ void tube(Out& out, const Br& b, int sides, int stride, const V3& c0, const V3& 
         const V3 w = cross(T[i], U[i]);
         const double a = 2 * kPi * j / sides;
         nn = U[i] * dm::cos(a) + w * dm::sin(a);
-        return b.p[ring[i]] + nn * b.r[ring[i]];
+        return b.p[ring[i]] + nn * (b.r[ring[i]] * (x.ribs > 0 && (j & 1) ? 1 - x.depth : 1.0));
     };
-    auto C = [&](int i, int j) { return vmix(c0, c1, m > 1 ? (double)i / (m - 1) : 0.0) * strip[j % sides]; };
+    auto C = [&](int i, int j) {
+        const V3 c = vmix(c0, c1, m > 1 ? (double)i / (m - 1) : 0.0);
+        if (x.ribs > 0) return (j % sides) & 1 ? c * 0.66 : vmix(c, x.ridge, 0.38);
+        return c * strip[j % sides];
+    };
     for (int i = 0; i + 1 < m; i++) {
         const bool apex = point && i + 2 == m;
         for (int j = 0; j < sides; j++) {
@@ -460,6 +481,14 @@ void tube(Out& out, const Br& b, int sides, int stride, const V3& c0, const V3& 
             const V3 p10 = P(i + 1, j, n10), p11 = P(i + 1, k, n11);
             out.tri(p00, p01, p11, n00, n01, n11, C(i, j), C(i, k), C(i + 1, k), mat);
             out.tri(p00, p11, p10, n00, n11, n10, C(i, j), C(i + 1, k), C(i + 1, j), mat);
+        }
+    }
+    if (x.capFoot) {
+        const V3 ctr = b.p[ring[0]] - T[0] * (b.r[ring[0]] * 0.25), pale = vmix(c0, V3(0.62, 0.56, 0.46), 0.5);
+        for (int j = 0; j < sides; j++) {
+            V3 n0, n1;
+            const V3 p0 = P(0, j, n0), p1 = P(0, (j + 1) % sides, n1);
+            out.tri(p1, p0, ctr, norm(n1 - T[0]), norm(n0 - T[0]), -T[0], C(0, j + 1), C(0, j), pale, mat);
         }
     }
     if (!point) {  // a snapped end: a splintered cap, paler wood
@@ -496,21 +525,23 @@ void card(Out& out, const V3& c, const V3& a, const V3& s, double L, double w, c
 
 // A puff: a small lumpy solid (a five-sided double pyramid, every corner pushed in or out so no two have the same outline),
 // shaded round and from the crown, lighter on top.
-void puff(Out& out, const V3& c, const V3& axis, double r, double tall, const Crown& cr, const V3& col, const V3& top, Rng& r_) {
+// far: a far copy's, several clumps' worth in one: evener, and shaded by the crown's shape more than its own, so a crown of a few of
+// them reads as one mass and not as lumps.
+void puff(Out& out, const V3& c, const V3& axis, double r, double tall, const Crown& cr, const V3& col, const V3& top, Rng& r_, bool far = false) {
     const V3 a = norm(UP * 0.5 + axis * 0.5 + r_.unit() * 0.9), u = perp(a), w = cross(a, u);
     const double turn = r_.u() * 2 * kPi;
     V3 v[7], n[7], k[7];
     v[0] = a * (r * (0.75 + 0.5 * r_.u())), v[1] = a * (-r * (0.6 + 0.4 * r_.u()));
     for (int i = 0; i < 5; i++) {
-        const double ang = turn + 2 * kPi * (i + 0.5 * r_.sym()) / 5, rr = r * (0.7 + 0.65 * r_.u());
-        v[2 + i] = (u * dm::cos(ang) + w * dm::sin(ang)) * rr + a * (r * 0.45 * r_.sym());
+        const double ang = turn + 2 * kPi * (i + (far ? 0.25 : 0.5) * r_.sym()) / 5, rr = far ? r * (0.9 + 0.3 * r_.u()) : r * (0.7 + 0.65 * r_.u());
+        v[2 + i] = (u * dm::cos(ang) + w * dm::sin(ang)) * rr + a * (r * (far ? 0.2 : 0.45) * r_.sym());
     }
     for (int i = 0; i < 7; i++) {
         V3 d = v[i];
         d.y *= tall;
         v[i] = c + d;
         const V3 fromCrown = norm(V3((v[i].x - cr.c.x) / cr.r.x, (v[i].y - cr.c.y) / cr.r.y, (v[i].z - cr.c.z) / cr.r.z));
-        n[i] = norm(norm(d) * 0.5 + fromCrown * 0.5 + UP * 0.1);
+        n[i] = far ? norm(norm(d) * 0.22 + fromCrown * 0.78 + UP * 0.1) : norm(norm(d) * 0.5 + fromCrown * 0.5 + UP * 0.1);
         k[i] = vmix(col * 0.86, top, clamp01(0.5 + 0.5 * d.y / std::max(1e-9, r * tall)));
     }
     for (int i = 0; i < 5; i++) {
@@ -521,7 +552,8 @@ void puff(Out& out, const V3& c, const V3& axis, double r, double tall, const Cr
 }
 
 const double kKeepPuff[4] = {1.0, 0.7, 0.11, 0.034};
-const double kGrowPuff[4] = {1.0, 1.15, 2.7, 4.4};
+// (The far ones: what a far tuft covers is what its shadow costs to fill, 0.9 ms of 4.8 in a forest between 2.7 / 4.4 and these.)
+const double kGrowPuff[4] = {1.0, 1.15, 2.2, 3.3};
 const double kKeep[4] = {1.0, 0.36, 0.12, 0.04};
 const double kGrow[4] = {1.0, 1.55, 2.5, 4.0};
 
@@ -567,7 +599,30 @@ void woody(const Species& sp, const Options& o, Out& out, double scale) {
         else if (green && sp.v("green_stems") > 1) c0 = col.leaf, c1 = col.leaf2;  // (a cactus: green, but solid: it doesn't dissolve for the camera as leaves do)
         else if (green && b.order >= 1) c0 = col.leaf, c1 = col.leaf2, mat = mk::FOLIAGE;
         else if (green) c1 = vmix(c1, col.leaf, 0.6);
-        tube(out, b, sides, stride, c0, c1, mat, o.seed * 31u + (uint32_t)i, !b.snapped || b.r.back() <= twig * 1.01);
+        TubeX x;
+        if (sp.v("ribs") >= 3 && lod <= 1 && rr > 0.3) x.ribs = (int)sp.v("ribs"), x.depth = sp.v("ribs", 1), x.ridge = col.dead;
+        x.capFoot = stem && sp.v("lying") > 0;
+        if (stem && sp.v("barrel") > 0) {
+            // A barrel: swelling from the foot, widest two fifths up, rounding over to the top.
+            Br bb = b;
+            for (int j = 0; j < n; j++) {
+                const double t = (double)j / std::max(1, n - 1), q = (t - 0.4) / 0.62;
+                bb.r[j] = b.r[j] * std::sqrt(std::max(0.05, 1 - q * q));
+            }
+            tube(out, bb, sides, stride, c0, c1, mat, o.seed * 31u + (uint32_t)i, true, x);
+            if (lod == 0 && len(col.flower) > 0) {  // flower heads in a ring round the top
+                const V3 top = bb.p[n - 1], T = norm(bb.p[n - 1] - bb.p[n - 2]), U = perp(T), W = cross(T, U);
+                const double fr = bb.r[n - 2] * 0.42, fs = bb.r[n - 2] * 0.24;
+                for (int q = 0; q < 7; q++) {
+                    const double a = 2 * kPi * q / 7 + 0.3 * (double)(o.seed % 7);
+                    const V3 e = U * dm::cos(a) + W * dm::sin(a), sd = cross(T, e), c = top + e * fr - T * (fr * 0.35);
+                    out.tri(c - sd * fs, c + sd * fs, c + T * (fs * 1.5) + e * (fs * 0.3), e, e, T, col.flower * 0.8, col.flower * 0.8, col.flower, mk::MATTE);
+                    out.tri(c - e * fs, c + e * fs, c + T * (fs * 1.5) + e * (fs * 0.3), sd, sd, T, col.flower * 0.8, col.flower * 0.8, col.flower, mk::MATTE);
+                }
+            }
+            continue;
+        }
+        tube(out, b, sides, stride, c0, c1, mat, o.seed * 31u + (uint32_t)i, !b.snapped || b.r.back() <= twig * 1.01, x);
     }
     const size_t woodEnd = out.m.v.size();
     // Foliage: clumps along the leafy branches.
@@ -629,9 +684,14 @@ void woody(const Species& sp, const Options& o, Out& out, double scale) {
                     if (crownTop || keep < (lod == 1 && !sp.tree ? 0.5 : kKeepPuff[lod]) * (boughs ? 0.42 : 1.0)) {
                         const double pr = puffR * sz * (1 + (kGrowPuff[lod] - 1) * sp.v("far") * (boughs ? 0.55 : 1.0)) * (farMass ? 1.3 : 1.0);
                         V3 pc = s.p;
+                        if (lod >= 2) {  // (grown several times over: drawn in toward the crown's middle by as much, so the far crown is the full one's size)
+                            const V3 in = cr.c - s.p;
+                            const double dist = len(in), move = std::min(std::max(0.0, pr - puffR * sz * 1.3) * 0.85, dist * 0.7);
+                            if (dist > 1e-9) pc = s.p + in * (move / dist);
+                        }
                         pc.y = std::max(pc.y, pr * 0.6);
                         const V3 base = vmix(col.leaf, col.leaf2, tone) * shade * (0.9 + 0.2 * upper);
-                        puff(out, pc, s.d, pr, puffTall, cr, base, base * (1 + col.tip), rp);
+                        puff(out, pc, s.d, pr, puffTall, cr, base, base * (1 + col.tip), rp, lod >= 2);
                     }
                 }
                 for (int c = 0; c < nCards && !farMass; c++) {
@@ -686,6 +746,7 @@ void grass(const Species& sp, const Options& o, Out& out) {
     const double grow = lod == 0 ? 1 : lod == 1 ? 1.5 : lod == 2 ? 2.4 : 3.4;
     const int sMin = (int)sp.v("stalks", 0), sMax = std::max(sMin, (int)sp.v("stalks", 1));
     const int stalks = sMin + (int)(r.u() * (sMax - sMin + 0.999));
+    const int pinnae = (int)sp.v("pinnae");
     for (int k = 0; k < n + stalks; k++) {
         Rng rb = r.fork((uint32_t)k);
         const bool stalk = k >= n;
@@ -699,6 +760,22 @@ void grass(const Species& sp, const Options& o, Out& out) {
         const V3 n0 = norm(outw * 0.5 + UP * 0.8), cb = vmix(col.leaf, col.leaf2, 0.3 * tone) * 0.8, cm = vmix(col.leaf, col.leaf2, 0.5 + 0.5 * tone), ct = stalk && len(col.flower) > 0 ? col.flower : col.leaf2 * (1 + col.tip);
         if (lod >= 2) {
             out.tri(p0 - side * w, p0 + side * w, p2, n0, n0, n0, cb, cb, ct, mk::FOLIAGE);
+            continue;
+        }
+        if (pinnae > 0 && lod == 0 && !stalk) {
+            // A frond: leaflets in pairs off an arching midrib, longest a third of the way along, down to a point.
+            auto mid = [&](double t) { return vmix(vmix(p0, p1, t), vmix(p1, p2, t), t); };
+            for (int q = 0; q < pinnae; q++) {
+                const double t0 = 0.14 + 0.86 * q / pinnae, t1 = 0.14 + 0.86 * (q + 0.82) / pinnae, tm = 0.5 * (t0 + t1);
+                const V3 a = mid(t0), b = mid(t1), fw = norm(b - a);
+                const double ll = w * 0.5 * (0.3 + 0.7 * dm::sin(kPi * std::min(1.0, 0.12 + tm * 1.25))) * (1 - 0.8 * tm * tm * tm);
+                const V3 cq = vmix(cm, ct, tm), cr_ = vmix(cb, cm, std::min(1.0, tm * 2));
+                for (int sg = -1; sg <= 1; sg += 2) {
+                    const V3 tip = vmix(a, b, 0.5) + side * (sg * ll) + fw * (ll * 0.35) - UP * (ll * 0.22);
+                    const V3 nn = norm(n0 + side * (0.35 * sg));
+                    out.tri(a, b, tip, n0, n0, nn, cr_, cr_, cq, mk::FOLIAGE);
+                }
+            }
             continue;
         }
         out.tri(p0 - side * (w * 0.5), p0 + side * (w * 0.5), p1 + side * (w * 0.4), n0, n0, n0, cb, cb, cm, mk::FOLIAGE);

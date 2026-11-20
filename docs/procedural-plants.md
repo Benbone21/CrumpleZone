@@ -21,7 +21,12 @@ them) and `src/models/procplants.cpp` (the model kit's view of them). The specie
 5. **Snow** on what faces up; **dry** and **season** move the leaf colours.
 
 Bunchgrass, rosettes (yucca) and cactus pads have their own small growers in the same file (`form bunchgrass`,
-`rosette`, `pads`).
+`rosette`, `pads`). A fern is a bunchgrass whose blades are fronds (`pinnae`); a ribbed cactus is a woody plant with green
+stems and `ribs` (a barrel cactus also `barrel 1`); a fallen log is a single dead stem with `lying 1`.
+
+The far copies of a tree (30 m and further) are a few big solid tufts in place of its clumps: each drawn in toward the crown's
+middle by as much as it was grown, evened out and shaded by the crown's shape, so the far tree is the full one's size and
+reads as one mass. How much they cover is also what their shadows cost to fill (`kGrowPuff`).
 
 Everything is deterministic: only `+ - * /`, `sqrt` and `detmath.h`'s functions, an integer random generator, no
 unordered containers. `procplants/determinism` pins three mesh hashes of a test species; they must be the same on
@@ -33,9 +38,9 @@ bigger cards and puffs. The budgets are in `tests/procplants.cpp`:
 
 | | full | near copy | far | farthest |
 |---|---|---|---|---|
-| tree, drawn | to 14 m | to 36 m | to 100 m | beyond (then pictures from 200 m) |
-| tree, triangles | 6500 | 2800 | 900 | 320 |
-| shrub, drawn | to 11 m | to 30 m | beyond | |
+| tree, drawn | to 11 m | to 30 m | to 100 m | beyond (then pictures from 200 m) |
+| tree, triangles | 6500 | 2800 | 480 | 150 |
+| shrub, drawn | to 8 m | to 22 m | beyond | |
 | shrub, triangles | 1100 | 450 | 150 | |
 
 The game builds six seeds of each species it draws (and a snowy set where there is snow), once per map; every tree
@@ -116,9 +121,9 @@ every window that holds it (`procplants/procedural-world`).
 | `hot_desert` | mesquite, palo verde, catclaw, saguaro, snags | creosote, dry grass, thorn scrub, ocotillo, cholla, barrel cactus, prickly pear, yucca, tumbleweed, dead shrubs |
 | `colorado_plateau_desert` (high desert, canyon; Moab) | juniper, pinyon, cottonwood, tamarisk, snags | blackbrush, sagebrush, Mormon tea, saltbush, rabbitbrush, bunchgrass, yucca, prickly pear, dead shrubs |
 | `dry_prairie` | juniper, ponderosa, cottonwood in the draws | tall, dry and bunch grass, sagebrush, rabbitbrush, yucca |
-| `temperate_forest` | oak, maple, aspen, fir, spruce, snags, leaning snags | leafy shrubs, ferns, tall grass, stumps |
-| `riparian_wetland` | cottonwood, aspen, maple, snags | coyote willow, cattails, tall grass, ferns |
-| `montane_forest` | ponderosa, fir, spruce, aspen, snags, leaning snags | manzanita, bunchgrass, ferns, stumps, sagebrush |
+| `temperate_forest` | oak, maple, aspen, fir, spruce, snags, leaning snags | leafy shrubs, ferns, tall grass, stumps, fallen logs |
+| `riparian_wetland` | cottonwood, aspen, maple, snags | coyote willow, cattails, tall grass, ferns, fallen logs |
+| `montane_forest` | ponderosa, fir, spruce, aspen, snags, leaning snags | manzanita, bunchgrass, ferns, stumps, fallen logs, sagebrush |
 | `subalpine` | krummholz, spruce, fir, snags | alpine mats, bunchgrass, dry grass |
 
 The layout of the maps is as it was: only what grows changed. So a biome has trees only where the map already planted some
@@ -175,6 +180,9 @@ full list with defaults; the main ones:
 | `green_stems 1` | the branches are the foliage (Mormon tea) |
 | `blades`, `blade L W`, `spread`, `stalks A B`, `stalk_len`, `skirt` | grass and rosettes |
 | `pads A B`, `pad L W T` | cactus pads |
+| `pinnae N` | bunchgrass: each blade a frond with N pairs of leaflets (the full model only) |
+| `ribs N DEPTH`, `barrel 1` | a cactus: ribs up the green stems (ridges toward `deadwood`, the spines); the stem swollen to a dome with `flower` heads on top |
+| `lying 1` | the single stem lies along the ground (a fallen log; `width` is half its length) |
 | `replaces KIND N` | the classic model it stands in for with `--proc-plants`: `pine 0..2`, `broadleaf 0..2`, `snag 0..2`, `dryland 0..3`, `bush NAME` |
 
 ## Species lists per ecoregion
