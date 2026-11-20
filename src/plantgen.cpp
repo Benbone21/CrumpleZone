@@ -527,8 +527,10 @@ void card(Out& out, const V3& c, const V3& a, const V3& s, double L, double w, c
 // shaded round and from the crown, lighter on top.
 // far: a far copy's, several clumps' worth in one: evener, and shaded by the crown's shape more than its own, so a crown of a few of
 // them reads as one mass and not as lumps.
-void puff(Out& out, const V3& c, const V3& axis, double r, double tall, const Crown& cr, const V3& col, const V3& top, Rng& r_, bool far = false) {
-    const V3 a = norm(UP * 0.5 + axis * 0.5 + r_.unit() * 0.9), u = perp(a), w = cross(a, u);
+void puff(Out& out, const V3& c, const V3& axis, double r, double tall, const Crown& cr, const V3& col, const V3& top, Rng& r_, bool far = false, bool level = false) {
+    // (level: a bough's flat tuft lies nearly level, a tier of the tree, not a plate at any tilt)
+    const V3 tilt = r_.unit();
+    const V3 a = level ? norm(UP + axis * 0.2 + tilt * 0.28) : norm(UP * 0.5 + axis * 0.5 + tilt * 0.9), u = perp(a), w = cross(a, u);
     const double turn = r_.u() * 2 * kPi;
     V3 v[7], n[7], k[7];
     v[0] = a * (r * (0.75 + 0.5 * r_.u())), v[1] = a * (-r * (0.6 + 0.4 * r_.u()));
@@ -682,7 +684,8 @@ void woody(const Species& sp, const Options& o, Out& out, double scale) {
                     // (the crown's top clump stays in every copy: a far tree is as tall as it was)
                     const bool crownTop = sp.tree && si == topSite;
                     if (crownTop || keep < (lod == 1 && !sp.tree ? 0.5 : kKeepPuff[lod]) * (boughs ? 0.42 : 1.0)) {
-                        const double pr = puffR * sz * (1 + (kGrowPuff[lod] - 1) * sp.v("far") * (boughs ? 0.55 : 1.0)) * (farMass ? 1.3 : 1.0);
+                        // (a spire's top tuft small: the tree comes to a point)
+                        const double pr = puffR * sz * (1 + (kGrowPuff[lod] - 1) * sp.v("far") * (boughs ? 0.55 : 1.0)) * (farMass ? 1.3 : 1.0) * (boughs && crownTop ? 0.55 : 1.0);
                         V3 pc = s.p;
                         if (lod >= 2) {  // (grown several times over: drawn in toward the crown's middle by as much, so the far crown is the full one's size)
                             const V3 in = cr.c - s.p;
@@ -691,7 +694,7 @@ void woody(const Species& sp, const Options& o, Out& out, double scale) {
                         }
                         pc.y = std::max(pc.y, pr * 0.6);
                         const V3 base = vmix(col.leaf, col.leaf2, tone) * shade * (0.9 + 0.2 * upper);
-                        puff(out, pc, s.d, pr, puffTall, cr, base, base * (1 + col.tip), rp, lod >= 2);
+                        puff(out, pc, s.d, pr, puffTall, cr, base, base * (1 + col.tip), rp, lod >= 2, boughs);
                     }
                 }
                 for (int c = 0; c < nCards && !farMass; c++) {
