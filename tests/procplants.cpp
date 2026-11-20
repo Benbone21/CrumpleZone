@@ -307,6 +307,20 @@ World wilds(int kind) {
 }
 // Where a biome's living trees stand thickest on a map: the 128 m square with the most trees of its palette's species (not its dead
 // ones) on ground marked for it, as text.
+// ...and its bushes (whatever they grow as: that is settled when the forest is built).
+std::string bushiest(const World& w, int zone) {
+    std::map<std::pair<int, int>, int> cells;
+    int total = 0;
+    for (const Bush& u : w.bushes)
+        if (w.plantZone(u.p.x, u.p.z) == zone) cells[{(int)std::floor(u.p.x / 128), (int)std::floor(u.p.z / 128)}]++, total++;
+    if (!total) return "; no bushes";
+    auto best = cells.begin();
+    for (auto it = cells.begin(); it != cells.end(); ++it)
+        if (it->second > best->second) best = it;
+    char b[120];
+    std::snprintf(b, sizeof b, "; %d bushes, most (%d) round %d,%d", total, best->second, best->first.first * 128 + 64, best->first.second * 128 + 64);
+    return b;
+}
 std::string densest(const World& w, int zone) {
     std::set<int> ids = standTrees(zone);
     for (const char* dead : {"snag", "snag_broken", "snag_burnt", "deadfall"})
@@ -315,13 +329,13 @@ std::string densest(const World& w, int zone) {
     int total = 0;
     for (const Tree& t : w.trees)
         if (ids.count(t.species) && w.plantZone(t.base.x, t.base.z) == zone) cells[{(int)std::floor(t.base.x / 128), (int)std::floor(t.base.z / 128)}]++, total++;
-    if (!total) return "no living trees of its palette on ground marked for it";
+    if (!total) return "no living trees of its palette on ground marked for it" + bushiest(w, zone);
     auto best = cells.begin();
     for (auto it = cells.begin(); it != cells.end(); ++it)
         if (it->second > best->second) best = it;
     char b[160];
     std::snprintf(b, sizeof b, "%d living trees of its palette on its ground, most (%d) round %d,%d", total, best->second, best->first.first * 128 + 64, best->first.second * 128 + 64);
-    return b;
+    return b + bushiest(w, zone);
 }
 const Pole* poleOf(const World& w, const Tree& t) {
     for (const Pole& p : w.poles)
