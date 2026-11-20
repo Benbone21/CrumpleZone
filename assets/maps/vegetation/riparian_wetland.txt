@@ -18,9 +18,11 @@ stand bush cattail 26
 stand bush tall_grass 26
 stand bush fern 8
 stand bush understory 10
+stand bush log 3
 stand bush:reeds cattail 1
 stand deadbush dead_shrub 1
 stand deadbush stump 1
+stand deadbush log 1
 upland 1e9 1e9
 riparian 80 6
 wash 30 3

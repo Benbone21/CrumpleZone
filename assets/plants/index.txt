@@ -45,3 +45,4 @@ alpine_mat
 stump
 thornbush
 understory
+log

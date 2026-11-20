@@ -1,5 +1,5 @@
 name BARREL CACTUS
-about A squat ribbed green barrel
+about A squat ribbed green barrel, pale spines down the ribs, a ring of yellow flowers on top
 class shrub
 id 13
 form shrub
@@ -12,16 +12,20 @@ stem_base 0
 orders 1
 gnarl 0.01
 up 0
-segs 4
+segs 8
 trunk_len 1
 trunk_radius 0.36
 twig 0.2
 taper 0
-flare 0.8
+flare 1
 sides 8
-width 0.45
-bark 0.26 0.36 0.18
-bark2 0.34 0.44 0.22
+width 0.62
+bark 0.22 0.33 0.17
+bark2 0.28 0.40 0.20
 leaf 0.26 0.36 0.18
 leaf2 0.36 0.45 0.23
 leaf_dry 0.40 0.36 0.22
+ribs 9 0.2
+barrel 1
+deadwood 0.62 0.52 0.34
+flower 0.80 0.62 0.16

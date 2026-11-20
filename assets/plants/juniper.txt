@@ -23,8 +23,8 @@ dead 0.2
 dead_top 0.3
 width 0.55
 leaf_order 1
-leaf_from 0.3
-leaf_step 0.09
+leaf_from 0.18
+leaf_step 0.1
 cards 3
 card 0.09 0.075
 scatter 0.065
@@ -38,7 +38,7 @@ leaf2 0.38 0.39 0.22
 stems 1 1
 stem_spread 20
 falloff 0.3
-puff 0.058 0.85
+puff 0.066 0.85
 leaf_tip 0.1
 far 1.25
 angle_var 18

@@ -20,10 +20,12 @@ stand bush tall_grass 12
 stand bush fern 10
 stand bush stump 6
 stand bush sagebrush 6
+stand bush log 5
 stand bush:fern fern 1
 stand bush:juniper manzanita 1
 stand deadbush stump 2
 stand deadbush dead_shrub 1
+stand deadbush log 2
 upland 2300 2700
 riparian 40 4
 wash 15 2

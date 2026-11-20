@@ -1,0 +1,35 @@
+# A fallen log: a dead trunk lying on the forest floor, snapped at one end, a few broken stubs of limb. Nothing to hit (a shrub):
+# it stands in for a classic bush, so it is a bush's size (a couple of metres long).
+name FALLEN LOG
+about A dead trunk lying on the ground, snapped off, stubs of limbs
+class shrub
+id 25
+form shrub
+size 0.7 1.3
+lying 1
+cards 0
+stems 1 1
+stem_spread 0
+stem_base 0
+orders 2
+count 4
+angle 70
+angle_var 25
+length 0.22
+start 0.15
+gnarl 0.03 0.12
+up 0 0.2
+segs 5 2
+trunk_len 1
+trunk_radius 0.1
+twig 0.03
+taper 0.01
+pipe 3.4
+flare 1.15
+broken 0.6
+dead 1
+sides 8
+width 1
+bark 0.27 0.22 0.17
+bark2 0.36 0.30 0.24
+deadwood 0.50 0.46 0.40

@@ -20,10 +20,10 @@ up 0.3 0.3
 gnarl 0.08 0.12
 segs 5 3
 leaf_order 0
-leaf_from 0.35
-leaf_step 0.06
-cards 4
-card 0.14 0.045
+leaf_from 0.28
+leaf_step 0.075
+cards 5
+card 0.14 0.06
 scatter 0.03
 align 0.85
 droop 0.15

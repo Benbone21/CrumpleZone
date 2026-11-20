@@ -19,6 +19,7 @@ stand bush dry_grass 10
 stand bush stump 3
 stand bush:heather alpine_mat 1
 stand deadbush dead_shrub 1
+stand deadbush log 1
 upland 3300 3600
 riparian 30 3
 wash 12 2

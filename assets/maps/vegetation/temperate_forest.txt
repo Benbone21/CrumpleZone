@@ -18,11 +18,13 @@ stand bush understory 30
 stand bush fern 22
 stand bush tall_grass 22
 stand bush stump 3
+stand bush log 4
 stand bush:fern fern 1
 stand bush:reeds cattail 1
 stand bush:juniper understory 1
 stand deadbush stump 2
 stand deadbush dead_shrub 1
+stand deadbush log 2
 upland 900 1400
 riparian 40 4
 wash 15 2
