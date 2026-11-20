@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <map>
 
@@ -302,11 +303,13 @@ void TreeDraw::captureImpostors() {
     GetIntegerv(GL_CURRENT_PROGRAM_, &prevProg);
     GetIntegerv(GL_VERTEX_ARRAY_BINDING_, &prevVao);
     bool any = false;
+    int missing = 0;
     for (size_t s = 0; s < set_.shapes.size(); s++) {
         const forest::Shape& sh = set_.shapes[s];
         int layer = -1;
         for (size_t l = 0; l < impLayers_.size(); l++)
-            if (impLayers_[l].kind == sh.look.kind && impLayers_[l].design == sh.look.design && impLayers_[l].snow == sh.look.snow) layer = (int)l;
+            // (a generated species is one picture whichever classic kind its tree was planted as: an aspen for a pine by the water)
+            if ((impLayers_[l].kind == sh.look.kind || sh.look.design >= forest::kGenDesign) && impLayers_[l].design == sh.look.design && impLayers_[l].snow == sh.look.snow) layer = (int)l;
         if (layer < 0 && (int)impLayers_.size() < kImpMaxLayers) {
             int lod = std::min(2, forest::kLods - 1);
             while (lod > 0 && !ranges_[s][lod].count) lod--;
@@ -345,7 +348,9 @@ void TreeDraw::captureImpostors() {
             }
         }
         shapeLayer_[s] = layer;
+        if (layer < 0) missing++;
     }
+    if (missing) std::fprintf(stderr, "tree pictures: %d of %zu tree models have none (%d looks is all the atlas holds): those trees stop at %s\n", missing, set_.shapes.size(), kImpMaxLayers, "the meshes' reach");
     if (any) {
         BindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
         Viewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
@@ -384,7 +389,8 @@ void TreeDraw::uploadImpostors() {
             d.insert(d.end(), {in.x, in.y, in.z, in.yaw, L.R * in.scale, L.H * in.scale * in.stretch, in.tint, in.warm, (float)layer,
                                (float)((hsh >> 8) * (1.0 / 16777216.0)), 0.0f, 0.0f});
             n++;
-            if (L.kind >= 0 && L.kind < forest::kKinds) count[L.kind][layer] += 1;
+            const int kind = set_.shapes[in.shape].look.kind;  // (the tree's own kind: a species' one picture serves every kind it stands in for)
+            if (kind >= 0 && kind < forest::kKinds) count[kind][layer] += 1;
         }
         impCellCount_.push_back(n);
     }
